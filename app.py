@@ -5,10 +5,10 @@ import json
 import google.generativeai as genai
 
 # ==========================================
-# 1. НАСТРОЙКИ КЛЮЧЕЙ API
+# 1. НАСТРОЙКИ КЛЮЧЕЙ API (ИЗ СЕКРЕТОВ STREAMLIT)
 # ==========================================
-APIFY_API_TOKEN = "apify_api_SmIDh36NtcvkzzZswKjOCvSGlmO1Xg0GwtR0"
-GEMINI_API_KEY = "AIzaSyAItWhsVvQjbgRis0F7peNOk26MEcAwwCs"
+APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-reviews-scraper"
 
 genai.configure(api_key=GEMINI_API_KEY)
