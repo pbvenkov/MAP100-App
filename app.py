@@ -11,7 +11,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-APIFY_ACTOR_ID = "zen-studio~yandex-maps-reviews-scraper"
+APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper"
 
 genai.configure(api_key=GEMINI_API_KEY)
 
