@@ -139,7 +139,7 @@ def calculate_python_scores(data):
         else:
             details.append(f"❌ [REP-30.2] Медленные ответы: {median_speed} дн. (норма < 3).")
 
-    return sum(scores.values()), details
+    return sum(scores.values()), details, scores
 
 def trim_for_ai(raw_data):
     """Сжимает профиль Яндекса до текстовой выжимки для Gemini."""
@@ -227,7 +227,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
         with st.spinner("Шаг 1: Python анализирует объективные данные..."):
             try:
                 raw_yandex_data = fetch_apify_data(yandex_url)
-                python_score, python_details = calculate_python_scores(raw_yandex_data)
+                python_score, python_details, python_scores_dict = calculate_python_scores(raw_yandex_data)
                 clean_data = trim_for_ai(raw_yandex_data)
                 
             except Exception as e:
@@ -247,16 +247,16 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 Твоя задача — проверить карточку по оставшимся ПРАВИЛАМ (эмоции, SEO-ключи, смыслы УТП, ответы на отзывы):
                 {dynamic_rules}
                 
-                Оцени предоставленный текстовый JSON. Если данных нет, ставь 0 за критерий.
-                СЛОЖИ баллы скрипта ({python_score}) и свои заработанные баллы.
                 ВЕРНИ ОТВЕТ СТРОГО В ФОРМАТЕ JSON без markdown разметки:
                 {{
                     "company_name": "", 
                     "business_niche": "", 
+                    "ai_criteria_scores": {{"КОД-1": 1.5, "КОД-2": 0.0}},
                     "total_score": <ЗДЕСЬ СУММА БАЛЛОВ PYTHON + ТВОИ БАЛЛЫ>, 
-                    "detailed_report": "Общий аналитический вывод. Упомяни и находки автоматического скрипта, и свой семантический анализ текстов.", 
-                    "action_plan": ["шаг 1", "шаг 2", "шаг 3"]
+                    "detailed_report": "Общий аналитический вывод. Упомяни и находки скрипта, и свой анализ.", 
+                    "action_plan": ["шаг 1", "шаг 2"]
                 }}
+                В "ai_criteria_scores" верни словарь, где ключи - это точные коды критериев, которые ты проверял, а значения - выставленные тобой баллы.
                 """
                 
                 model = genai.GenerativeModel(
@@ -268,23 +268,21 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 prompt = f"Данные для аудита:\n{json.dumps(clean_data, ensure_ascii=False)}"
                 response = model.generate_content(prompt)
                 
-                # --- БРОНЕБОЙНАЯ ОЧИСТКА JSON ЧЕРЕЗ RAW_DECODE ---
                 raw_text = response.text.strip()
                 start_idx = raw_text.find('{')
                 
                 if start_idx != -1:
                     try:
                         json_to_decode = raw_text[start_idx:]
-                        # Декодер прочитает только валидный JSON и проигнорирует "хвосты"
                         ai_report, idx = json.JSONDecoder().raw_decode(json_to_decode)
                     except Exception:
                         ai_report = json.loads(raw_text)
                 else:
                     ai_report = json.loads(raw_text)
-                # ------------------------------------------------
                 
                 st.success("✅ Анализ завершен!")
                 
+                # --- ВЫВОД НА ЭКРАН ---
                 st.divider()
                 col1, col2 = st.columns([3, 1])
                 with col1:
@@ -297,6 +295,13 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                     else: color = "inverse"
                     st.metric("Общий балл MAP100", f"{score} / 100", delta_color=color)
 
+                # Объединяем оценки для вывода и записи
+                all_scores = python_scores_dict.copy()
+                all_scores.update(ai_report.get('ai_criteria_scores', {}))
+
+                with st.expander("📊 Детализация баллов по критериям (Нажмите для просмотра)"):
+                    st.json(all_scores)
+
                 st.divider()
                 st.markdown("### 🔍 Общий аналитический отчет")
                 st.write(ai_report.get('detailed_report', 'Отчет пуст'))
@@ -305,17 +310,41 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 for i, step in enumerate(ai_report.get('action_plan', [])):
                     st.info(f"**Шаг {i+1}:** {step}")
 
+                # --- УМНАЯ ЗАПИСЬ В GOOGLE ТАБЛИЦУ ---
                 try:
                     results_sheet = doc.worksheet("Results")
-                    new_row = [
-                        time.strftime("%d.%m.%Y %H:%M:%S"), 
-                        yandex_url,                         
-                        ai_report.get('company_name', ''),  
-                        ai_report.get('business_niche', ''),
-                        ai_report.get('total_score', 0)     
-                    ]
-                    results_sheet.append_row(new_row)
-                    st.toast('Успешно сохранено в Google Таблицу!', icon='💾')
+                    headers = results_sheet.row_values(1)
+                    
+                    base_headers = ["Дата", "Ссылка", "Компания", "Ниша", "Общий балл"]
+                    if not headers:
+                        headers = base_headers
+                    
+                    # Проверяем, появились ли новые колонки (коды критериев)
+                    headers_changed = False
+                    for code in all_scores.keys():
+                        if code not in headers:
+                            headers.append(code)
+                            headers_changed = True
+                    
+                    # Если шапка поменялась, обновляем первую строчку
+                    if headers_changed:
+                        cell_list = results_sheet.range(1, 1, 1, len(headers))
+                        for i, val in enumerate(headers):
+                            cell_list[i].value = val
+                        results_sheet.update_cells(cell_list)
+
+                    # Формируем данные в правильном порядке
+                    row_data = []
+                    for h in headers:
+                        if h == "Дата": row_data.append(time.strftime("%d.%m.%Y %H:%M:%S"))
+                        elif h == "Ссылка": row_data.append(yandex_url)
+                        elif h == "Компания": row_data.append(ai_report.get('company_name', ''))
+                        elif h == "Ниша": row_data.append(ai_report.get('business_niche', ''))
+                        elif h == "Общий балл": row_data.append(ai_report.get('total_score', 0))
+                        else: row_data.append(all_scores.get(h, "")) # Балл по конкретному коду
+
+                    results_sheet.append_row(row_data)
+                    st.toast('Детальный отчет сохранен в Google Таблицу!', icon='💾')
                 except Exception as e:
                     st.warning(f"Ошибка записи в таблицу: {e}")
 
