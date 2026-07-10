@@ -2,6 +2,8 @@ import streamlit as st
 import requests
 import time
 import json
+import numpy as np
+from datetime import datetime
 import google.generativeai as genai
 import gspread
 from google.oauth2.service_account import Credentials
@@ -11,7 +13,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper"
+APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" # Комбайн: Профиль + Отзывы
 
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -21,7 +23,6 @@ genai.configure(api_key=GEMINI_API_KEY)
 @st.cache_resource
 def init_google_sheets():
     try:
-        # Читаем сырой текст ключа и превращаем в JSON
         creds_dict = json.loads(st.secrets["GCP_CREDENTIALS"])
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets", 
@@ -31,10 +32,9 @@ def init_google_sheets():
         gc = gspread.authorize(credentials)
         return gc.open_by_url(st.secrets["SPREADSHEET_URL"])
     except Exception as e:
-        st.error(f"❌ Ошибка подключения к базе данных Google Sheets: {e}")
+        st.error(f"❌ Ошибка подключения к Google Sheets: {e}")
         st.stop()
 
-# КЭШ НА 24 ЧАСА: Повторные проверки той же ссылки будут мгновенными
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_apify_data(yandex_url):
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
@@ -52,8 +52,7 @@ def fetch_apify_data(yandex_url):
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
         time.sleep(5)
         status_url = f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}"
-        status_req = requests.get(status_url).json()
-        status = status_req['data']['status']
+        status = requests.get(status_url).json()['data']['status']
 
     if status != "SUCCEEDED":
         raise Exception("Ошибка при парсинге данных Apify.")
@@ -62,74 +61,132 @@ def fetch_apify_data(yandex_url):
     dataset_req = requests.get(dataset_url).json()
     
     if not dataset_req:
-        raise Exception("Парсер не нашел данных по этой ссылке.")
+        raise Exception("Парсер не нашел данных.")
         
     return dataset_req[0]
 
 # ==========================================
-# 3. ФУНКЦИЯ ОЧИСТКИ (TRIMMER) ДЛЯ ЭКОНОМИИ ТОКЕНОВ
+# 3. ГИБРИДНАЯ АРХИТЕКТУРА: PYTHON (80% работы)
 # ==========================================
+def calculate_python_scores(data):
+    """Считает баллы по объективным метрикам без ИИ."""
+    scores = {}
+    details = []
+
+    if len(data.get('title', '')) > 2:
+        scores['PROF-01.1'] = 0.5
+        
+    if len(data.get('phones', [])) > 0:
+        scores['PROF-05.1'] = 1.0
+
+    if len(data.get('schedule', [])) == 7:
+        scores['PROF-07.1'] = 1.0
+
+    if data.get('isVerifiedOwner') == True:
+        scores['PROF-12.1'] = 3.0
+        details.append("✅ [PROF-12.1] Аккаунт верифицирован (Синяя галочка) (+3.0)")
+    else:
+        scores['PROF-12.1'] = 0.0
+        details.append("❌ [PROF-12.1] Отсутствует Синяя галочка (0.0)")
+
+    photo_count = data.get('photoCount', 0)
+    if photo_count >= 15:
+        scores['CONT-36.1'] = 1.5
+        if photo_count >= 30:
+            scores['CONT-36.2'] = 1.0
+        details.append(f"✅ [CONT-36] Хорошая галерея: {photo_count} фото.")
+    else:
+        details.append(f"❌ [CONT-36] Мало фото: {photo_count} (нужно от 15).")
+
+    products = data.get('menu', {}).get('items', [])
+    if not products:
+        products = data.get('productCatalog', [])
+        
+    if len(products) >= 10:
+        scores['PROF-11.1'] = 1.5
+        details.append(f"✅ [PROF-11.1] Каталог заполнен: {len(products)} позиций (+1.5)")
+    else:
+        details.append(f"❌ [PROF-11.1] Мало товаров/услуг в каталоге: {len(products)} из 10.")
+
+    rating = data.get('rating', 0)
+    if rating >= 4.8:
+        scores['REP-27.2'] = 2.0
+        scores['REP-27.1'] = 2.0
+    elif rating >= 4.5:
+        scores['REP-27.1'] = 2.0
+
+    reviews_count = data.get('ratingsCount', 0)
+    if reviews_count >= 50:
+        scores['REP-28.1'] = 2.0
+
+    reviews_data = data.get('reviews', [])
+    response_times = []
+    
+    for rev in reviews_data:
+        if rev.get("businessComment") and rev.get("date") and rev.get("businessCommentDate"):
+            try:
+                r_date = datetime.strptime(rev["date"][:19], "%Y-%m-%dT%H:%M:%S")
+                c_date = datetime.strptime(rev["businessCommentDate"][:19], "%Y-%m-%dT%H:%M:%S")
+                response_times.append((c_date - r_date).days)
+            except Exception:
+                pass
+                
+    if response_times:
+        median_speed = np.median(response_times)
+        if median_speed <= 3:
+            scores['REP-30.2'] = 2.0
+            details.append(f"✅ [REP-30.2] Медиана ответов: {median_speed} дн. (+2.0)")
+        else:
+            details.append(f"❌ [REP-30.2] Медленные ответы: {median_speed} дн. (норма < 3).")
+
+    return sum(scores.values()), details
+
 def trim_for_ai(raw_data):
-    """Удаляет 95% системного мусора из JSON, оставляя только нужную SEO-суть"""
+    """Сжимает профиль Яндекса до текстовой выжимки для Gemini."""
     trimmed = {
-        "name": raw_data.get("name", ""),
+        "title": raw_data.get("title", ""),
         "description": raw_data.get("description", ""),
-        "rating": raw_data.get("rating", ""),
-        "reviewsCount": raw_data.get("reviewsCount", ""),
         "categories": raw_data.get("categories", []),
-        "website": raw_data.get("website", ""),
-        "phones": raw_data.get("phones", []),
-        "workingHours": raw_data.get("workingHours", []),
-        "attributes": raw_data.get("attributes", []), 
-        "is_verified": raw_data.get("is_verified", False),
-        "photo_count": len(raw_data.get("photos", [])),
+        "features": list(raw_data.get("features", {}).keys()),
+        "products": [],
         "reviews": []
     }
     
-    # Берем только 10 последних отзывов (Текст + Ответ владельца)
-    raw_reviews = raw_data.get("reviews", [])
-    for r in raw_reviews[:10]:
-        trimmed_rev = {
+    products = raw_data.get('menu', {}).get('items', [])
+    if products:
+        trimmed["products"] = [p.get("title", "") for p in products[:15]]
+    
+    for r in raw_data.get("reviews", [])[:10]:
+        trimmed["reviews"].append({
             "text": r.get("text", ""),
             "rating": r.get("rating", ""),
-            "owner_reply": r.get("ownerResponse", {}).get("text", "") if r.get("ownerResponse") else ""
-        }
-        if trimmed_rev["text"] or trimmed_rev["owner_reply"]:
-            trimmed["reviews"].append(trimmed_rev)
-            
+            "owner_reply": r.get("businessComment", "")
+        })
     return trimmed
 
 # ==========================================
-# 4. ИНТЕРФЕЙС STREAMLIT И ЛОГИКА
+# 4. ИНТЕРФЕЙС И ЛОГИКА
 # ==========================================
 st.set_page_config(page_title="MAP100 | Гибридный Аудит", page_icon="📍", layout="wide")
 
 st.title("📍 MAP100: AI-Аудитор Яндекс.Бизнеса")
-st.markdown("Вставьте ссылку на компанию. Повторные проверки осуществляются мгновенно из кэша.")
+st.markdown("Вставьте ссылку на компанию. Повторные проверки мгновенны (из кэша).")
 
 yandex_url = st.text_input("Ссылка на карточку (например: https://yandex.ru/maps/org/...)")
 
-# --- КНОПКА №1: ДЛЯ РАЗРАБОТЧИКА (БЕЗ ИСПОЛЬЗОВАНИЯ ИИ) ---
+# Кнопка для разработчика
 if st.button("🛠 Скачать сырой JSON (для разработки)", type="secondary"):
-    if not yandex_url:
-        st.warning("Пожалуйста, введите ссылку.")
-    else:
-        with st.spinner("Забираем полные данные из Apify..."):
-            try:
-                raw_yandex_data = fetch_apify_data(yandex_url) 
-                json_string = json.dumps(raw_yandex_data, ensure_ascii=False, indent=4)
-                
-                st.success("✅ Данные получены! Нажмите кнопку ниже, чтобы скачать файл.")
-                st.download_button(
-                    label="📥 Скачать yandex_raw_data.json",
-                    file_name="yandex_raw_data.json",
-                    mime="application/json",
-                    data=json_string,
-                )
-            except Exception as e:
-                st.error(f"Ошибка получения данных: {e}")
+    if yandex_url:
+        with st.spinner("Забираем данные..."):
+            raw = fetch_apify_data(yandex_url) 
+            st.download_button(
+                label="📥 Скачать yandex_raw_data.json",
+                file_name="yandex_raw_data.json",
+                mime="application/json",
+                data=json.dumps(raw, ensure_ascii=False, indent=4),
+            )
 
-# --- КНОПКА №2: ГЛАВНЫЙ БОЕВОЙ АУДИТ ---
+# БОЕВОЙ АУДИТ
 if st.button("🚀 Запустить аудит", type="primary"):
     if not yandex_url:
         st.warning("Пожалуйста, введите ссылку.")
@@ -138,50 +195,50 @@ if st.button("🚀 Запустить аудит", type="primary"):
         
         # ЧТЕНИЕ ПРАВИЛ
         with st.spinner("Шаг 0: Читаем правила MAP100 из Google Таблиц..."):
-            rules_sheet = doc.worksheet("Rules")
-            rules_data = rules_sheet.get_all_records()
-            dynamic_rules = ""
-            for row in rules_data:
-                if row.get('Код') and row.get('Критерий'):
-                    dynamic_rules += f"- [{row['Код']}] {row['Критерий']} (Макс. балл {row['Балл']}): {row['Инструкция для ИИ']}\n"
+            rules_data = doc.worksheet("Rules").get_all_records()
+            dynamic_rules = "".join([f"- [{r['Код']}] {r['Критерий']} (Макс {r['Балл']}): {r['Инструкция для ИИ']}\n" for r in rules_data if r.get('Код')])
 
-        # ПАРСИНГ И ОЧИСТКА
-        with st.spinner("Шаг 1: Собираем данные (или берем из кэша)..."):
+        # СБОР ДАННЫХ И PYTHON-ОЦЕНКА
+        with st.spinner("Шаг 1: Python анализирует объективные данные..."):
             try:
                 raw_yandex_data = fetch_apify_data(yandex_url)
-                clean_data = trim_for_ai(raw_yandex_data)
                 
-                # Показываем вес в байтах, чтобы избежать нулей
-                original_size = len(json.dumps(raw_yandex_data))
-                clean_size = len(json.dumps(clean_data))
-                st.success(f"✅ Данные готовы! Оптимизировано с {original_size} байт до {clean_size} байт.")
+                # Математика Python
+                python_score, python_details = calculate_python_scores(raw_yandex_data)
+                
+                # Подготовка к ИИ
+                clean_data = trim_for_ai(raw_yandex_data)
                 
             except Exception as e:
                 st.error(f"Ошибка сбора данных: {e}")
                 st.stop()
 
         # АНАЛИЗ GEMINI
-        with st.spinner("Шаг 2: Gemini анализирует оптимизированные данные..."):
+        with st.spinner("Шаг 2: Gemini анализирует тексты, SEO и смыслы..."):
             try:
                 SYSTEM_INSTRUCTION = f"""
-                Ты — эксперт по локальному SEO. Проведи аудит карточки Яндекс.Бизнеса СТРОГО по правилам MAP100.
+                Ты — эксперт по локальному SEO. Мы проводим аудит карточки Яндекс.Бизнеса по 100-балльной системе MAP100.
+                МЫ ИСПОЛЬЗУЕМ ГИБРИДНУЮ АРХИТЕКТУРУ. 
                 
-                ПРАВИЛА И ВЕСА БАЛЛОВ:
+                Автоматический скрипт УЖЕ проверил объективные параметры (график, галочки, фото) и начислил {python_score} баллов.
+                Вот лог его проверки:
+                {chr(10).join(python_details)}
+                
+                Твоя задача — проверить карточку по оставшимся ПРАВИЛАМ (эмоции, SEO-ключи, смыслы УТП, ответы на отзывы):
                 {dynamic_rules}
                 
-                ИНСТРУКЦИЯ:
-                Данные были предварительно очищены от мусора. Если информации для проверки конкретного критерия нет в JSON — смело ставь за него 0 баллов. Оцени только то, что видишь.
-                Верни ответ СТРОГО в формате JSON без markdown разметки:
+                Оцени предоставленный текстовый JSON. Если данных нет, ставь 0 за критерий.
+                СЛОЖИ баллы скрипта ({python_score}) и свои заработанные баллы.
+                ВЕРНИ ОТВЕТ СТРОГО В ФОРМАТЕ JSON без markdown разметки:
                 {{
                     "company_name": "", 
                     "business_niche": "", 
-                    "total_score": 0.0, 
-                    "detailed_report": "Общий вывод по главным ошибкам.", 
-                    "action_plan": ["шаг 1", "шаг 2"]
+                    "total_score": <ЗДЕСЬ СУММА БАЛЛОВ PYTHON + ТВОИ БАЛЛЫ>, 
+                    "detailed_report": "Общий аналитический вывод. Упомяни и находки автоматического скрипта, и свой семантический анализ текстов.", 
+                    "action_plan": ["шаг 1", "шаг 2", "шаг 3"]
                 }}
                 """
                 
-                # Используем стабильную модель (лимиты сбросятся в 10:00 МСК)
                 model = genai.GenerativeModel(
                     model_name="gemini-2.0-flash", 
                     system_instruction=SYSTEM_INSTRUCTION,
