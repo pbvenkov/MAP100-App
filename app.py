@@ -268,17 +268,20 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 prompt = f"Данные для аудита:\n{json.dumps(clean_data, ensure_ascii=False)}"
                 response = model.generate_content(prompt)
                 
-                # --- БРОНЕБОЙНАЯ ОЧИСТКА JSON ---
+                # --- БРОНЕБОЙНАЯ ОЧИСТКА JSON ЧЕРЕЗ RAW_DECODE ---
                 raw_text = response.text.strip()
                 start_idx = raw_text.find('{')
-                end_idx = raw_text.rfind('}')
                 
-                if start_idx != -1 and end_idx != -1:
-                    json_clean = raw_text[start_idx:end_idx+1]
-                    ai_report = json.loads(json_clean)
+                if start_idx != -1:
+                    try:
+                        json_to_decode = raw_text[start_idx:]
+                        # Декодер прочитает только валидный JSON и проигнорирует "хвосты"
+                        ai_report, idx = json.JSONDecoder().raw_decode(json_to_decode)
+                    except Exception:
+                        ai_report = json.loads(raw_text)
                 else:
                     ai_report = json.loads(raw_text)
-                # --------------------------------
+                # ------------------------------------------------
                 
                 st.success("✅ Анализ завершен!")
                 
