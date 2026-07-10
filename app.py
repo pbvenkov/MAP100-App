@@ -190,18 +190,27 @@ with col_btn1:
             st.warning("Сначала введите ссылку выше.")
 
 with col_btn2:
-    if st.button("🛠 Узнать доступные модели ИИ", type="secondary"):
-        with st.spinner("Запрашиваем список у серверов Google..."):
+    if st.button("🛠 Узнать РАБОЧИЕ модели (Глубокий тест)", type="secondary"):
+        with st.spinner("Простукиваем серверы Google (займет секунд 15-20)..."):
+            working_models = []
             try:
-                available_models = []
                 for m in genai.list_models():
                     if 'generateContent' in m.supported_generation_methods:
-                        available_models.append(m.name.replace('models/', ''))
+                        model_name = m.name.replace('models/', '')
+                        try:
+                            test_model = genai.GenerativeModel(model_name)
+                            test_model.generate_content("1")
+                            working_models.append(model_name)
+                        except Exception:
+                            pass 
                 
-                st.success("✅ Вот список моделей для вашего ключа:")
-                st.write(available_models)
+                if working_models:
+                    st.success("✅ Вот модели, которые РЕАЛЬНО работают и отвечают на запросы:")
+                    st.write(working_models)
+                else:
+                    st.error("Ни одна модель не пропустила запрос.")
             except Exception as e:
-                st.error(f"Ошибка проверки моделей: {e}")
+                st.error(f"Ошибка проверки: {e}")
 
 st.divider()
 
@@ -251,7 +260,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 """
                 
                 model = genai.GenerativeModel(
-                    model_name="gemini-flash-latest",
+                    model_name="gemini-flash-latest", 
                     system_instruction=SYSTEM_INSTRUCTION,
                     generation_config={"response_mime_type": "application/json", "temperature": 0.1}
                 )
@@ -259,7 +268,18 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 prompt = f"Данные для аудита:\n{json.dumps(clean_data, ensure_ascii=False)}"
                 response = model.generate_content(prompt)
                 
-                ai_report = json.loads(response.text)
+                # --- БРОНЕБОЙНАЯ ОЧИСТКА JSON ---
+                raw_text = response.text.strip()
+                start_idx = raw_text.find('{')
+                end_idx = raw_text.rfind('}')
+                
+                if start_idx != -1 and end_idx != -1:
+                    json_clean = raw_text[start_idx:end_idx+1]
+                    ai_report = json.loads(json_clean)
+                else:
+                    ai_report = json.loads(raw_text)
+                # --------------------------------
+                
                 st.success("✅ Анализ завершен!")
                 
                 st.divider()
