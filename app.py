@@ -70,20 +70,7 @@ def fetch_apify_data(yandex_url):
 # ==========================================
 def calculate_python_scores(data):
     """Считает баллы по объективным метрикам без ИИ."""
-    # ЖЕСТКАЯ ФИКСАЦИЯ: Изначально ставим 0.0 всем метрикам, за которые отвечает Python
-    scores = {
-        'PROF-01.1': 0.0,
-        'PROF-05.1': 0.0,
-        'PROF-07.1': 0.0,
-        'PROF-11.1': 0.0,
-        'PROF-12.1': 0.0,
-        'CONT-36.1': 0.0,
-        'CONT-36.2': 0.0,
-        'REP-27.1': 0.0,
-        'REP-27.2': 0.0,
-        'REP-28.1': 0.0,
-        'REP-30.2': 0.0
-    }
+    scores = {}
     details = []
 
     if len(data.get('title', '')) > 2:
@@ -234,8 +221,13 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
         
         with st.spinner("Шаг 0: Читаем правила MAP100 из Google Таблиц..."):
             rules_data = doc.worksheet("Rules").get_all_records()
-            # Отфильтруем пустые строки, чтобы ИИ не путался
-            ai_rules_list = [r for r in rules_data if str(r.get('Код', '')).strip()]
+            
+            # --- СУПЕР-ОПТИМИЗАЦИЯ ПРОМПТА ---
+            # Отдаем нейросети ТОЛЬКО те правила, где написано "ИИ"
+            ai_rules_list = [
+                r for r in rules_data 
+                if str(r.get('Код', '')).strip() and 'ИИ' in str(r.get('Как считаем', ''))
+            ]
             dynamic_rules = "".join([f"- [{r['Код']}] {r['Критерий']} (Макс {r['Балл']}): {r['Инструкция для ИИ']}\n" for r in ai_rules_list])
 
         with st.spinner("Шаг 1: Python анализирует объективные данные..."):
@@ -250,7 +242,6 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
 
         with st.spinner("Шаг 2: Gemini анализирует тексты, SEO и смыслы..."):
             try:
-                # ДОБАВЛЕН ЖЕСТКИЙ ПРИКАЗ ИИ НЕ ПРОПУСКАТЬ КОДЫ
                 SYSTEM_INSTRUCTION = f"""
                 Ты — эксперт по локальному SEO. Мы проводим аудит карточки Яндекс.Бизнеса по 100-балльной системе MAP100.
                 МЫ ИСПОЛЬЗУЕМ ГИБРИДНУЮ АРХИТЕКТУРУ. 
@@ -259,19 +250,18 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 Вот лог его проверки:
                 {chr(10).join(python_details)}
                 
-                Твоя задача — проверить карточку по оставшимся ПРАВИЛАМ:
+                Твоя задача — проверить карточку ИСКЛЮЧИТЕЛЬНО по оставшимся смысловым правилам:
                 {dynamic_rules}
                 
                 КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО ДЛЯ JSON:
                 В словаре "ai_criteria_scores" ты ОБЯЗАН перечислить ВСЕ ДО ЕДИНОГО коды из списка правил выше.
                 Если у тебя нет данных для оценки или критерий не выполнен, ставь строго 0.0.
-                ЗАПРЕЩЕНО пропускать коды. Сколько кодов в правилах — столько ключей должно быть в твоем словаре.
                 
                 ВЕРНИ ОТВЕТ СТРОГО В ФОРМАТЕ JSON:
                 {{
                     "company_name": "", 
                     "business_niche": "", 
-                    "ai_criteria_scores": {{"КОД-1": 1.5, "КОД-2": 0.0, "ВЫВЕДИ_СЮДА_АБСОЛЮТНО_ВСЕ_КОДЫ": 0.0}},
+                    "ai_criteria_scores": {{"КОД-1": 1.5, "ВЫВЕДИ_СЮДА_ВСЕ_КОДЫ_ИЗ_СПИСКА": 0.0}},
                     "total_score": <ЗДЕСЬ СУММА БАЛЛОВ PYTHON + ТВОИ БАЛЛЫ>, 
                     "detailed_report": "Общий аналитический вывод.", 
                     "action_plan": ["шаг 1", "шаг 2"]
@@ -301,6 +291,22 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 
                 st.success("✅ Анализ завершен!")
                 
+                # --- УМНОЕ СЛИЯНИЕ БАЛЛОВ ---
+                all_scores = {}
+                
+                # 1. Заполняем абсолютно все коды из таблицы нулями, чтобы никто не потерялся
+                for r in rules_data:
+                    code = str(r.get('Код', '')).strip()
+                    if code:
+                        all_scores[code] = 0.0
+                
+                # 2. Обновляем реальными оценками от Python-скрипта
+                all_scores.update(python_scores_dict)
+                
+                # 3. Обновляем оценками от ИИ
+                all_scores.update(ai_report.get('ai_criteria_scores', {}))
+                
+                # --- ВЫВОД НА ЭКРАН ---
                 st.divider()
                 col1, col2 = st.columns([3, 1])
                 with col1:
@@ -313,9 +319,6 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                     else: color = "inverse"
                     st.metric("Общий балл MAP100", f"{score} / 100", delta_color=color)
 
-                all_scores = python_scores_dict.copy()
-                all_scores.update(ai_report.get('ai_criteria_scores', {}))
-
                 with st.expander("📊 Детализация баллов по критериям (Нажмите для просмотра)"):
                     st.json(all_scores)
 
@@ -327,6 +330,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 for i, step in enumerate(ai_report.get('action_plan', [])):
                     st.info(f"**Шаг {i+1}:** {step}")
 
+                # --- ЗАПИСЬ В GOOGLE ТАБЛИЦУ ---
                 try:
                     results_sheet = doc.worksheet("Results")
                     headers = results_sheet.row_values(1)
