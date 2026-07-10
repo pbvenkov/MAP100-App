@@ -137,4 +137,5 @@ def calculate_python_scores(data):
             scores['REP-30.2'] = 2.0
             details.append(f"✅ [REP-30.2] Медиана ответов: {median_speed} дн. (+2.0)")
         else:
-            details.append(f"❌ [REP-30.2] Медленные ответы: {median_speed} дн. (
+            else:
+    details.append(f"❌ [REP-30.2] Медленные ответы: {median_speed} дн. (норма < 3).")
