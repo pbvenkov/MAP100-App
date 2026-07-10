@@ -21,8 +21,12 @@ genai.configure(api_key=GEMINI_API_KEY)
 @st.cache_resource
 def init_google_sheets():
     try:
+        # Читаем сырой текст ключа и превращаем в JSON
         creds_dict = json.loads(st.secrets["GCP_CREDENTIALS"])
-        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets", 
+            "https://www.googleapis.com/auth/drive"
+        ]
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         gc = gspread.authorize(credentials)
         return gc.open_by_url(st.secrets["SPREADSHEET_URL"])
@@ -66,7 +70,7 @@ def fetch_apify_data(yandex_url):
 # 3. ФУНКЦИЯ ОЧИСТКИ (TRIMMER) ДЛЯ ЭКОНОМИИ ТОКЕНОВ
 # ==========================================
 def trim_for_ai(raw_data):
-    """Удаляет 95% мусора из JSON, оставляя только нужную SEO-суть"""
+    """Удаляет 95% системного мусора из JSON, оставляя только нужную SEO-суть"""
     trimmed = {
         "name": raw_data.get("name", ""),
         "description": raw_data.get("description", ""),
@@ -96,7 +100,7 @@ def trim_for_ai(raw_data):
     return trimmed
 
 # ==========================================
-# 4. ИНТЕРФЕЙС STREAMLIT
+# 4. ИНТЕРФЕЙС STREAMLIT И ЛОГИКА
 # ==========================================
 st.set_page_config(page_title="MAP100 | Гибридный Аудит", page_icon="📍", layout="wide")
 
@@ -105,6 +109,27 @@ st.markdown("Вставьте ссылку на компанию. Повторн
 
 yandex_url = st.text_input("Ссылка на карточку (например: https://yandex.ru/maps/org/...)")
 
+# --- КНОПКА №1: ДЛЯ РАЗРАБОТЧИКА (БЕЗ ИСПОЛЬЗОВАНИЯ ИИ) ---
+if st.button("🛠 Скачать сырой JSON (для разработки)", type="secondary"):
+    if not yandex_url:
+        st.warning("Пожалуйста, введите ссылку.")
+    else:
+        with st.spinner("Забираем полные данные из Apify..."):
+            try:
+                raw_yandex_data = fetch_apify_data(yandex_url) 
+                json_string = json.dumps(raw_yandex_data, ensure_ascii=False, indent=4)
+                
+                st.success("✅ Данные получены! Нажмите кнопку ниже, чтобы скачать файл.")
+                st.download_button(
+                    label="📥 Скачать yandex_raw_data.json",
+                    file_name="yandex_raw_data.json",
+                    mime="application/json",
+                    data=json_string,
+                )
+            except Exception as e:
+                st.error(f"Ошибка получения данных: {e}")
+
+# --- КНОПКА №2: ГЛАВНЫЙ БОЕВОЙ АУДИТ ---
 if st.button("🚀 Запустить аудит", type="primary"):
     if not yandex_url:
         st.warning("Пожалуйста, введите ссылку.")
@@ -126,10 +151,10 @@ if st.button("🚀 Запустить аудит", type="primary"):
                 raw_yandex_data = fetch_apify_data(yandex_url)
                 clean_data = trim_for_ai(raw_yandex_data)
                 
-                # Показываем, насколько мы сжали данные
-                original_size = len(json.dumps(raw_yandex_data)) // 1024
-                clean_size = len(json.dumps(clean_data)) // 1024
-                st.success(f"✅ Данные готовы! Оптимизировано с {original_size} КБ до {clean_size} КБ.")
+                # Показываем вес в байтах, чтобы избежать нулей
+                original_size = len(json.dumps(raw_yandex_data))
+                clean_size = len(json.dumps(clean_data))
+                st.success(f"✅ Данные готовы! Оптимизировано с {original_size} байт до {clean_size} байт.")
                 
             except Exception as e:
                 st.error(f"Ошибка сбора данных: {e}")
@@ -156,7 +181,7 @@ if st.button("🚀 Запустить аудит", type="primary"):
                 }}
                 """
                 
-                # Используем gemini-2.0-flash (он отлично работает с маленькими объемами)
+                # Используем стабильную модель (лимиты сбросятся в 10:00 МСК)
                 model = genai.GenerativeModel(
                     model_name="gemini-2.0-flash", 
                     system_instruction=SYSTEM_INSTRUCTION,
@@ -169,7 +194,7 @@ if st.button("🚀 Запустить аудит", type="primary"):
                 ai_report = json.loads(response.text)
                 st.success("✅ Анализ завершен!")
                 
-                # ВЫВОД ОТЧЕТА
+                # ВЫВОД ОТЧЕТА НА ЭКРАН
                 st.divider()
                 col1, col2 = st.columns([3, 1])
                 with col1:
