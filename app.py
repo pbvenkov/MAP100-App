@@ -240,7 +240,7 @@ if st.button("🚀 Запустить аудит", type="primary"):
                 """
                 
                 model = genai.GenerativeModel(
-                    model_name="gemini-2.5-flash",
+                    model_name="gemini-1.5-flash",
                     system_instruction=SYSTEM_INSTRUCTION,
                     generation_config={"response_mime_type": "application/json", "temperature": 0.1}
                 )
