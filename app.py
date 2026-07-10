@@ -35,6 +35,12 @@ def init_google_sheets():
         st.error(f"❌ Ошибка подключения к Google Sheets: {e}")
         st.stop()
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_rules_from_sheets():
+    """Читает правила один раз в минуту, чтобы интерфейс работал быстро."""
+    doc = init_google_sheets()
+    return doc.worksheet("Rules").get_all_records()
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_apify_data(yandex_url):
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
@@ -168,6 +174,38 @@ def trim_for_ai(raw_data):
 # ==========================================
 st.set_page_config(page_title="MAP100 | Гибридный Аудит", page_icon="📍", layout="wide")
 
+try:
+    rules_data = get_rules_from_sheets()
+except Exception as e:
+    st.error("⚠️ Не удалось загрузить базу правил из Google Таблицы.")
+    st.stop()
+
+# --- САЙДБАР: РЕЖИМ ЭКСПЕРТА (АДМИНКА ИЗ ТАБЛИЦЫ) ---
+expert_rules = [r for r in rules_data if str(r.get('Режим Эксперта', '')).strip().lower() in ['да', 'yes', '+', '1', 'true']]
+
+expert_mode_enabled = False
+expert_overrides = {}
+
+if expert_rules:
+    with st.sidebar:
+        st.header("🧠 Режим Эксперта")
+        expert_mode_enabled = st.toggle("Включить ручной контроль")
+        
+        if expert_mode_enabled:
+            st.info("Эти оценки имеют наивысший приоритет. Они заменят любые расчеты ИИ или скрипта.")
+            for r in expert_rules:
+                code = str(r.get('Код', '')).strip()
+                name = str(r.get('Критерий', '')).strip()
+                try:
+                    max_score = float(str(r.get('Балл', '0')).replace(',', '.'))
+                except Exception:
+                    max_score = 1.0
+                
+                # Создаем числовое поле ввода для каждой метрики
+                val = st.number_input(f"[{code}] {name} (Макс: {max_score})", min_value=0.0, max_value=max_score, value=0.0, step=0.1)
+                expert_overrides[code] = val
+
+
 st.title("📍 MAP100: AI-Аудитор Яндекс.Бизнеса")
 st.markdown("Вставьте ссылку на компанию. Повторные проверки мгновенны (из кэша).")
 
@@ -189,8 +227,8 @@ with col_btn1:
             st.warning("Сначала введите ссылку выше.")
 
 with col_btn2:
-    if st.button("🛠 Узнать РАБОЧИЕ модели (Глубокий тест)", type="secondary"):
-        with st.spinner("Простукиваем серверы Google (займет секунд 15-20)..."):
+    if st.button("🛠 Узнать РАБОЧИЕ модели", type="secondary"):
+        with st.spinner("Простукиваем серверы Google..."):
             working_models = []
             try:
                 for m in genai.list_models():
@@ -204,7 +242,7 @@ with col_btn2:
                             pass 
                 
                 if working_models:
-                    st.success("✅ Вот модели, которые РЕАЛЬНО работают и отвечают на запросы:")
+                    st.success("✅ Работают:")
                     st.write(working_models)
                 else:
                     st.error("Ни одна модель не пропустила запрос.")
@@ -219,11 +257,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
     else:
         doc = init_google_sheets()
         
-        with st.spinner("Шаг 0: Читаем правила MAP100 из Google Таблиц..."):
-            rules_data = doc.worksheet("Rules").get_all_records()
-            
-            # --- СУПЕР-ОПТИМИЗАЦИЯ ПРОМПТА ---
-            # Отдаем нейросети ТОЛЬКО те правила, где написано "ИИ"
+        with st.spinner("Шаг 0: Читаем правила ИИ из базы..."):
             ai_rules_list = [
                 r for r in rules_data 
                 if str(r.get('Код', '')).strip() and 'ИИ' in str(r.get('Как считаем', ''))
@@ -244,9 +278,8 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
             try:
                 SYSTEM_INSTRUCTION = f"""
                 Ты — эксперт по локальному SEO. Мы проводим аудит карточки Яндекс.Бизнеса по 100-балльной системе MAP100.
-                МЫ ИСПОЛЬЗУЕМ ГИБРИДНУЮ АРХИТЕКТУРУ. 
                 
-                Автоматический скрипт УЖЕ проверил объективные параметры (график, галочки, фото) и начислил {python_score} баллов.
+                Автоматический скрипт УЖЕ проверил объективные параметры и начислил {python_score} баллов.
                 Вот лог его проверки:
                 {chr(10).join(python_details)}
                 
@@ -262,7 +295,6 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                     "company_name": "", 
                     "business_niche": "", 
                     "ai_criteria_scores": {{"КОД-1": 1.5, "ВЫВЕДИ_СЮДА_ВСЕ_КОДЫ_ИЗ_СПИСКА": 0.0}},
-                    "total_score": <ЗДЕСЬ СУММА БАЛЛОВ PYTHON + ТВОИ БАЛЛЫ>, 
                     "detailed_report": "Общий аналитический вывод.", 
                     "action_plan": ["шаг 1", "шаг 2"]
                 }}
@@ -291,20 +323,28 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 
                 st.success("✅ Анализ завершен!")
                 
-                # --- УМНОЕ СЛИЯНИЕ БАЛЛОВ ---
+                # --- УМНОЕ СЛИЯНИЕ БАЛЛОВ С УЧЕТОМ ЭКСПЕРТА ---
                 all_scores = {}
                 
-                # 1. Заполняем абсолютно все коды из таблицы нулями, чтобы никто не потерялся
+                # 1. Всем 95 метрикам ставим 0
                 for r in rules_data:
                     code = str(r.get('Код', '')).strip()
                     if code:
                         all_scores[code] = 0.0
                 
-                # 2. Обновляем реальными оценками от Python-скрипта
+                # 2. Накатываем оценки Скрипта
                 all_scores.update(python_scores_dict)
                 
-                # 3. Обновляем оценками от ИИ
+                # 3. Накатываем оценки ИИ
                 all_scores.update(ai_report.get('ai_criteria_scores', {}))
+                
+                # 4. РЕЖИМ ЭКСПЕРТА: Перезаписываем ручными оценками
+                if expert_mode_enabled:
+                    for code, manual_val in expert_overrides.items():
+                        all_scores[code] = manual_val
+                
+                # 5. Считаем реальный, выверенный Итоговый Балл
+                final_total_score = sum(all_scores.values())
                 
                 # --- ВЫВОД НА ЭКРАН ---
                 st.divider()
@@ -313,11 +353,10 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                     st.subheader(f"🏢 {ai_report.get('company_name', 'Без названия')}")
                     st.caption(f"Ниша: {ai_report.get('business_niche', 'Не определена')}")
                 with col2:
-                    score = ai_report.get('total_score', 0)
-                    if score >= 80: color = "normal"
-                    elif score >= 50: color = "off"
+                    if final_total_score >= 80: color = "normal"
+                    elif final_total_score >= 50: color = "off"
                     else: color = "inverse"
-                    st.metric("Общий балл MAP100", f"{score} / 100", delta_color=color)
+                    st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
 
                 with st.expander("📊 Детализация баллов по критериям (Нажмите для просмотра)"):
                     st.json(all_scores)
@@ -357,7 +396,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                         elif h == "Ссылка": row_data.append(yandex_url)
                         elif h == "Компания": row_data.append(ai_report.get('company_name', ''))
                         elif h == "Ниша": row_data.append(ai_report.get('business_niche', ''))
-                        elif h == "Общий балл": row_data.append(ai_report.get('total_score', 0))
+                        elif h == "Общий балл": row_data.append(final_total_score)
                         else: row_data.append(all_scores.get(h, 0.0))
 
                     results_sheet.append_row(row_data)
