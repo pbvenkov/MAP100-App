@@ -38,7 +38,6 @@ def init_google_sheets():
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_rules_from_sheets():
-    """Читает правила один раз в минуту, чтобы интерфейс работал быстро."""
     doc = init_google_sheets()
     return doc.worksheet("Rules").get_all_records()
 
@@ -80,7 +79,6 @@ def calculate_python_scores(data):
     scores = {}
     details = []
 
-    # Базовые данные карточки
     title = data.get('title', '')
     description = data.get('description', '')
     categories = data.get('categories', [])
@@ -88,20 +86,16 @@ def calculate_python_scores(data):
     links = data.get('links', []) + data.get('socials', [])
     features = data.get('features', [])
     
-    # PROF-01.1 Название заполнено (0.5)
     if len(title) > 2:
         scores['PROF-01.1'] = 0.5
 
-    # PROF-03.1 2-3 доп. категории (0.5)
     if len(categories) > 1:
         scores['PROF-03.1'] = 0.5
         details.append(f"✅ [PROF-03.1] Доп. категории: {len(categories)-1} шт.")
 
-    # PROF-05.1 Основной телефон (1.0)
     if len(phones) > 0:
         scores['PROF-05.1'] = 1.0
         
-    # PROF-05.2 Формат телефона (0.5)
     valid_phone = False
     for p in phones:
         p_str = str(p).lower()
@@ -111,15 +105,12 @@ def calculate_python_scores(data):
     if valid_phone:
         scores['PROF-05.2'] = 0.5
 
-    # PROF-07.1 Стандартный график (1.0)
     if len(data.get('schedule', data.get('workingHours', []))) >= 7:
         scores['PROF-07.1'] = 1.0
 
-    # PROF-08.1 Базовые атрибуты (0.5)
     if len(features) > 0:
         scores['PROF-08.1'] = 0.5
 
-    # PROF-10.1 Объем описания > 1500 (0.5)
     desc_len = len(description)
     if desc_len >= 1500:
         scores['PROF-10.1'] = 0.5
@@ -127,14 +118,12 @@ def calculate_python_scores(data):
     else:
         details.append(f"❌ [PROF-10.1] Описание короткое: {desc_len}/1500 симв.")
 
-    # PROF-12.1 Синяя галочка (4.0)
     if data.get('isVerifiedOwner') == True:
         scores['PROF-12.1'] = 4.0
         details.append("✅ [PROF-12.1] Аккаунт верифицирован (+4.0)")
     else:
         details.append("❌ [PROF-12.1] Отсутствует Синяя галочка (0.0)")
 
-    # ФОТОГРАФИИ
     photo_count = data.get('photoCount', data.get('photosCount', 0))
     if photo_count >= 15:
         scores['CONT-36.1'] = 1.5
@@ -142,7 +131,6 @@ def calculate_python_scores(data):
             scores['CONT-36.2'] = 1.0
         details.append(f"✅ [CONT-36] Галерея: {photo_count} фото.")
 
-    # ТОВАРЫ И КАТАЛОГ
     products = data.get('menu', {}).get('items', [])
     if not products:
         products = data.get('productCatalog', [])
@@ -159,39 +147,31 @@ def calculate_python_scores(data):
         
         if (with_photo / len(products)) >= 0.8:
             scores['PROF-11.2'] = 1.0
-            
         if (with_price / len(products)) >= 0.8:
             scores['PROF-11.3'] = 1.0
-            
         if (with_desc / len(products)) >= 0.8:
             scores['PROF-11.4'] = 1.0
-            
         if len(categories_set) >= 2:
             scores['PROF-11.5'] = 0.5
     else:
         details.append(f"❌ [PROF-11.1] Мало товаров в каталоге: {len(products)} из 10. Детальный анализ пропущен.")
 
-    # ССЫЛКИ, СОЦСЕТИ И ОНЛАЙН-ЗАПИСЬ
     links_str = " ".join(str(l).lower() for l in links)
     features_str = " ".join(str(f).lower() for f in features)
     
     if "vk.com" in links_str or "youtube" in links_str or "dzen" in links_str:
         scores['PROF-13.2'] = 0.5
-        
     if "t.me" in links_str or "tg://" in links_str or "wa.me" in links_str or "whatsapp" in links_str:
         scores['PROF-13.1'] = 0.5
         
-    # CONV-48.1 Кнопка онлайн-записи (3.0)
     booking_markers = ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'запись онлайн']
     if any(b in links_str or b in features_str for b in booking_markers):
         scores['CONV-48.1'] = 3.0 
         details.append("✅ [CONV-48.1] Найдена кнопка онлайн-записи (+3.0)")
 
-    # CONV-50.1 Чат с компанией
     if "chat" in features_str or data.get('isChatEnabled') == True:
          scores['CONV-50.1'] = 1.0
          
-    # РЕЙТИНГИ И ОТЗЫВЫ
     rating = data.get('rating', 0)
     if rating >= 4.8:
         scores['REP-27.2'] = 2.0
@@ -207,7 +187,6 @@ def calculate_python_scores(data):
     response_times = []
     
     if reviews_data:
-        # REP-29.1 Свежий отзыв (< 14 дней)
         last_rev_date_str = reviews_data[0].get("date")
         if last_rev_date_str:
             try:
@@ -236,7 +215,6 @@ def calculate_python_scores(data):
     return sum(scores.values()), details, scores
 
 def trim_for_ai(raw_data):
-    """Сжимает профиль Яндекса до текстовой выжимки для Gemini."""
     trimmed = {
         "title": raw_data.get("title", ""),
         "description": raw_data.get("description", ""),
@@ -293,48 +271,10 @@ if expert_rules:
                 val = st.number_input(f"[{code}] {name} (Макс: {max_score})", min_value=0.0, max_value=max_score, value=0.0, step=0.1)
                 expert_overrides[code] = val
 
-
 st.title("📍 MAP100: AI-Аудитор Яндекс.Бизнеса")
 st.markdown("Вставьте ссылку на компанию. Повторные проверки мгновенны (из кэша).")
 
 yandex_url = st.text_input("Ссылка на карточку (например: https://yandex.ru/maps/org/...)")
-
-col_btn1, col_btn2 = st.columns(2)
-with col_btn1:
-    if st.button("🛠 Скачать сырой JSON", type="secondary"):
-        if yandex_url:
-            with st.spinner("Забираем данные..."):
-                raw = fetch_apify_data(yandex_url) 
-                st.download_button(
-                    label="📥 Скачать yandex_raw_data.json",
-                    file_name="yandex_raw_data.json",
-                    mime="application/json",
-                    data=json.dumps(raw, ensure_ascii=False, indent=4),
-                )
-        else:
-            st.warning("Сначала введите ссылку выше.")
-
-with col_btn2:
-    if st.button("🛠 Проверить серверы AI", type="secondary"):
-        with st.spinner("Простукиваем API..."):
-            working_models = []
-            try:
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        model_name = m.name.replace('models/', '')
-                        try:
-                            test_model = genai.GenerativeModel(model_name)
-                            test_model.generate_content("1")
-                            working_models.append(model_name)
-                        except Exception:
-                            pass 
-                if working_models:
-                    st.success("✅ Работают:")
-                    st.write(working_models)
-            except Exception as e:
-                st.error(f"Ошибка проверки: {e}")
-
-st.divider()
 
 if st.button("🚀 Запустить аудит", type="primary", use_container_width=True):
     if not yandex_url:
@@ -361,6 +301,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
 
         with st.spinner("Шаг 2: Gemini анализирует тексты, SEO и смыслы..."):
             try:
+                # ВОТ ЗДЕСЬ ЖЕСТКАЯ БРОНЯ В ПРОМПТЕ
                 SYSTEM_INSTRUCTION = f"""
                 Ты — эксперт по локальному SEO. Мы проводим аудит карточки Яндекс.Бизнеса по 100-балльной системе MAP100.
                 
@@ -371,9 +312,12 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 Твоя задача — проверить карточку ИСКЛЮЧИТЕЛЬНО по оставшимся смысловым правилам:
                 {dynamic_rules}
                 
-                КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО ДЛЯ JSON:
-                В словаре "ai_criteria_scores" ты ОБЯЗАН перечислить ВСЕ ДО ЕДИНОГО коды из списка правил выше.
-                Если у тебя нет данных для оценки или критерий не выполнен, ставь строго 0.0.
+                КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА ДЛЯ ОЦЕНОК (ШТРАФ ЗА НАРУШЕНИЕ):
+                1. В словаре "ai_criteria_scores" ты ОБЯЗАН перечислить ВСЕ ДО ЕДИНОГО коды из списка выше.
+                2. Оценка за критерий НИКОГДА не может превышать цифру, указанную в скобках (Макс ...). 
+                   Ты не считаешь количество упоминаний! Ты ставишь балл за факт наличия (от 0.0 до Макс). 
+                   Нельзя ставить 15 или 20, если максимум 3.0!
+                3. Если нет данных — ставь строго 0.0.
                 
                 ВЕРНИ ОТВЕТ СТРОГО В ФОРМАТЕ JSON:
                 {{
@@ -385,6 +329,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 }}
                 """
                 
+                # ИСПОЛЬЗУЕМ СТАБИЛЬНУЮ МОДЕЛЬ!
                 model = genai.GenerativeModel(
                     model_name="gemini-flash-latest", 
                     system_instruction=SYSTEM_INSTRUCTION,
@@ -408,7 +353,9 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 
                 st.success("✅ Анализ завершен!")
                 
-                # --- УМНОЕ СЛИЯНИЕ БАЛЛОВ С УЧЕТОМ ЭКСПЕРТА И ЖЕСТКИХ ЛИМИТОВ ---
+                # ========================================================
+                # ВОТ ЗДЕСЬ АБСОЛЮТНАЯ ЗАЩИТА НА СТОРОНЕ PYTHON (ОБРЕЗАНИЕ БАЛЛОВ)
+                # ========================================================
                 all_scores = {}
                 raw_ai_scores = ai_report.get('ai_criteria_scores', {})
                 
@@ -430,7 +377,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                     if code in python_scores_dict:
                         all_scores[code] = min(float(python_scores_dict[code]), max_score)
                         
-                    # Приоритет 2: Оценка от ИИ (ЖЕСТКО ОБРЕЗАЕМ ГАЛЛЮЦИНАЦИИ)
+                    # Приоритет 2: Оценка от ИИ (ЖЕСТКО ОБРЕЗАЕМ ГАЛЛЮЦИНАЦИИ ДО МАКСИМУМА)
                     elif code in raw_ai_scores:
                         try:
                             ai_val = float(raw_ai_scores[code])
@@ -444,7 +391,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                         if code in all_scores:
                             all_scores[code] = manual_val
                 
-                # Итоговый подсчет реальных баллов
+                # Итоговый подсчет выверенных баллов
                 final_total_score = sum(all_scores.values())
                 
                 # --- ВЫВОД НА ЭКРАН ---
