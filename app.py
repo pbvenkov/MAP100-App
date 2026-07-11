@@ -55,10 +55,16 @@ def fetch_apify_data(yandex_url):
     default_dataset_id = run_data['data']['defaultDatasetId']
 
     status = "RUNNING"
+    retries = 0
+    max_retries = 30 # ЗАЩИТА 2: Таймаут 2.5 минуты
+    
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
+        if retries >= max_retries:
+            raise Exception("⏱ Превышено время ожидания от парсера (таймаут). Попробуйте позже.")
         time.sleep(5)
         status_url = f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}"
         status = requests.get(status_url).json()['data']['status']
+        retries += 1
 
     if status != "SUCCEEDED":
         raise Exception("Ошибка при парсинге данных Apify.")
@@ -79,12 +85,13 @@ def calculate_python_scores(data):
     scores = {}
     details = []
 
-    title = data.get('title', '')
-    description = data.get('description', '')
-    categories = data.get('categories', [])
-    phones = data.get('phones', [])
-    links = data.get('links', []) + data.get('socials', [])
-    features = data.get('features', [])
+    # ЗАЩИТА 1: Safe Data Parsing (Избегаем падений от None)
+    title = data.get('title') or ''
+    description = data.get('description') or ''
+    categories = data.get('categories') or []
+    phones = data.get('phones') or []
+    links = (data.get('links') or []) + (data.get('socials') or [])
+    features = data.get('features') or []
     
     if len(title) > 2:
         scores['PROF-01.1'] = 0.5
@@ -105,7 +112,7 @@ def calculate_python_scores(data):
     if valid_phone:
         scores['PROF-05.2'] = 0.5
 
-    if len(data.get('schedule', data.get('workingHours', []))) >= 7:
+    if len(data.get('schedule') or data.get('workingHours') or []) >= 7:
         scores['PROF-07.1'] = 1.0
 
     if len(features) > 0:
@@ -124,16 +131,17 @@ def calculate_python_scores(data):
     else:
         details.append("❌ [PROF-12.1] Отсутствует Синяя галочка (0.0)")
 
-    photo_count = data.get('photoCount', data.get('photosCount', 0))
+    photo_count = data.get('photoCount') or data.get('photosCount') or 0
     if photo_count >= 15:
         scores['CONT-36.1'] = 1.5
         if photo_count >= 30:
             scores['CONT-36.2'] = 1.0
         details.append(f"✅ [CONT-36] Галерея: {photo_count} фото.")
 
-    products = data.get('menu', {}).get('items', [])
+    menu_dict = data.get('menu') or {}
+    products = menu_dict.get('items') or []
     if not products:
-        products = data.get('productCatalog', [])
+        products = data.get('productCatalog') or []
         
     if len(products) >= 10:
         scores['PROF-11.1'] = 1.5
@@ -141,7 +149,7 @@ def calculate_python_scores(data):
         
         with_photo = sum(1 for p in products if p.get('photoUrl') or p.get('imageUrl') or p.get('image'))
         with_price = sum(1 for p in products if p.get('price'))
-        with_desc = sum(1 for p in products if len(str(p.get('description', ''))) > 100)
+        with_desc = sum(1 for p in products if len(str(p.get('description') or '')) > 100)
         
         categories_set = set(p.get('category', {}).get('name') or p.get('category') for p in products if p.get('category'))
         
@@ -172,18 +180,18 @@ def calculate_python_scores(data):
     if "chat" in features_str or data.get('isChatEnabled') == True:
          scores['CONV-50.1'] = 1.0
          
-    rating = data.get('rating', 0)
+    rating = data.get('rating') or 0
     if rating >= 4.8:
         scores['REP-27.2'] = 2.0
         scores['REP-27.1'] = 2.0
     elif rating >= 4.5:
         scores['REP-27.1'] = 2.0
 
-    reviews_count = data.get('ratingsCount', data.get('reviewsCount', 0))
+    reviews_count = data.get('ratingsCount') or data.get('reviewsCount') or 0
     if reviews_count >= 50:
         scores['REP-28.1'] = 2.0
 
-    reviews_data = data.get('reviews', [])
+    reviews_data = data.get('reviews') or []
     response_times = []
     
     if reviews_data:
@@ -216,19 +224,20 @@ def calculate_python_scores(data):
 
 def trim_for_ai(raw_data):
     trimmed = {
-        "title": raw_data.get("title", ""),
-        "description": raw_data.get("description", ""),
-        "categories": raw_data.get("categories", []),
-        "features": list(raw_data.get("features", {}).keys()),
+        "title": raw_data.get("title") or "",
+        "description": raw_data.get("description") or "",
+        "categories": raw_data.get("categories") or [],
+        "features": list((raw_data.get("features") or {}).keys()),
         "products": [],
         "reviews": []
     }
     
-    products = raw_data.get('menu', {}).get('items', [])
+    menu_dict = raw_data.get('menu') or {}
+    products = menu_dict.get('items') or []
     if products:
         trimmed["products"] = [p.get("title", "") for p in products[:15]]
     
-    for r in raw_data.get("reviews", [])[:10]:
+    for r in (raw_data.get("reviews") or [])[:10]:
         trimmed["reviews"].append({
             "text": r.get("text", ""),
             "rating": r.get("rating", ""),
@@ -277,8 +286,11 @@ st.markdown("Вставьте ссылку на компанию. Повторн
 yandex_url = st.text_input("Ссылка на карточку (например: https://yandex.ru/maps/org/...)")
 
 if st.button("🚀 Запустить аудит", type="primary", use_container_width=True):
+    # ЗАЩИТА 5: Валидация ссылки от "дурака"
     if not yandex_url:
         st.warning("Пожалуйста, введите ссылку.")
+    elif "yandex" not in yandex_url.lower() and "ya.ru" not in yandex_url.lower():
+        st.error("❌ Пожалуйста, введите корректную ссылку на Яндекс.Карты.")
     else:
         doc = init_google_sheets()
         
@@ -330,17 +342,26 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 prompt = f"Данные для аудита:\n{json.dumps(clean_data, ensure_ascii=False)}"
                 response = model.generate_content(prompt)
                 
-                raw_text = response.text.strip()
-                start_idx = raw_text.find('{')
-                
-                if start_idx != -1:
-                    try:
-                        json_to_decode = raw_text[start_idx:]
-                        ai_report, idx = json.JSONDecoder().raw_decode(json_to_decode)
-                    except Exception:
+                # ЗАЩИТА 3 и 4: Строгий парсинг JSON и отлов блокировок ИИ
+                try:
+                    raw_text = response.text.strip()
+                    start_idx = raw_text.find('{')
+                    end_idx = raw_text.rfind('}')
+                    
+                    if start_idx != -1 and end_idx != -1:
+                        json_str = raw_text[start_idx:end_idx+1]
+                        ai_report = json.loads(json_str)
+                    else:
                         ai_report = json.loads(raw_text)
-                else:
-                    ai_report = json.loads(raw_text)
+                except Exception as ai_e:
+                    st.warning("⚠️ ИИ не смог проанализировать тексты (возможно сработал фильтр безопасности на специфичные слова). Применены только объективные оценки алгоритма.")
+                    ai_report = {
+                        "company_name": clean_data.get("title", "Без названия"),
+                        "business_niche": "Не определена",
+                        "ai_criteria_scores": {},
+                        "detailed_report": "Текстовый анализ ИИ прерван из-за политики безопасности Google.",
+                        "action_plan": ["Проверьте текст на стоп-слова."]
+                    }
                 
                 st.success("✅ Анализ завершен!")
                 
@@ -355,20 +376,18 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                     if not code:
                         continue
                         
-                    # 1. Читаем МАКСИМАЛЬНЫЙ БАЛЛ из вашей Гугл Таблицы
                     try:
                         max_score = float(str(r.get('Балл', '1')).replace(',', '.'))
                     except Exception:
                         max_score = 1.0
                         
-                    # 2. Изначально ставим 0
                     current_val = 0.0
                     
-                    # 3. Если этот параметр посчитал Python
+                    # 1. Приоритет алгоритма
                     if code in python_scores_dict:
                         current_val = min(float(python_scores_dict[code]), max_score)
                         
-                    # 4. Если этот параметр посчитал ИИ (ЖЕСТКАЯ ОБРЕЗКА ДО МАКСИМУМА)
+                    # 2. Оценки ИИ жестко обрезаются до потолка таблицы
                     elif code in raw_ai_scores:
                         try:
                             ai_val = float(raw_ai_scores[code])
@@ -376,14 +395,12 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                         except Exception:
                             pass
                             
-                    # 5. Режим Эксперта всегда прав
+                    # 3. Режим Эксперта перезаписывает всё
                     if expert_mode_enabled and code in expert_overrides:
                         current_val = expert_overrides[code]
                         
-                    # Записываем в финальный чистый словарь
                     final_scores_dict[code] = current_val
                 
-                # Итоговый подсчет
                 final_total_score = sum(final_scores_dict.values())
                 
                 # --- ВЫВОД НА ЭКРАН ---
@@ -445,4 +462,4 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                     st.warning(f"Ошибка записи в таблицу: {e}")
 
             except Exception as e:
-                st.error(f"⚠️ Ошибка связи: {e}")
+                st.error(f"⚠️ Ошибка на сервере ИИ: {e}")
