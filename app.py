@@ -364,7 +364,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 SYSTEM_INSTRUCTION = f"""
                 Ты — эксперт по локальному SEO. Мы проводим аудит карточки Яндекс.Бизнеса по 100-балльной системе MAP100.
                 
-                Автоматический скрипт УЖЕ проверил объективные параметры и начислил баллы.
+                Автоматический скрипт УЖЕ проверил объективные параметры.
                 Вот лог его проверки:
                 {chr(10).join(python_details)}
                 
@@ -386,7 +386,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 """
                 
                 model = genai.GenerativeModel(
-                    model_name="gemini-flash-latest", 
+                    model_name="gemini-1.5-flash", 
                     system_instruction=SYSTEM_INSTRUCTION,
                     generation_config={"response_mime_type": "application/json", "temperature": 0.1}
                 )
@@ -408,27 +408,43 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 
                 st.success("✅ Анализ завершен!")
                 
-                # --- УМНОЕ СЛИЯНИЕ БАЛЛОВ С УЧЕТОМ ЭКСПЕРТА ---
+                # --- УМНОЕ СЛИЯНИЕ БАЛЛОВ С УЧЕТОМ ЭКСПЕРТА И ЖЕСТКИХ ЛИМИТОВ ---
                 all_scores = {}
+                raw_ai_scores = ai_report.get('ai_criteria_scores', {})
                 
-                # 1. Всем метрикам ставим 0
                 for r in rules_data:
                     code = str(r.get('Код', '')).strip()
-                    if code:
-                        all_scores[code] = 0.0
-                
-                # 2. Накатываем оценки Скрипта
-                all_scores.update(python_scores_dict)
-                
-                # 3. Накатываем оценки ИИ
-                all_scores.update(ai_report.get('ai_criteria_scores', {}))
-                
-                # 4. РЕЖИМ ЭКСПЕРТА
+                    if not code:
+                        continue
+                        
+                    # Базово всем ставим 0.0
+                    all_scores[code] = 0.0
+                    
+                    # Читаем максимальный балл из вашей таблицы
+                    try:
+                        max_score = float(str(r.get('Балл', '0')).replace(',', '.'))
+                    except Exception:
+                        max_score = 1.0
+                        
+                    # Приоритет 1: Оценка от Python-скрипта (защищаем лимитом)
+                    if code in python_scores_dict:
+                        all_scores[code] = min(float(python_scores_dict[code]), max_score)
+                        
+                    # Приоритет 2: Оценка от ИИ (ЖЕСТКО ОБРЕЗАЕМ ГАЛЛЮЦИНАЦИИ)
+                    elif code in raw_ai_scores:
+                        try:
+                            ai_val = float(raw_ai_scores[code])
+                            all_scores[code] = min(ai_val, max_score)
+                        except Exception:
+                            pass
+                            
+                # Приоритет 3: РЕЖИМ ЭКСПЕРТА (ручная правка перезаписывает всё)
                 if expert_mode_enabled:
                     for code, manual_val in expert_overrides.items():
-                        all_scores[code] = manual_val
+                        if code in all_scores:
+                            all_scores[code] = manual_val
                 
-                # 5. Считаем Итоговый Балл
+                # Итоговый подсчет реальных баллов
                 final_total_score = sum(all_scores.values())
                 
                 # --- ВЫВОД НА ЭКРАН ---
