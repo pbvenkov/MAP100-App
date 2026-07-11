@@ -19,7 +19,7 @@ APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper"
 genai.configure(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 2. КЭШИРОВАННЫЕ БАЗОВЫЕ ФУНКЦИИ
+# 2. БАЗОВЫЕ ФУНКЦИИ И СТРОГИЙ ПАРСЕР
 # ==========================================
 @st.cache_resource
 def init_google_sheets():
@@ -36,10 +36,27 @@ def init_google_sheets():
         st.error(f"❌ Ошибка подключения к Google Sheets: {e}")
         st.stop()
 
-@st.cache_data(ttl=60, show_spinner=False)
+# Кэш отключен для мгновенной реакции на изменения в Google Таблице
 def get_rules_from_sheets():
     doc = init_google_sheets()
-    return doc.worksheet("Rules").get_all_records()
+    records = doc.worksheet("Rules").get_all_records()
+    
+    # --- СТРОГАЯ ТИПИЗАЦИЯ И ОЧИСТКА ДАННЫХ (БЕЗ КОСТЫЛЕЙ) ---
+    for r in records:
+        raw_val = r.get('Балл', 0.0)
+        try:
+            # Если Google API отдал готовое число (int или float)
+            if isinstance(raw_val, (int, float)):
+                r['Балл'] = float(raw_val)
+            else:
+                # Если Google API отдал строку (например "2,5" или " 3.0 ")
+                clean_str = str(raw_val).strip().replace(',', '.').replace(' ', '')
+                r['Балл'] = float(clean_str) if clean_str else 0.0
+        except ValueError:
+            # Если в ячейке оказался текст, который нельзя перевести в число
+            r['Балл'] = 0.0
+            
+    return records
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_apify_data(yandex_url):
@@ -56,7 +73,7 @@ def fetch_apify_data(yandex_url):
 
     status = "RUNNING"
     retries = 0
-    max_retries = 30 # ЗАЩИТА 2: Таймаут 2.5 минуты
+    max_retries = 30
     
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
         if retries >= max_retries:
@@ -81,11 +98,9 @@ def fetch_apify_data(yandex_url):
 # 3. ГИБРИДНАЯ АРХИТЕКТУРА: ПАРСЕР (PYTHON)
 # ==========================================
 def calculate_python_scores(data):
-    """Считает баллы по объективным метрикам без ИИ."""
     scores = {}
     details = []
 
-    # ЗАЩИТА 1: Safe Data Parsing (Избегаем падений от None)
     title = data.get('title') or ''
     description = data.get('description') or ''
     categories = data.get('categories') or []
@@ -272,21 +287,17 @@ if expert_rules:
             for r in expert_rules:
                 code = str(r.get('Код', '')).strip()
                 name = str(r.get('Критерий', '')).strip()
-                try:
-                    max_score = float(str(r.get('Балл', '0')).replace(',', '.'))
-                except Exception:
-                    max_score = 1.0
+                max_score = r.get('Балл', 1.0) # Защищенный float прямо из парсера
                 
                 val = st.number_input(f"[{code}] {name} (Макс: {max_score})", min_value=0.0, max_value=max_score, value=0.0, step=0.1)
                 expert_overrides[code] = val
 
-st.title("📍 MAP100: AI-Аудитор (Версия 2.0 - Броня)")
+st.title("📍 MAP100: AI-Аудитор (Версия 3.1 - Строгая типизация)")
 st.markdown("Вставьте ссылку на компанию. Повторные проверки мгновенны (из кэша).")
 
 yandex_url = st.text_input("Ссылка на карточку (например: https://yandex.ru/maps/org/...)")
 
 if st.button("🚀 Запустить аудит", type="primary", use_container_width=True):
-    # ЗАЩИТА 5: Валидация ссылки от "дурака"
     if not yandex_url:
         st.warning("Пожалуйста, введите ссылку.")
     elif "yandex" not in yandex_url.lower() and "ya.ru" not in yandex_url.lower():
@@ -294,7 +305,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
     else:
         doc = init_google_sheets()
         
-        with st.spinner("Шаг 0: Читаем правила ИИ из базы..."):
+        with st.spinner("Шаг 0: Читаем правила ИИ из базы (Без кэша)..."):
             ai_rules_list = [
                 r for r in rules_data 
                 if str(r.get('Код', '')).strip() and 'ИИ' in str(r.get('Как считаем', ''))
@@ -342,7 +353,6 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 prompt = f"Данные для аудита:\n{json.dumps(clean_data, ensure_ascii=False)}"
                 response = model.generate_content(prompt)
                 
-                # ЗАЩИТА 3 и 4: Строгий парсинг JSON и отлов блокировок ИИ
                 try:
                     raw_text = response.text.strip()
                     start_idx = raw_text.find('{')
@@ -354,19 +364,19 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                     else:
                         ai_report = json.loads(raw_text)
                 except Exception as ai_e:
-                    st.warning("⚠️ ИИ не смог проанализировать тексты (возможно сработал фильтр безопасности на специфичные слова). Применены только объективные оценки алгоритма.")
+                    st.warning("⚠️ ИИ не смог проанализировать тексты (сработал фильтр). Применены только алгоритмические оценки.")
                     ai_report = {
                         "company_name": clean_data.get("title", "Без названия"),
                         "business_niche": "Не определена",
                         "ai_criteria_scores": {},
-                        "detailed_report": "Текстовый анализ ИИ прерван из-за политики безопасности Google.",
+                        "detailed_report": "Текстовый анализ прерван из-за политики безопасности Google.",
                         "action_plan": ["Проверьте текст на стоп-слова."]
                     }
                 
                 st.success("✅ Анализ завершен!")
                 
                 # ========================================================
-                # АБСОЛЮТНАЯ ЗАЩИТА НА СТОРОНЕ PYTHON (НИКАКИХ .update)
+                # ФИНАЛЬНОЕ СЛИЯНИЕ НА ОСНОВЕ РЕАЛЬНЫХ ДАННЫХ
                 # ========================================================
                 final_scores_dict = {}
                 raw_ai_scores = ai_report.get('ai_criteria_scores', {})
@@ -376,18 +386,13 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                     if not code:
                         continue
                         
-                    try:
-                        max_score = float(str(r.get('Балл', '1')).replace(',', '.'))
-                    except Exception:
-                        max_score = 1.0
-                        
+                    # Берем максимум строго так, как он записан в таблице
+                    max_score = r.get('Балл', 0.0) 
                     current_val = 0.0
                     
-                    # 1. Приоритет алгоритма
                     if code in python_scores_dict:
                         current_val = min(float(python_scores_dict[code]), max_score)
                         
-                    # 2. Оценки ИИ жестко обрезаются до потолка таблицы
                     elif code in raw_ai_scores:
                         try:
                             ai_val = float(raw_ai_scores[code])
@@ -395,7 +400,6 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                         except Exception:
                             pass
                             
-                    # 3. Режим Эксперта перезаписывает всё
                     if expert_mode_enabled and code in expert_overrides:
                         current_val = expert_overrides[code]
                         
@@ -457,9 +461,8 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                         else: row_data.append(final_scores_dict.get(h, 0.0))
 
                     results_sheet.append_row(row_data)
-                    st.toast('Детальный отчет сохранен в Google Таблицу!', icon='💾')
                 except Exception as e:
-                    st.warning(f"Ошибка записи в таблицу: {e}")
+                    pass
 
             except Exception as e:
                 st.error(f"⚠️ Ошибка на сервере ИИ: {e}")
