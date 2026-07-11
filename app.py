@@ -154,7 +154,7 @@ def calculate_python_scores(data):
         if len(categories_set) >= 2:
             scores['PROF-11.5'] = 0.5
     else:
-        details.append(f"❌ [PROF-11.1] Мало товаров в каталоге: {len(products)} из 10. Детальный анализ пропущен.")
+        details.append(f"❌ [PROF-11.1] Мало товаров в каталоге: {len(products)} из 10.")
 
     links_str = " ".join(str(l).lower() for l in links)
     features_str = " ".join(str(f).lower() for f in features)
@@ -210,7 +210,7 @@ def calculate_python_scores(data):
             scores['REP-30.2'] = 2.0
             details.append(f"✅ [REP-30.2] Медиана ответов: {median_speed} дн. (+2.0)")
         else:
-            details.append(f"❌ [REP-30.2] Медленные ответы: {median_speed} дн. (норма < 3).")
+            details.append(f"❌ [REP-30.2] Медленные ответы: {median_speed} дн.")
 
     return sum(scores.values()), details, scores
 
@@ -301,7 +301,6 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
 
         with st.spinner("Шаг 2: Gemini анализирует тексты, SEO и смыслы..."):
             try:
-                # ВОТ ЗДЕСЬ ЖЕСТКАЯ БРОНЯ В ПРОМПТЕ
                 SYSTEM_INSTRUCTION = f"""
                 Ты — эксперт по локальному SEO. Мы проводим аудит карточки Яндекс.Бизнеса по 100-балльной системе MAP100.
                 
@@ -311,13 +310,6 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 
                 Твоя задача — проверить карточку ИСКЛЮЧИТЕЛЬНО по оставшимся смысловым правилам:
                 {dynamic_rules}
-                
-                КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА ДЛЯ ОЦЕНОК (ШТРАФ ЗА НАРУШЕНИЕ):
-                1. В словаре "ai_criteria_scores" ты ОБЯЗАН перечислить ВСЕ ДО ЕДИНОГО коды из списка выше.
-                2. Оценка за критерий НИКОГДА не может превышать цифру, указанную в скобках (Макс ...). 
-                   Ты не считаешь количество упоминаний! Ты ставишь балл за факт наличия (от 0.0 до Макс). 
-                   Нельзя ставить 15 или 20, если максимум 3.0!
-                3. Если нет данных — ставь строго 0.0.
                 
                 ВЕРНИ ОТВЕТ СТРОГО В ФОРМАТЕ JSON:
                 {{
@@ -329,7 +321,6 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 }}
                 """
                 
-                # ИСПОЛЬЗУЕМ СТАБИЛЬНУЮ МОДЕЛЬ!
                 model = genai.GenerativeModel(
                     model_name="gemini-flash-latest", 
                     system_instruction=SYSTEM_INSTRUCTION,
@@ -354,9 +345,9 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 st.success("✅ Анализ завершен!")
                 
                 # ========================================================
-                # ВОТ ЗДЕСЬ АБСОЛЮТНАЯ ЗАЩИТА НА СТОРОНЕ PYTHON (ОБРЕЗАНИЕ БАЛЛОВ)
+                # АБСОЛЮТНАЯ ЗАЩИТА НА СТОРОНЕ PYTHON (НИКАКИХ .update)
                 # ========================================================
-                all_scores = {}
+                final_scores_dict = {}
                 raw_ai_scores = ai_report.get('ai_criteria_scores', {})
                 
                 for r in rules_data:
@@ -364,35 +355,36 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                     if not code:
                         continue
                         
-                    # Базово всем ставим 0.0
-                    all_scores[code] = 0.0
-                    
-                    # Читаем максимальный балл из вашей таблицы
+                    # 1. Читаем МАКСИМАЛЬНЫЙ БАЛЛ из вашей Гугл Таблицы
                     try:
-                        max_score = float(str(r.get('Балл', '0')).replace(',', '.'))
+                        max_score = float(str(r.get('Балл', '1')).replace(',', '.'))
                     except Exception:
                         max_score = 1.0
                         
-                    # Приоритет 1: Оценка от Python-скрипта (защищаем лимитом)
+                    # 2. Изначально ставим 0
+                    current_val = 0.0
+                    
+                    # 3. Если этот параметр посчитал Python
                     if code in python_scores_dict:
-                        all_scores[code] = min(float(python_scores_dict[code]), max_score)
+                        current_val = min(float(python_scores_dict[code]), max_score)
                         
-                    # Приоритет 2: Оценка от ИИ (ЖЕСТКО ОБРЕЗАЕМ ГАЛЛЮЦИНАЦИИ ДО МАКСИМУМА)
+                    # 4. Если этот параметр посчитал ИИ (ЖЕСТКАЯ ОБРЕЗКА ДО МАКСИМУМА)
                     elif code in raw_ai_scores:
                         try:
                             ai_val = float(raw_ai_scores[code])
-                            all_scores[code] = min(ai_val, max_score)
+                            current_val = min(ai_val, max_score)
                         except Exception:
                             pass
                             
-                # Приоритет 3: РЕЖИМ ЭКСПЕРТА (ручная правка перезаписывает всё)
-                if expert_mode_enabled:
-                    for code, manual_val in expert_overrides.items():
-                        if code in all_scores:
-                            all_scores[code] = manual_val
+                    # 5. Режим Эксперта всегда прав
+                    if expert_mode_enabled and code in expert_overrides:
+                        current_val = expert_overrides[code]
+                        
+                    # Записываем в финальный чистый словарь
+                    final_scores_dict[code] = current_val
                 
-                # Итоговый подсчет выверенных баллов
-                final_total_score = sum(all_scores.values())
+                # Итоговый подсчет
+                final_total_score = sum(final_scores_dict.values())
                 
                 # --- ВЫВОД НА ЭКРАН ---
                 st.divider()
@@ -407,7 +399,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                     st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
 
                 with st.expander("📊 Детализация баллов по критериям (Нажмите для просмотра)"):
-                    st.json(all_scores)
+                    st.json(final_scores_dict)
 
                 st.divider()
                 st.markdown("### 🔍 Общий аналитический отчет")
@@ -427,7 +419,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                         headers = base_headers
                     
                     headers_changed = False
-                    for code in all_scores.keys():
+                    for code in final_scores_dict.keys():
                         if code not in headers:
                             headers.append(code)
                             headers_changed = True
@@ -445,7 +437,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                         elif h == "Компания": row_data.append(ai_report.get('company_name', ''))
                         elif h == "Ниша": row_data.append(ai_report.get('business_niche', ''))
                         elif h == "Общий балл": row_data.append(final_total_score)
-                        else: row_data.append(all_scores.get(h, 0.0))
+                        else: row_data.append(final_scores_dict.get(h, 0.0))
 
                     results_sheet.append_row(row_data)
                     st.toast('Детальный отчет сохранен в Google Таблицу!', icon='💾')
