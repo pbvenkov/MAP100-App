@@ -280,7 +280,7 @@ if expert_rules:
                 val = st.number_input(f"[{code}] {name} (Макс: {max_score})", min_value=0.0, max_value=max_score, value=0.0, step=0.1)
                 expert_overrides[code] = val
 
-st.title("📍 MAP100: AI-Аудитор Яндекс.Бизнеса")
+st.title("📍 MAP100: AI-Аудитор (Версия 2.0 - Броня)")
 st.markdown("Вставьте ссылку на компанию. Повторные проверки мгновенны (из кэша).")
 
 yandex_url = st.text_input("Ссылка на карточку (например: https://yandex.ru/maps/org/...)")
