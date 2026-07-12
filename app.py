@@ -15,7 +15,7 @@ APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
 
 # ==========================================
-# 2. ПАРСЕР GOOGLE ТАБЛИЦЫ
+# 2. ПАРСЕР GOOGLE ТАБЛИЦЫ И APIFY
 # ==========================================
 @st.cache_resource
 def init_google_sheets():
@@ -30,6 +30,7 @@ def init_google_sheets():
 
 def get_rules_from_sheets():
     doc = init_google_sheets()
+    # UNFORMATTED_VALUE отключает форматирование Google (защита от запятых)
     records = doc.worksheet("Rules").get_all_records(value_render_option='UNFORMATTED_VALUE')
     
     for r in records:
@@ -67,20 +68,83 @@ def fetch_apify_data(yandex_url):
 # ==========================================
 # 3. МОДУЛЬНАЯ АРХИТЕКТУРА (УРОВНИ 1 и 2)
 # ==========================================
-
 def calculate_prof_rules(data):
     scores = {}
     logs = []
     
-    # Заглушки для примера (будем менять по вашим правилам)
-    if len(data.get('title', '')) > 2: scores['PROF-01.1'] = 0.5
-    if data.get('phones'): scores['PROF-05.1'] = 1.0
-    if len(data.get('schedule') or data.get('workingHours') or []) >= 7: scores['PROF-07.1'] = 1.0
-    if data.get('isVerifiedOwner'): scores['PROF-12.1'] = 4.0
+    # 1. ПРОВЕРКА СИНЕЙ ГАЛОЧКИ (БАЗА)
+    has_blue_tick = data.get('isVerifiedOwner', False)
     
+    if has_blue_tick:
+        scores['PROF-12.1'] = 4.0
+        logs.append("✅ [PROF-12.1] Найдена синяя галочка. Базовые поля засчитаны автоматически.")
+        scores['PROF-01.1'] = 0.5  # Название
+        scores['PROF-03.1'] = 0.5  # Категория
+        scores['PROF-05.1'] = 1.0  # Телефон
+        scores['PROF-07.1'] = 1.0  # График работы
+    else:
+        logs.append("❌ [PROF-12.1] Синей галочки нет. Проверяем поля вручную.")
+        if len(data.get('title', '')) > 2: 
+            scores['PROF-01.1'] = 0.5
+        if len(data.get('categories') or []) > 0: 
+            scores['PROF-03.1'] = 0.5
+        if data.get('phones'): 
+            scores['PROF-05.1'] = 1.0
+        if len(data.get('schedule') or data.get('workingHours') or []) >= 7: 
+            scores['PROF-07.1'] = 1.0
+
+    # 2. ДОПОЛНИТЕЛЬНЫЕ ПРОВЕРКИ ПРОФИЛЯ
+    
+    # PROF-05.2: Качество телефона
+    if data.get('phones'):
+        valid_phone = False
+        for p in data.get('phones'):
+            p_str = str(p).lower()
+            if "доб" not in p_str and len(re.sub(r'\D', '', p_str)) >= 10:
+                valid_phone = True
+                break
+        if valid_phone:
+            scores['PROF-05.2'] = 0.5
+
+    # PROF-08.1: Наличие особенностей (Features)
+    if data.get('features') and len(data['features']) > 0:
+        scores['PROF-08.1'] = 0.5
+
+    # 3. КАТАЛОГ ТОВАРОВ И УСЛУГ (PROF-11)
     products = (data.get('menu') or {}).get('items') or data.get('productCatalog') or []
-    if len(products) >= 10: scores['PROF-11.1'] = 1.5
+    if len(products) >= 10:
+        scores['PROF-11.1'] = 1.5
         
+        # Подсчет статистики каталога
+        with_photo = sum(1 for p in products if p.get('photoUrl') or p.get('imageUrl') or p.get('image'))
+        with_price = sum(1 for p in products if p.get('price'))
+        with_desc = sum(1 for p in products if len(str(p.get('description') or '')) > 50)
+        
+        # Уникальные категории
+        categories_set = set()
+        for p in products:
+            if p.get('category'):
+                cat_name = p['category'].get('name') if isinstance(p['category'], dict) else p['category']
+                if cat_name: categories_set.add(cat_name)
+        
+        # Начисление баллов по процентам (>= 80%)
+        if (with_photo / len(products)) >= 0.8:
+            scores['PROF-11.2'] = 1.0
+        if (with_price / len(products)) >= 0.8:
+            scores['PROF-11.3'] = 1.0
+        if (with_desc / len(products)) >= 0.8:
+            scores['PROF-11.4'] = 1.0
+        if len(categories_set) >= 2:
+            scores['PROF-11.5'] = 0.5
+            
+    # 4. ССЫЛКИ И МЕССЕНДЖЕРЫ (PROF-13)
+    links_str = " ".join(str(l).lower() for l in (data.get('links') or []) + (data.get('socials') or []))
+    
+    if any(s in links_str for s in ["t.me", "tg://", "wa.me", "whatsapp"]): 
+        scores['PROF-13.1'] = 0.5
+    if any(s in links_str for s in ["vk.com", "youtube", "dzen"]): 
+        scores['PROF-13.2'] = 0.5
+
     return scores, logs
 
 def calculate_rep_rules(data):
@@ -145,7 +209,6 @@ with st.sidebar:
     st.header("🎛 Ручная оценка (Уровень 3)")
     st.caption("Оцените смысловые критерии самостоятельно. Скрипт добавит их к автоматическим расчетам.")
     
-    # Группируем по префиксу (SEO, PROF и тд) для красоты
     current_prefix = ""
     for r in manual_rules:
         code = str(r.get('Код', '')).strip()
@@ -164,7 +227,7 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 5.0 - Полуавтомат)")
+st.title("📍 MAP100: AI-Аудитор (Версия 5.1 - Полуавтомат)")
 yandex_url = st.text_input("Ссылка на карточку Яндекс.Бизнеса")
 
 if st.button("🚀 Запустить аудит", type="primary", use_container_width=True):
