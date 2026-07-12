@@ -39,7 +39,7 @@ def init_google_sheets():
 def get_rules_from_sheets():
     doc = init_google_sheets()
     
-    # ВОЛШЕБНАЯ СТРОЧКА! UNFORMATTED_VALUE отключает форматирование Google (библиотека больше не отбрасывает запятые)
+    # ВОЛШЕБНАЯ СТРОЧКА! UNFORMATTED_VALUE отключает форматирование Google
     records = doc.worksheet("Rules").get_all_records(value_render_option='UNFORMATTED_VALUE')
     
     for r in records:
@@ -49,7 +49,6 @@ def get_rules_from_sheets():
             if isinstance(raw_val, (int, float)):
                 r['Балл'] = float(raw_val)
             else:
-                # Меняем запятую на точку и превращаем в безопасное число
                 clean_str = str(raw_val).strip().replace(',', '.').replace(' ', '')
                 r['Балл'] = float(clean_str) if clean_str else 0.0
         except ValueError:
@@ -284,12 +283,12 @@ if expert_rules:
             for r in expert_rules:
                 code = str(r.get('Код', '')).strip()
                 name = str(r.get('Критерий', '')).strip()
-                max_score = r.get('Балл', 1.0) # Защищенный float прямо из парсера
+                max_score = r.get('Балл', 1.0) 
                 
                 val = st.number_input(f"[{code}] {name} (Макс: {max_score})", min_value=0.0, max_value=max_score, value=0.0, step=0.1)
                 expert_overrides[code] = val
 
-st.title("🕵️ MAP100: AI-Аудитор (Версия 4.1 - Победа над gspread)")
+st.title("🕵️ MAP100: AI-Аудитор (Версия 4.2 - Победа над gspread)")
 st.markdown("Вставьте ссылку на компанию. Повторные проверки мгновенны (из кэша).")
 
 yandex_url = st.text_input("Ссылка на карточку (например: https://yandex.ru/maps/org/...)")
@@ -317,178 +316,179 @@ if st.button("🚀 Запустить аудит и диагностику", typ
                 st.error(f"Ошибка сбора данных: {e}")
                 st.stop()
 
-            SYSTEM_INSTRUCTION = f"""
-            Ты — эксперт по локальному SEO. Мы проводим аудит карточки Яндекс.Бизнеса по 100-балльной системе MAP100.
-            
-            Автоматический скрипт УЖЕ проверил объективные параметры.
-            Вот лог его проверки:
-            {chr(10).join(python_details)}
-            
-            Твоя задача — проверить карточку ИСКЛЮЧИТЕЛЬНО по оставшимся смысловым правилам:
-            {dynamic_rules}
-            
-            ВЕРНИ ОТВЕТ СТРОГО В ФОРМАТЕ JSON:
-            {{
-                "company_name": "", 
-                "business_niche": "", 
-                "ai_criteria_scores": {{"КОД-1": 1.5, "ВЫВЕДИ_СЮДА_ВСЕ_КОДЫ_ИЗ_СПИСКА": 0.0}},
-                "detailed_report": "Общий аналитический вывод.", 
-                "action_plan": ["шаг 1", "шаг 2"]
-            }}
-            """
-            
-            model = genai.GenerativeModel(
-                model_name="gemini-flash-latest", 
-                system_instruction=SYSTEM_INSTRUCTION,
-                generation_config={"response_mime_type": "application/json", "temperature": 0.1}
-            )
-
-            prompt = f"Данные для аудита:\n{json.dumps(clean_data, ensure_ascii=False)}"
-            response = model.generate_content(prompt)
-            
+            # ИСПРАВЛЕНО: Добавлен try для корректной работы except в конце файла
             try:
-                raw_text = response.text.strip()
-                start_idx = raw_text.find('{')
-                end_idx = raw_text.rfind('}')
+                SYSTEM_INSTRUCTION = f"""
+                Ты — эксперт по локальному SEO. Мы проводим аудит карточки Яндекс.Бизнеса по 100-балльной системе MAP100.
                 
-                if start_idx != -1 and end_idx != -1:
-                    json_str = raw_text[start_idx:end_idx+1]
-                    ai_report = json.loads(json_str)
-                else:
-                    ai_report = json.loads(raw_text)
-            except Exception as ai_e:
-                st.warning("⚠️ ИИ не смог проанализировать тексты (сработал фильтр). Применены только алгоритмические оценки.")
-                ai_report = {
-                    "company_name": clean_data.get("title", "Без названия"),
-                    "business_niche": "Не определена",
-                    "ai_criteria_scores": {},
-                    "detailed_report": "Текстовый анализ прерван из-за политики безопасности Google.",
-                    "action_plan": ["Проверьте текст на стоп-слова."]
-                }
-            
-            st.success("✅ Анализ завершен!")
-            
-            # ========================================================
-            # ДЕБАГГЕР: СБОР МАКСИМАЛЬНОЙ ИНФОРМАЦИИ И СЛИЯНИЕ БАЛЛОВ
-            # ========================================================
-            final_scores_dict = {}
-            raw_ai_scores = ai_report.get('ai_criteria_scores', {})
-            debug_logs = []
-            
-            for r in rules_data:
-                code = str(r.get('Код', '')).strip()
-                if not code: continue
+                Автоматический скрипт УЖЕ проверил объективные параметры.
+                Вот лог его проверки:
+                {chr(10).join(python_details)}
+                
+                Твоя задача — проверить карточку ИСКЛЮЧИТЕЛЬНО по оставшимся смысловым правилам:
+                {dynamic_rules}
+                
+                ВЕРНИ ОТВЕТ СТРОГО В ФОРМАТЕ JSON:
+                {{
+                    "company_name": "", 
+                    "business_niche": "", 
+                    "ai_criteria_scores": {{"КОД-1": 1.5, "ВЫВЕДИ_СЮДА_ВСЕ_КОДЫ_ИЗ_СПИСКА": 0.0}},
+                    "detailed_report": "Общий аналитический вывод.", 
+                    "action_plan": ["шаг 1", "шаг 2"]
+                }}
+                """
+                
+                model = genai.GenerativeModel(
+                    model_name="gemini-flash-latest", 
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    generation_config={"response_mime_type": "application/json", "temperature": 0.1}
+                )
+
+                prompt = f"Данные для аудита:\n{json.dumps(clean_data, ensure_ascii=False)}"
+                response = model.generate_content(prompt)
+                
+                try:
+                    raw_text = response.text.strip()
+                    start_idx = raw_text.find('{')
+                    end_idx = raw_text.rfind('}')
                     
-                raw_sheet_val = r.get('DEBUG_RAW_SCORE', 'N/A')
-                max_score = r.get('Балл', 0.0) 
+                    if start_idx != -1 and end_idx != -1:
+                        json_str = raw_text[start_idx:end_idx+1]
+                        ai_report = json.loads(json_str)
+                    else:
+                        ai_report = json.loads(raw_text)
+                except Exception as ai_e:
+                    st.warning("⚠️ ИИ не смог проанализировать тексты (сработал фильтр). Применены только алгоритмические оценки.")
+                    ai_report = {
+                        "company_name": clean_data.get("title", "Без названия"),
+                        "business_niche": "Не определена",
+                        "ai_criteria_scores": {},
+                        "detailed_report": "Текстовый анализ прерван из-за политики безопасности Google.",
+                        "action_plan": ["Проверьте текст на стоп-слова."]
+                    }
                 
-                py_val = python_scores_dict.get(code, "Нет")
-                ai_val = raw_ai_scores.get(code, "Нет")
-                current_val = 0.0
-                source_decision = "Не выполнено (0.0)"
+                st.success("✅ Анализ завершен!")
                 
-                if py_val != "Нет":
-                    current_val = min(float(py_val), max_score)
-                    source_decision = f"Python (Обрезано: min({py_val}, {max_score}))"
-                elif ai_val != "Нет":
-                    try:
-                        ai_float = float(ai_val)
-                        current_val = min(ai_float, max_score)
-                        source_decision = f"Gemini (Обрезано: min({ai_float}, {max_score}))"
-                    except Exception:
-                        pass
+                # ========================================================
+                # ДЕБАГГЕР: СБОР ИНФОРМАЦИИ И СЛИЯНИЕ БАЛЛОВ
+                # ========================================================
+                final_scores_dict = {}
+                raw_ai_scores = ai_report.get('ai_criteria_scores', {})
+                debug_logs = []
+                
+                for r in rules_data:
+                    code = str(r.get('Код', '')).strip()
+                    if not code: continue
                         
-                # Режим Эксперта перезаписывает всё
-                if expert_mode_enabled and code in expert_overrides:
-                    current_val = expert_overrides[code]
-                    source_decision = f"Ручной ввод (Эксперт)"
+                    raw_sheet_val = r.get('DEBUG_RAW_SCORE', 'N/A')
+                    max_score = r.get('Балл', 0.0) 
                     
-                final_scores_dict[code] = current_val
+                    py_val = python_scores_dict.get(code, "Нет")
+                    ai_val = raw_ai_scores.get(code, "Нет")
+                    current_val = 0.0
+                    source_decision = "Не выполнено (0.0)"
+                    
+                    if py_val != "Нет":
+                        current_val = min(float(py_val), max_score)
+                        source_decision = f"Python (Обрезано: min({py_val}, {max_score}))"
+                    elif ai_val != "Нет":
+                        try:
+                            ai_float = float(ai_val)
+                            current_val = min(ai_float, max_score)
+                            source_decision = f"Gemini (Обрезано: min({ai_float}, {max_score}))"
+                        except Exception:
+                            pass
+                            
+                    if expert_mode_enabled and code in expert_overrides:
+                        current_val = expert_overrides[code]
+                        source_decision = f"Ручной ввод (Эксперт)"
+                        
+                    final_scores_dict[code] = current_val
+                    
+                    debug_logs.append({
+                        "Код": code,
+                        "Критерий": r.get('Критерий', ''),
+                        "Что отдал Google (Сырье)": str(raw_sheet_val),
+                        "Лимит в коде": max_score,
+                        "ИИ предложил": ai_val,
+                        "ИТОГО": current_val,
+                        "Вердикт": source_decision
+                    })
                 
-                debug_logs.append({
-                    "Код": code,
-                    "Критерий": r.get('Критерий', ''),
-                    "Что отдал Google (Сырье)": str(raw_sheet_val),
-                    "Лимит в коде": max_score,
-                    "ИИ предложил": ai_val,
-                    "ИТОГО": current_val,
-                    "Вердикт": source_decision
-                })
-            
-            final_total_score = sum(final_scores_dict.values())
-            
-            # --- ИНТЕРФЕЙС ДЕБАГГЕРА ---
-            st.divider()
-            st.header("🚨 РЕЖИМ ГЛУБОКОГО ДЕБАГА (Версия 4.1)")
-            
-            anomalies = [d for d in debug_logs if float(d["ИТОГО"]) > 4.0]
-            if anomalies:
-                st.error(f"⚠️ НАЙДЕНО {len(anomalies)} АНОМАЛИЙ (Балл выше 4.0). Читайте расследование ниже.")
-                for a in anomalies:
-                    st.warning(f"**Аномалия в метрике {a['Код']}: ИТОГО = {a['ИТОГО']}**. Сырые данные таблицы: {a['Что отдал Google (Сырье)']}")
-            else:
-                st.success("✅ Аномалий не найдено. Все лимиты и баллы работают идеально! Значения не превышают потолок.")
-
-            with st.expander("🔬 ТЕХНИЧЕСКИЙ ЛОГ КАЖДОЙ ОЦЕНКИ (Таблица диагностики)", expanded=False):
-                st.dataframe(debug_logs, use_container_width=True)
-
-            st.divider()
-            
-            # --- ФИНАЛЬНЫЙ ВЫВОД ---
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.subheader(f"🏢 {ai_report.get('company_name', 'Без названия')}")
-                st.caption(f"Ниша: {ai_report.get('business_niche', 'Не определена')}")
-            with col2:
-                if final_total_score >= 80: color = "normal"
-                elif final_total_score >= 50: color = "off"
-                else: color = "inverse"
-                st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
-
-            with st.expander("📊 Детализация баллов по критериям (Нажмите для просмотра)"):
-                st.json(final_scores_dict)
-
-            st.divider()
-            st.markdown("### 🔍 Общий аналитический отчет")
-            st.write(ai_report.get('detailed_report', 'Отчет пуст'))
+                final_total_score = sum(final_scores_dict.values())
                 
-            st.markdown("### 🛠 Пошаговый план исправлений")
-            for i, step in enumerate(ai_report.get('action_plan', [])):
-                st.info(f"**Шаг {i+1}:** {step}")
-
-            # --- ЗАПИСЬ В GOOGLE ТАБЛИЦУ ---
-            try:
-                results_sheet = doc.worksheet("Results")
-                headers = results_sheet.row_values(1)
+                # --- ИНТЕРФЕЙС ДЕБАГГЕРА ---
+                st.divider()
+                st.header("🚨 РЕЖИМ ГЛУБОКОГО ДЕБАГА (Версия 4.2)")
                 
-                base_headers = ["Дата", "Ссылка", "Компания", "Ниша", "Общий балл"]
-                if not headers:
-                    headers = base_headers
-                
-                headers_changed = False
-                for code in final_scores_dict.keys():
-                    if code not in headers:
-                        headers.append(code)
-                        headers_changed = True
-                
-                if headers_changed:
-                    cell_list = results_sheet.range(1, 1, 1, len(headers))
-                    for i, val in enumerate(headers):
-                        cell_list[i].value = val
-                    results_sheet.update_cells(cell_list)
+                anomalies = [d for d in debug_logs if float(d["ИТОГО"]) > 4.0]
+                if anomalies:
+                    st.error(f"⚠️ НАЙДЕНО {len(anomalies)} АНОМАЛИЙ (Балл выше 4.0). Читайте расследование ниже.")
+                    for a in anomalies:
+                        st.warning(f"**Аномалия в метрике {a['Код']}: ИТОГО = {a['ИТОГО']}**. Сырые данные таблицы: {a['Что отдал Google (Сырье)']}")
+                else:
+                    st.success("✅ Аномалий не найдено. Все лимиты и баллы работают идеально! Значения не превышают потолок.")
 
-                row_data = []
-                for h in headers:
-                    if h == "Дата": row_data.append(time.strftime("%d.%m.%Y %H:%M:%S"))
-                    elif h == "Ссылка": row_data.append(yandex_url)
-                    elif h == "Компания": row_data.append(ai_report.get('company_name', ''))
-                    elif h == "Ниша": row_data.append(ai_report.get('business_niche', ''))
-                    elif h == "Общий балл": row_data.append(final_total_score)
-                    else: row_data.append(final_scores_dict.get(h, 0.0))
+                with st.expander("🔬 ТЕХНИЧЕСКИЙ ЛОГ КАЖДОЙ ОЦЕНКИ (Таблица диагностики)", expanded=False):
+                    st.dataframe(debug_logs, use_container_width=True)
 
-                results_sheet.append_row(row_data)
+                st.divider()
+                
+                # --- ФИНАЛЬНЫЙ ВЫВОД ---
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.subheader(f"🏢 {ai_report.get('company_name', 'Без названия')}")
+                    st.caption(f"Ниша: {ai_report.get('business_niche', 'Не определена')}")
+                with col2:
+                    if final_total_score >= 80: color = "normal"
+                    elif final_total_score >= 50: color = "off"
+                    else: color = "inverse"
+                    st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
+
+                with st.expander("📊 Детализация баллов по критериям (Нажмите для просмотра)"):
+                    st.json(final_scores_dict)
+
+                st.divider()
+                st.markdown("### 🔍 Общий аналитический отчет")
+                st.write(ai_report.get('detailed_report', 'Отчет пуст'))
+                    
+                st.markdown("### 🛠 Пошаговый план исправлений")
+                for i, step in enumerate(ai_report.get('action_plan', [])):
+                    st.info(f"**Шаг {i+1}:** {step}")
+
+                # --- ЗАПИСЬ В GOOGLE ТАБЛИЦУ ---
+                try:
+                    results_sheet = doc.worksheet("Results")
+                    headers = results_sheet.row_values(1)
+                    
+                    base_headers = ["Дата", "Ссылка", "Компания", "Ниша", "Общий балл"]
+                    if not headers:
+                        headers = base_headers
+                    
+                    headers_changed = False
+                    for code in final_scores_dict.keys():
+                        if code not in headers:
+                            headers.append(code)
+                            headers_changed = True
+                    
+                    if headers_changed:
+                        cell_list = results_sheet.range(1, 1, 1, len(headers))
+                        for i, val in enumerate(headers):
+                            cell_list[i].value = val
+                        results_sheet.update_cells(cell_list)
+
+                    row_data = []
+                    for h in headers:
+                        if h == "Дата": row_data.append(time.strftime("%d.%m.%Y %H:%M:%S"))
+                        elif h == "Ссылка": row_data.append(yandex_url)
+                        elif h == "Компания": row_data.append(ai_report.get('company_name', ''))
+                        elif h == "Ниша": row_data.append(ai_report.get('business_niche', ''))
+                        elif h == "Общий балл": row_data.append(final_total_score)
+                        else: row_data.append(final_scores_dict.get(h, 0.0))
+
+                    results_sheet.append_row(row_data)
+                except Exception as e:
+                    st.warning("Не удалось сохранить в результаты (проверьте вкладку Results).")
+
             except Exception as e:
-                st.warning("Не удалось сохранить в результаты (проверьте вкладку Results).")
-
-        except Exception as e:
-            st.error(f"⚠️ Ошибка на сервере ИИ: {e}")
+                st.error(f"⚠️ Ошибка на сервере ИИ: {e}")
