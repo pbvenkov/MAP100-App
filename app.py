@@ -9,7 +9,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # ==========================================
-# 1. НАСТРОЙКИ 
+# 1. НАСТРОЙКИ СЕКРЕТОВ
 # ==========================================
 APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
@@ -43,6 +43,10 @@ def get_rules_from_sheets():
                 r['Балл'] = float(clean_str) if clean_str else 0.0
         except ValueError:
             r['Балл'] = 0.0
+            
+        # Защита от пустых статусов
+        r['Статус'] = str(r.get('Статус', 'Заглушка')).strip()
+            
     return records
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -115,27 +119,20 @@ def calculate_prof_rules(data):
     if len(products) >= 10:
         scores['PROF-11.1'] = 1.5
         
-        # Подсчет статистики каталога
         with_photo = sum(1 for p in products if p.get('photoUrl') or p.get('imageUrl') or p.get('image'))
         with_price = sum(1 for p in products if p.get('price'))
         with_desc = sum(1 for p in products if len(str(p.get('description') or '')) > 50)
         
-        # Уникальные категории
         categories_set = set()
         for p in products:
             if p.get('category'):
                 cat_name = p['category'].get('name') if isinstance(p['category'], dict) else p['category']
                 if cat_name: categories_set.add(cat_name)
         
-        # Начисление баллов по процентам (>= 80%)
-        if (with_photo / len(products)) >= 0.8:
-            scores['PROF-11.2'] = 1.0
-        if (with_price / len(products)) >= 0.8:
-            scores['PROF-11.3'] = 1.0
-        if (with_desc / len(products)) >= 0.8:
-            scores['PROF-11.4'] = 1.0
-        if len(categories_set) >= 2:
-            scores['PROF-11.5'] = 0.5
+        if (with_photo / len(products)) >= 0.8: scores['PROF-11.2'] = 1.0
+        if (with_price / len(products)) >= 0.8: scores['PROF-11.3'] = 1.0
+        if (with_desc / len(products)) >= 0.8: scores['PROF-11.4'] = 1.0
+        if len(categories_set) >= 2: scores['PROF-11.5'] = 0.5
             
     # 4. ССЫЛКИ И МЕССЕНДЖЕРЫ (PROF-13)
     links_str = " ".join(str(l).lower() for l in (data.get('links') or []) + (data.get('socials') or []))
@@ -147,47 +144,15 @@ def calculate_prof_rules(data):
 
     return scores, logs
 
-def calculate_rep_rules(data):
-    scores, logs = {}, []
-    rating = data.get('rating') or 0
-    if rating >= 4.5: scores['REP-27.1'] = 2.0
-    if rating >= 4.8: scores['REP-27.2'] = 2.0
-    if (data.get('ratingsCount') or data.get('reviewsCount') or 0) >= 50: scores['REP-28.1'] = 2.0
-    return scores, logs
-
-def calculate_conv_rules(data):
-    scores, logs = {}, []
-    links_str = " ".join(str(l).lower() for l in (data.get('links') or []) + (data.get('socials') or []))
-    features_str = " ".join(str(f).lower() for f in (data.get('features') or []))
-    
-    if any(b in links_str or b in features_str for b in ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'запись онлайн']):
-        scores['CONV-48.1'] = 3.0 
-    if "chat" in features_str or data.get('isChatEnabled') == True:
-        scores['CONV-50.1'] = 1.0
-    return scores, logs
-
-def calculate_cont_rules(data):
-    scores, logs = {}, []
-    photo_count = data.get('photoCount') or data.get('photosCount') or 0
-    if photo_count >= 15: scores['CONT-36.1'] = 1.5
-    if photo_count >= 30: scores['CONT-36.2'] = 1.0
-    return scores, logs
-
 def calculate_all_python_rules(data):
     all_scores = {}
     all_logs = []
     
+    # Пока мы написали код только для PROF. Остальные блоки ждут своей очереди.
     prof_scores, prof_logs = calculate_prof_rules(data)
-    rep_scores, rep_logs = calculate_rep_rules(data)
-    conv_scores, conv_logs = calculate_conv_rules(data)
-    cont_scores, cont_logs = calculate_cont_rules(data)
-    
     all_scores.update(prof_scores)
-    all_scores.update(rep_scores)
-    all_scores.update(conv_scores)
-    all_scores.update(cont_scores)
+    all_logs.extend(prof_logs)
     
-    all_logs.extend(prof_logs + rep_logs + conv_logs + cont_logs)
     return all_scores, all_logs
 
 # ==========================================
@@ -202,12 +167,13 @@ except Exception as e:
     st.stop()
 
 # --- САЙДБАР: ПУЛЬТ РУЧНОГО УПРАВЛЕНИЯ (УРОВЕНЬ 3) ---
-manual_rules = [r for r in rules_data if "ИИ" in str(r.get('Как считаем', '')) or "Ручн" in str(r.get('Как считаем', '')) or "Эксперт" in str(r.get('Режим Эксперта', ''))]
+# Теперь берем только те правила, которые четко помечены статусом "Ручной"
+manual_rules = [r for r in rules_data if r.get('Статус') == "Ручной"]
 
 manual_overrides = {}
 with st.sidebar:
-    st.header("🎛 Ручная оценка (Уровень 3)")
-    st.caption("Оцените смысловые критерии самостоятельно. Скрипт добавит их к автоматическим расчетам.")
+    st.header("🎛 Ручная оценка")
+    st.caption("Оцените смысловые критерии самостоятельно.")
     
     current_prefix = ""
     for r in manual_rules:
@@ -227,7 +193,19 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 5.1 - Полуавтомат)")
+st.title("📍 MAP100: AI-Аудитор (Версия 5.2 - Архитектура Статусов)")
+
+# Панель статистики
+stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
+stat_manual = sum(1 for r in rules_data if r.get('Статус') == "Ручной")
+stat_stub = sum(1 for r in rules_data if r.get('Статус') not in ["Python", "Ручной"] and str(r.get('Код', '')).strip())
+
+col_s1, col_s2, col_s3 = st.columns(3)
+col_s1.metric("🟢 Готово (Python)", stat_python)
+col_s2.metric("🧠 Ручной режим", stat_manual)
+col_s3.metric("🟡 В разработке (Заглушки)", stat_stub)
+st.divider()
+
 yandex_url = st.text_input("Ссылка на карточку Яндекс.Бизнеса")
 
 if st.button("🚀 Запустить аудит", type="primary", use_container_width=True):
@@ -236,7 +214,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
     else:
         doc = init_google_sheets()
         
-        with st.spinner("Python собирает данные и считает Уровни 1 и 2..."):
+        with st.spinner("Python собирает данные и применяет правила..."):
             try:
                 raw_yandex_data = fetch_apify_data(yandex_url)
                 company_name = raw_yandex_data.get('title', 'Без названия')
@@ -245,23 +223,26 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 st.error(f"Ошибка сбора данных: {e}")
                 st.stop()
                 
-            # СЛИЯНИЕ АВТОМАТИКИ И РУЧНЫХ ОЦЕНОК
+            # СЛИЯНИЕ ВСЕХ ДАННЫХ
             final_scores_dict = {}
             for r in rules_data:
                 code = str(r.get('Код', '')).strip()
                 if not code: continue
                 
                 max_score = float(r.get('Балл', 0.0))
+                status = r.get('Статус', 'Заглушка')
                 current_val = 0.0
                 
-                # Если посчитал Python (Уровень 1 и 2)
-                if code in python_scores_dict:
+                # Если статус Python -> берем из расчетов
+                if status == "Python" and code in python_scores_dict:
                     current_val = min(float(python_scores_dict[code]), max_score)
                 
-                # Если ввели руками в сайдбаре (Уровень 3)
-                if code in manual_overrides:
-                    current_val = manual_overrides[code]
-                    
+                # Если статус Ручной -> берем из сайдбара
+                elif status == "Ручной" and code in manual_overrides:
+                    current_val = min(float(manual_overrides[code]), max_score)
+                
+                # Если статус Заглушка -> остается 0.0
+                
                 final_scores_dict[code] = current_val
                 
             final_total_score = sum(final_scores_dict.values())
@@ -277,7 +258,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 else: color = "inverse"
                 st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
 
-            with st.expander("📊 Детализация баллов по критериям (Слияние Python + Ручной ввод)"):
+            with st.expander("📊 Детализация баллов по критериям"):
                 st.json(final_scores_dict)
 
             # --- ЗАПИСЬ В ТАБЛИЦУ ---
@@ -309,3 +290,50 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 st.success("✅ Результат успешно сохранен в базу!")
             except:
                 st.warning("Не удалось сохранить в результаты (проверьте вкладку Results).")
+
+# ==========================================
+# 5. СЕРВИСНАЯ ПАНЕЛЬ ДЛЯ ЗАПОЛНЕНИЯ ТАБЛИЦЫ
+# ==========================================
+st.divider()
+st.subheader("🛠 Сервисная панель разработчика")
+if st.button("🪄 Магия: Авто-разметка столбца 'Статус' в Google Таблице"):
+    with st.spinner("Подключаюсь к базе и расставляю статусы..."):
+        try:
+            doc = init_google_sheets()
+            sheet = doc.worksheet("Rules")
+            headers = sheet.row_values(1)
+            
+            if "Статус" not in headers:
+                col_idx = len(headers) + 1
+                sheet.update_cell(1, col_idx, "Статус")
+            else:
+                col_idx = headers.index("Статус") + 1
+                
+            records = sheet.get_all_records()
+            
+            python_codes = [
+                "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", 
+                "PROF-07.1", "PROF-08.1", "PROF-11.1", "PROF-11.2", 
+                "PROF-11.3", "PROF-11.4", "PROF-11.5", "PROF-12.1", 
+                "PROF-13.1", "PROF-13.2"
+            ]
+            
+            cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
+            
+            for i, row in enumerate(records):
+                code = str(row.get('Код', '')).strip()
+                how = str(row.get('Как считаем', '')).strip().lower()
+                
+                if code in python_codes:
+                    cell_list[i].value = "Python"
+                elif "ии" in how or "ручн" in how or "эксперт" in str(row.get('Режим Эксперта', '')).lower():
+                    cell_list[i].value = "Ручной"
+                else:
+                    cell_list[i].value = "Заглушка"
+                    
+            sheet.update_cells(cell_list)
+            st.success("✅ Готово! Откройте вашу Google Таблицу — столбец 'Статус' идеально заполнен. Перезагрузите страницу!")
+            st.balloons()
+            
+        except Exception as e:
+            st.error(f"Произошла ошибка при обновлении таблицы: {e}")
