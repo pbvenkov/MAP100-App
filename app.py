@@ -229,7 +229,7 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 5.3 - Расширенная)")
+st.title("📍 MAP100: AI-Аудитор (Версия 5.4 - Документация)")
 
 # Панель статистики
 stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
@@ -276,8 +276,6 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 # Если статус Ручной -> берем из сайдбара
                 elif status == "Ручной" and code in manual_overrides:
                     current_val = min(float(manual_overrides[code]), max_score)
-                
-                # Если статус Заглушка -> остается 0.0
                 
                 final_scores_dict[code] = current_val
                 
@@ -327,53 +325,113 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
             except:
                 st.warning("Не удалось сохранить в результаты (проверьте вкладку Results).")
 
+
 # ==========================================
-# 5. СЕРВИСНАЯ ПАНЕЛЬ ДЛЯ ЗАПОЛНЕНИЯ ТАБЛИЦЫ
+# 5. СЕРВИСНАЯ ПАНЕЛЬ ДЛЯ РАЗРАБОТЧИКА
 # ==========================================
 st.divider()
 st.subheader("🛠 Сервисная панель разработчика")
-if st.button("🪄 Магия: Авто-разметка столбца 'Статус' в Google Таблице"):
-    with st.spinner("Подключаюсь к базе и расставляю статусы..."):
-        try:
-            doc = init_google_sheets()
-            sheet = doc.worksheet("Rules")
-            headers = sheet.row_values(1)
-            
-            if "Статус" not in headers:
-                col_idx = len(headers) + 1
-                sheet.update_cell(1, col_idx, "Статус")
-            else:
-                col_idx = headers.index("Статус") + 1
+
+col_btn1, col_btn2 = st.columns(2)
+
+with col_btn1:
+    if st.button("🪄 1. Авто-разметка столбца 'Статус'"):
+        with st.spinner("Расставляю статусы..."):
+            try:
+                doc = init_google_sheets()
+                sheet = doc.worksheet("Rules")
+                headers = sheet.row_values(1)
                 
-            records = sheet.get_all_records()
-            
-            # РАСШИРЕННЫЙ СПИСОК (25 метрик)
-            python_codes = [
-                "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", 
-                "PROF-07.1", "PROF-08.1", "PROF-11.1", "PROF-11.2", 
-                "PROF-11.3", "PROF-11.4", "PROF-11.5", "PROF-12.1", 
-                "PROF-13.1", "PROF-13.2", "CONT-36.1", "CONT-36.2",
-                "REP-27.1", "REP-27.2", "REP-28.1", "CONV-48.1",
-                "CONV-50.1", "PROF-04.1", "PROF-04.2", "PROF-10.1",
-                "SEO-18.1"
-            ]
-            
-            cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
-            
-            for i, row in enumerate(records):
-                code = str(row.get('Код', '')).strip()
-                how = str(row.get('Как считаем', '')).strip().lower()
-                
-                if code in python_codes:
-                    cell_list[i].value = "Python"
-                elif "ии" in how or "ручн" in how or "эксперт" in str(row.get('Режим Эксперта', '')).lower():
-                    cell_list[i].value = "Ручной"
+                if "Статус" not in headers:
+                    col_idx = len(headers) + 1
+                    sheet.update_cell(1, col_idx, "Статус")
                 else:
-                    cell_list[i].value = "Заглушка"
+                    col_idx = headers.index("Статус") + 1
                     
-            sheet.update_cells(cell_list)
-            st.success("✅ Готово! Откройте вашу Google Таблицу — столбец 'Статус' идеально заполнен. Перезагрузите страницу!")
-            st.balloons()
-            
-        except Exception as e:
-            st.error(f"Произошла ошибка при обновлении таблицы: {e}")
+                records = sheet.get_all_records()
+                python_codes = [
+                    "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", 
+                    "PROF-07.1", "PROF-08.1", "PROF-11.1", "PROF-11.2", 
+                    "PROF-11.3", "PROF-11.4", "PROF-11.5", "PROF-12.1", 
+                    "PROF-13.1", "PROF-13.2", "CONT-36.1", "CONT-36.2",
+                    "REP-27.1", "REP-27.2", "REP-28.1", "CONV-48.1",
+                    "CONV-50.1", "PROF-04.1", "PROF-04.2", "PROF-10.1",
+                    "SEO-18.1"
+                ]
+                
+                cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
+                for i, row in enumerate(records):
+                    code = str(row.get('Код', '')).strip()
+                    how = str(row.get('Как считаем', '')).strip().lower()
+                    
+                    if code in python_codes: cell_list[i].value = "Python"
+                    elif "ии" in how or "ручн" in how or "эксперт" in str(row.get('Режим Эксперта', '')).lower():
+                        cell_list[i].value = "Ручной"
+                    else: cell_list[i].value = "Заглушка"
+                        
+                sheet.update_cells(cell_list)
+                st.success("✅ Статусы обновлены!")
+            except Exception as e:
+                st.error(f"Ошибка: {e}")
+
+with col_btn2:
+    if st.button("📝 2. Записать алгоритмы в таблицу", type="primary"):
+        with st.spinner("Выгружаю логику в таблицу..."):
+            try:
+                doc = init_google_sheets()
+                sheet = doc.worksheet("Rules")
+                headers = sheet.row_values(1)
+                
+                if "Инструкция по вычислению" not in headers:
+                    col_idx = len(headers) + 1
+                    sheet.update_cell(1, col_idx, "Инструкция по вычислению")
+                else:
+                    col_idx = headers.index("Инструкция по вычислению") + 1
+                
+                records = sheet.get_all_records()
+                
+                # Словарь логики
+                logic_dict = {
+                    "PROF-01.1": "Если есть Синяя галочка ИЛИ длина названия компании > 2 символов.",
+                    "PROF-03.1": "Если есть Синяя галочка ИЛИ заполнена хотя бы одна категория деятельности.",
+                    "PROF-05.1": "Если есть Синяя галочка ИЛИ указан хотя бы один контактный телефон.",
+                    "PROF-05.2": "Среди указанных телефонов есть хотя бы один мобильный или городской (от 10 цифр) без добавочного ('доб').",
+                    "PROF-07.1": "Если есть Синяя галочка ИЛИ заполнено расписание работы на все 7 дней.",
+                    "PROF-08.1": "Заполнена хотя бы одна особенность/атрибут в разделе 'Особенности' (Features).",
+                    "PROF-11.1": "В прайс-листе / каталоге товаров найдено 10 и более позиций.",
+                    "PROF-11.2": "У 80% и более товаров в каталоге присутствует фотография.",
+                    "PROF-11.3": "У 80% и более товаров в каталоге указана цена.",
+                    "PROF-11.4": "У 80% и более товаров описание превышает 50 символов.",
+                    "PROF-11.5": "Товары в каталоге разделены минимум на 2 уникальные смысловые категории.",
+                    "PROF-12.1": "В карточке активен статус верифицированного владельца (isVerifiedOwner) - 'Синяя галочка'.",
+                    "PROF-13.1": "В ссылках/соцсетях найдено упоминание t.me, tg://, wa.me или whatsapp.",
+                    "PROF-13.2": "В ссылках/соцсетях найдено упоминание vk.com, youtube или dzen.",
+                    "CONT-36.1": "Общее количество загруженных фотографий в профиле >= 15.",
+                    "CONT-36.2": "Общее количество загруженных фотографий в профиле >= 30.",
+                    "REP-27.1": "Средний рейтинг карточки компании >= 4.5.",
+                    "REP-27.2": "Средний рейтинг карточки компании >= 4.8.",
+                    "REP-28.1": "Общее количество оценок и отзывов у карточки >= 50.",
+                    "CONV-48.1": "В ссылках или атрибутах найдены системы онлайн-записи (yclients, dikidi, n-go, bukza и т.д.).",
+                    "CONV-50.1": "Включен чат с клиентами (isChatEnabled) или есть атрибут 'чат'.",
+                    "PROF-04.1": "Указана ссылка на официальный сайт компании.",
+                    "PROF-04.2": "В ссылке на сайт присутствует параметр UTM-метки ('utm_').",
+                    "PROF-10.1": "Длина текста в разделе 'О компании' (description) строго больше 1500 символов.",
+                    "SEO-18.1": "Поле адреса корректно заполнено (длина строки адреса > 5 символов)."
+                }
+                
+                cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
+                
+                for i, row in enumerate(records):
+                    code = str(row.get('Код', '')).strip()
+                    if code in logic_dict:
+                        cell_list[i].value = logic_dict[code]
+                    else:
+                        # Если ячейка пустая, не затираем её, если там уже что-то было написано руками
+                        current_val = str(row.get('Инструкция по вычислению', ''))
+                        cell_list[i].value = current_val
+                        
+                sheet.update_cells(cell_list)
+                st.success("✅ Инструкции успешно записаны в таблицу!")
+                st.balloons()
+            except Exception as e:
+                st.error(f"Ошибка при записи: {e}")
