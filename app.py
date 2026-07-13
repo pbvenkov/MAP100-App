@@ -4,6 +4,7 @@ import time
 import json
 import numpy as np
 import re
+import itertools
 from datetime import datetime, timezone
 import gspread
 from google.oauth2.service_account import Credentials
@@ -120,6 +121,12 @@ def calculate_prof_rules(data):
         scores['PROF-07.2'] = 0.5
         logs.append("✅ [PROF-07.2] Найден специальный график работы или перерывы.")
 
+    # PROF-14.1: Год основания
+    desc_and_features = (desc + " " + " ".join(str(f).lower() for f in (data.get('features') or []))).lower()
+    if re.search(r'(основан[а-я]? в 19\d{2}|основан[а-я]? в 20\d{2}|работает с 19\d{2}|работает с 20\d{2}|since 19\d{2}|since 20\d{2})', desc_and_features):
+        scores['PROF-14.1'] = 0.5
+        logs.append("🏛️ [PROF-14.1] В текстах найдено упоминание года основания.")
+
     # --- КАТАЛОГ (11.X) ---
     products = (data.get('menu') or {}).get('items') or data.get('productCatalog') or []
     if len(products) >= 10:
@@ -190,10 +197,9 @@ def calculate_rep_rules(data):
     rev_count = data.get('reviewsCount') or data.get('ratingsCount') or 0
     if rev_count >= 50: scores['REP-28.1'] = 2.0
     
-    # REP-29.1: Свежий отзыв, REP-30.1: Coverage, REP-30.2: Скорость ответов
+    # АНАЛИЗ ОТЗЫВОВ (Скорость, Охват, Негатив, Позитив, Шаблоны)
     reviews = data.get('reviews') or []
     if reviews:
-        # Проверка свежего отзыва
         first_review = reviews[0]
         first_rev_date_str = first_review.get('date') or first_review.get('createdAt')
         if first_rev_date_str:
@@ -205,14 +211,19 @@ def calculate_rep_rules(data):
             except:
                 pass
                 
-        # Проверка Coverage и Скорости по 20 последним отзывам
         last_20_reviews = reviews[:20]
         replied_count = 0
         total_response_time_days = 0
         valid_response_times = 0
         
+        unanswered_negative = 0
+        answered_positive = 0
+        owner_replies_texts = []
+        
         for rev in last_20_reviews:
+            rev_rating = rev.get('rating') or 0
             reply = rev.get('reply') or rev.get('ownerAnswer')
+            
             if reply:
                 replied_count += 1
                 rev_date_str = rev.get('date') or rev.get('createdAt')
@@ -228,18 +239,57 @@ def calculate_rep_rules(data):
                             valid_response_times += 1
                     except:
                         pass
+                
+                # Тексты для REP-31.1
+                if reply.get('text'):
+                    owner_replies_texts.append(reply.get('text').lower())
+                    
+            # Для REP-32.1 (Брошенный негатив)
+            if rev_rating <= 3 and not reply:
+                unanswered_negative += 1
+                
+            # Для REP-30.3 (Ответы на позитив)
+            if rev_rating >= 4 and reply:
+                answered_positive += 1
         
+        # Начисляем баллы
         coverage = replied_count / len(last_20_reviews)
         if coverage >= 0.9:
             scores['REP-30.1'] = 2.0
-            logs.append(f"💬 [REP-30.1] Охват ответов: {round(coverage*100)}% (по последним {len(last_20_reviews)}).")
             
         if valid_response_times > 0:
             avg_speed = total_response_time_days / valid_response_times
             if avg_speed <= 3:
                 scores['REP-30.2'] = 2.0
-                logs.append(f"⚡ [REP-30.2] Средняя скорость ответа: {round(avg_speed, 1)} дн.")
                 
+        if unanswered_negative == 0:
+            scores['REP-32.1'] = 1.0
+            logs.append("🛡️ [REP-32.1] Нет брошенного негатива (все отзывы 1-3 звезды получили ответ).")
+            
+        if answered_positive > 0:
+            scores['REP-30.3'] = 1.0
+            logs.append("💖 [REP-30.3] Владелец отвечает на позитивные отзывы.")
+            
+        # REP-31.1 (Не шаблонные ответы / Жаккард)
+        if len(owner_replies_texts) >= 2:
+            is_templated = False
+            # Берем до 10 последних ответов для попарного сравнения
+            pairs = list(itertools.combinations(owner_replies_texts[:10], 2))
+            for t1, t2 in pairs:
+                set1 = set(re.findall(r'\w+', t1))
+                set2 = set(re.findall(r'\w+', t2))
+                union = len(set1 | set2)
+                if union > 0:
+                    jaccard = len(set1 & set2) / union
+                    if jaccard > 0.8:  # 80%+ совпадение слов = Копипаст
+                        is_templated = True
+                        break
+            if not is_templated:
+                scores['REP-31.1'] = 1.0
+                logs.append("📝 [REP-31.1] Ответы владельца уникальны (проверка по коэффициенту Жаккара пройдена).")
+        elif len(owner_replies_texts) == 1:
+            scores['REP-31.1'] = 1.0 # Если ответ всего один, он не может быть шаблоном
+
     return scores, logs
 
 def calculate_conv_rules(data):
@@ -260,26 +310,35 @@ def calculate_conv_rules(data):
     posts = data.get('posts') or data.get('news') or data.get('promos') or data.get('announcements') or []
     if len(posts) > 0:
         scores['CONV-51.1'] = 1.0
-        logs.append(f"🔗 [CONV-51.1] Найдены новости/акции ({len(posts)} шт).")
         
     # CONV-47.1: Кнопка действия (CTA)
     action_url = data.get('actionUrl') or data.get('bookingUrl')
     if action_url:
         scores['CONV-47.1'] = 1.5
-        logs.append("🔗 [CONV-47.1] Найдена кнопка целевого действия.")
 
     # CONV-52.1: Блок FAQ (Вопросы и ответы)
     qna = data.get('questionsAndAnswers') or data.get('faq') or data.get('qna') or []
     if len(qna) > 0:
         scores['CONV-52.1'] = 0.5
-        logs.append("🔗 [CONV-52.1] Найден заполненный блок FAQ (Вопросы и ответы).")
+        
+    # CONV-53.1: Бейджи в товарах (Хит, скидка)
+    products = (data.get('menu') or {}).get('items') or data.get('productCatalog') or []
+    badges_found = False
+    for p in products:
+        p_str = str(p).lower()
+        if p.get('oldPrice') or p.get('discount') or any(kw in p_str for kw in ['хит', 'новинка', 'скидка', 'акция']):
+            badges_found = True
+            break
+    if badges_found:
+        scores['CONV-53.1'] = 0.5
+        logs.append("🏷️ [CONV-53.1] В каталоге найдены бейджи товаров (Хит/Скидка/Новинка).")
         
     return scores, logs
 
 def calculate_seo_rules(data):
     scores, logs = {}, []
     address = data.get('address') or ''
-    if len(address) > 5:  # Базовая проверка, что адрес не пустой
+    if len(address) > 5:
         scores['SEO-18.1'] = 0.5
 
     # SEO-18.2: Обслуживаемые районы
@@ -287,7 +346,6 @@ def calculate_seo_rules(data):
     areas = data.get('serviceArea') or data.get('deliveryArea') or data.get('serviceRadius')
     if areas or any(k in features_str for k in ['выезд', 'доставк', 'зона обслуживани', 'радиус']):
         scores['SEO-18.2'] = 0.5
-        logs.append("🌍 [SEO-18.2] Указаны обслуживаемые районы или доставка.")
         
     return scores, logs
 
@@ -346,7 +404,7 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 5.7 - Алгоритмический Максимум)")
+st.title("📍 MAP100: AI-Аудитор (Версия 5.8 - Детектив)")
 
 # Панель статистики
 stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
@@ -408,6 +466,10 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
 
             with st.expander("📊 Детализация баллов по критериям"):
                 st.json(final_scores_dict)
+                
+            with st.expander("📝 Логи работы алгоритмов (Что нашел Python)"):
+                for log in python_logs:
+                    st.write(log)
 
             # --- ЗАПИСЬ В ТАБЛИЦУ ---
             try:
@@ -462,7 +524,7 @@ with col_btn1:
                     col_idx = headers.index("Статус") + 1
                     
                 records = sheet.get_all_records()
-                # 37 МЕТРИК
+                # 42 МЕТРИКИ
                 python_codes = [
                     "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", 
                     "PROF-07.1", "PROF-08.1", "PROF-11.1", "PROF-11.2", 
@@ -473,7 +535,8 @@ with col_btn1:
                     "SEO-18.1", "CONT-44.1", "CONT-42.1", "CONV-51.1", 
                     "CONV-47.1", "PROF-15.1", "REP-29.1", "REP-30.1", 
                     "REP-30.2", "CONV-52.1", "PROF-07.2", "SEO-18.2", 
-                    "CONT-43.1"
+                    "CONT-43.1", "REP-32.1", "REP-30.3", "REP-31.1",
+                    "CONV-53.1", "PROF-14.1"
                 ]
                 
                 cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
@@ -511,23 +574,23 @@ with col_btn2:
                     "PROF-01.1": "Если есть Синяя галочка ИЛИ длина названия компании > 2 символов.",
                     "PROF-03.1": "Если есть Синяя галочка ИЛИ заполнена хотя бы одна категория деятельности.",
                     "PROF-05.1": "Если есть Синяя галочка ИЛИ указан хотя бы один контактный телефон.",
-                    "PROF-05.2": "Среди указанных телефонов есть хотя бы один мобильный или городской (от 10 цифр) без добавочного ('доб').",
+                    "PROF-05.2": "Среди указанных телефонов есть мобильный или городской без добавочного.",
                     "PROF-07.1": "Если есть Синяя галочка ИЛИ заполнено расписание работы на все 7 дней.",
-                    "PROF-08.1": "Заполнена хотя бы одна особенность/атрибут в разделе 'Особенности' (Features).",
+                    "PROF-08.1": "Заполнена хотя бы одна особенность/атрибут в разделе 'Особенности'.",
                     "PROF-11.1": "В прайс-листе / каталоге товаров найдено 10 и более позиций.",
                     "PROF-11.2": "У 80% и более товаров в каталоге присутствует фотография.",
                     "PROF-11.3": "У 80% и более товаров в каталоге указана цена.",
                     "PROF-11.4": "У 80% и более товаров описание превышает 50 символов.",
-                    "PROF-11.5": "Товары в каталоге разделены минимум на 2 уникальные смысловые категории.",
-                    "PROF-12.1": "В карточке активен статус верифицированного владельца (isVerifiedOwner) - 'Синяя галочка'.",
-                    "PROF-13.1": "В ссылках/соцсетях найдено упоминание t.me, tg://, wa.me или whatsapp.",
+                    "PROF-11.5": "Товары в каталоге разделены минимум на 2 уникальные категории.",
+                    "PROF-12.1": "В карточке активен статус верифицированного владельца - 'Синяя галочка'.",
+                    "PROF-13.1": "В ссылках/соцсетях найдено упоминание t.me, wa.me или whatsapp.",
                     "PROF-13.2": "В ссылках/соцсетях найдено упоминание vk.com, youtube или dzen.",
                     "CONT-36.1": "Общее количество загруженных фотографий в профиле >= 15.",
                     "CONT-36.2": "Общее количество загруженных фотографий в профиле >= 30.",
                     "REP-27.1": "Средний рейтинг карточки компании >= 4.5.",
                     "REP-27.2": "Средний рейтинг карточки компании >= 4.8.",
                     "REP-28.1": "Общее количество оценок и отзывов у карточки >= 50.",
-                    "CONV-48.1": "В ссылках или атрибутах найдены системы онлайн-записи (yclients, dikidi, n-go, bukza и т.д.).",
+                    "CONV-48.1": "В ссылках или атрибутах найдены системы онлайн-записи (yclients и т.д.).",
                     "CONV-50.1": "Включен чат с клиентами (isChatEnabled) или есть атрибут 'чат'.",
                     "PROF-04.1": "Указана ссылка на официальный сайт компании.",
                     "PROF-04.2": "В ссылке на сайт присутствует параметр UTM-метки ('utm_').",
@@ -535,16 +598,21 @@ with col_btn2:
                     "SEO-18.1": "Поле адреса корректно заполнено (длина строки адреса > 5 символов).",
                     "CONT-44.1": "В карточке загружены Истории (Stories) или есть активные ссылки на них.",
                     "CONT-42.1": "В карточке добавлена 3D-панорама (виртуальный тур) или загружено видео.",
-                    "CONV-51.1": "Опубликована хотя бы одна новость, акция или пост в разделе 'Публикации/Новости'.",
-                    "CONV-47.1": "Настроена главная кнопка действия (actionUrl) - например 'Записаться', 'Сайт' в профиле.",
-                    "PROF-15.1": "Заполнена вкладка с юридическими данными (реквизиты, ИНН, ОГРН).",
+                    "CONV-51.1": "Опубликована хотя бы одна новость, акция или пост.",
+                    "CONV-47.1": "Настроена главная кнопка действия (actionUrl) - 'Записаться', 'Сайт'.",
+                    "PROF-15.1": "Заполнена вкладка с юридическими данными (реквизиты).",
                     "REP-29.1": "Последний оставленный отзыв датирован менее чем 14 днями назад.",
-                    "REP-30.1": "Анализ последних 20 отзывов: владелец ответил на 90% и более из них (Coverage).",
-                    "REP-30.2": "Анализ последних 20 отзывов: средняя скорость ответа владельца на отзыв <= 3 дней.",
+                    "REP-30.1": "Анализ 20 отзывов: владелец ответил на 90% и более из них.",
+                    "REP-30.2": "Анализ 20 отзывов: средняя скорость ответа владельца <= 3 дней.",
                     "CONV-52.1": "В карточке заполнен блок 'Вопросы и ответы' (Q&A/FAQ).",
-                    "PROF-07.2": "В графике работы указаны перерывы или задан специальный режим работы (праздники и т.д.).",
-                    "SEO-18.2": "Указана зона обслуживания (радиус доставки, выезд на дом или обслуживаемые районы).",
-                    "CONT-43.1": "В галерее загружены фотографии, отмеченные категорией 'Интерьер' или 'Внутри'."
+                    "PROF-07.2": "В графике работы указаны перерывы или задан специальный режим работы.",
+                    "SEO-18.2": "Указана зона обслуживания (радиус доставки, выезд).",
+                    "CONT-43.1": "В галерее загружены фотографии категории 'Интерьер/Внутри'.",
+                    "REP-32.1": "Среди 20 последних отзывов нет брошенного негатива (1-3 звезды) без ответа.",
+                    "REP-30.3": "Среди 20 последних отзывов есть ответы на позитивные оценки (4-5 звезд).",
+                    "REP-31.1": "Тексты ответов владельца уникальны (Коэффициент Жаккара: совпадение слов < 80%).",
+                    "CONV-53.1": "В товарах найдены бейджи (Хит, Новинка, Скидка) или старая цена.",
+                    "PROF-14.1": "В описании или атрибутах найдено упоминание года основания ('работает с...')."
                 }
                 
                 cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
