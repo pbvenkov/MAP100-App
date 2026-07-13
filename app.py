@@ -8,12 +8,21 @@ import itertools
 from datetime import datetime, timezone
 import gspread
 from google.oauth2.service_account import Credentials
+import google.generativeai as genai
 
 # ==========================================
-# 1. НАСТРОЙКИ СЕКРЕТОВ
+# 1. НАСТРОЙКИ СЕКРЕТОВ И API
 # ==========================================
 APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
+
+# Настройка Gemini AI
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    ai_model = genai.GenerativeModel('gemini-1.5-flash') # Быстрая и дешевая модель
+except Exception as e:
+    st.warning("⚠️ Ключ Gemini API не найден или настроен неверно. AI-функции будут отключены.")
+    ai_model = None
 
 # ==========================================
 # 2. ПАРСЕР GOOGLE ТАБЛИЦЫ И APIFY
@@ -31,7 +40,6 @@ def init_google_sheets():
 
 def get_rules_from_sheets():
     doc = init_google_sheets()
-    # UNFORMATTED_VALUE отключает форматирование Google
     records = doc.worksheet("Rules").get_all_records(value_render_option='UNFORMATTED_VALUE')
     
     for r in records:
@@ -67,19 +75,14 @@ def fetch_apify_data(yandex_url):
     return dataset[0]
 
 # ==========================================
-# 3. МОДУЛЬНАЯ АРХИТЕКТУРА (Логика возвращает True/False)
+# 3. МОДУЛЬНАЯ АРХИТЕКТУРА (Алгоритмы + AI)
 # ==========================================
 
 def calculate_prof_rules(data):
     scores, logs = {}, []
-    
     has_blue_tick = data.get('isVerifiedOwner', False)
     if has_blue_tick:
-        scores['PROF-12.1'] = True
-        scores['PROF-01.1'] = True
-        scores['PROF-03.1'] = True
-        scores['PROF-05.1'] = True
-        scores['PROF-07.1'] = True
+        for code in ['PROF-12.1', 'PROF-01.1', 'PROF-03.1', 'PROF-05.1', 'PROF-07.1']: scores[code] = True
         logs.append("✅ [PROF-12.1] Синяя галочка: Базовые поля засчитаны автоматически.")
     else:
         if len(data.get('title', '')) > 2: scores['PROF-01.1'] = True
@@ -87,27 +90,19 @@ def calculate_prof_rules(data):
         if data.get('phones'): scores['PROF-05.1'] = True
         if len(data.get('schedule') or data.get('workingHours') or []) >= 7: scores['PROF-07.1'] = True
 
-    if data.get('phones'): 
-        if any("доб" not in str(p).lower() and len(re.sub(r'\D', '', str(p))) >= 10 for p in data.get('phones')):
-            scores['PROF-05.2'] = True
-            
+    if data.get('phones') and any("доб" not in str(p).lower() and len(re.sub(r'\D', '', str(p))) >= 10 for p in data.get('phones')):
+        scores['PROF-05.2'] = True
     if data.get('features') and len(data['features']) > 0: scores['PROF-08.1'] = True
-    
     desc = data.get('description') or ''
     if len(desc) > 1500: scores['PROF-10.1'] = True
-    
     website = data.get('url') or data.get('website') or ''
     if website: 
         scores['PROF-04.1'] = True
         if "utm_" in str(website).lower(): scores['PROF-04.2'] = True
-
-    if data.get('requisites') or data.get('legalInfo'):
-        scores['PROF-15.1'] = True
-        logs.append("✅ [PROF-15.1] Найдены юридические данные.")
+    if data.get('requisites') or data.get('legalInfo'): scores['PROF-15.1'] = True
 
     schedule_str = str(data.get('workingHours') or data.get('schedule') or '').lower()
-    if "перерыв" in schedule_str or "special" in schedule_str or "intervals" in schedule_str:
-        scores['PROF-07.2'] = True
+    if "перерыв" in schedule_str or "special" in schedule_str or "intervals" in schedule_str: scores['PROF-07.2'] = True
 
     desc_and_features = (desc + " " + " ".join(str(f).lower() for f in (data.get('features') or []))).lower()
     if re.search(r'(основан[а-я]? в 19\d{2}|основан[а-я]? в 20\d{2}|работает с 19\d{2}|работает с 20\d{2}|since 19\d{2}|since 20\d{2})', desc_and_features):
@@ -134,33 +129,22 @@ def calculate_prof_rules(data):
 
 def calculate_cont_rules(data):
     scores, logs = {}, []
-    
     photo_count = data.get('photoCount') or data.get('photosCount') or 0
     if photo_count >= 15: scores['CONT-36.1'] = True
     if photo_count >= 30: scores['CONT-36.2'] = True
-        
-    stories = data.get('stories') or data.get('storyUrls') or []
-    if len(stories) > 0: scores['CONT-44.1'] = True
-        
-    panorama = data.get('panoramaUrl') or data.get('panoramas')
-    if panorama or len(data.get('videos') or []) > 0: scores['CONT-42.1'] = True
-
-    photos_array = data.get('photos') or data.get('images') or []
-    for p in photos_array:
+    if len(data.get('stories') or data.get('storyUrls') or []) > 0: scores['CONT-44.1'] = True
+    if data.get('panoramaUrl') or data.get('panoramas') or len(data.get('videos') or []) > 0: scores['CONT-42.1'] = True
+    for p in (data.get('photos') or data.get('images') or []):
         if any(kw in str(p).lower() for kw in ['внутри', 'интерьер', 'interior', 'inside', 'залы']):
             scores['CONT-43.1'] = True; break
-            
     return scores, logs
 
 def calculate_rep_rules(data):
     scores, logs = {}, []
-    
     rating = data.get('rating') or 0.0
     if rating >= 4.5: scores['REP-27.1'] = True
     if rating >= 4.8: scores['REP-27.2'] = True
-    
-    rev_count = data.get('reviewsCount') or data.get('ratingsCount') or 0
-    if rev_count >= 50: scores['REP-28.1'] = True
+    if (data.get('reviewsCount') or data.get('ratingsCount') or 0) >= 50: scores['REP-28.1'] = True
     
     reviews = data.get('reviews') or []
     if reviews:
@@ -176,11 +160,8 @@ def calculate_rep_rules(data):
         unanswered_negative, answered_positive = 0, 0
         owner_texts = []
         
-        # REP-35.1: Отзывы с фото
         with_photo = sum(1 for r in last_20_reviews if r.get('photos') or r.get('images'))
-        if len(last_20_reviews) > 0 and (with_photo / len(last_20_reviews)) >= 0.1:
-            scores['REP-35.1'] = True
-            logs.append(f"📸 [REP-35.1] Доля отзывов с фото > 10% ({with_photo} шт).")
+        if len(last_20_reviews) > 0 and (with_photo / len(last_20_reviews)) >= 0.1: scores['REP-35.1'] = True
         
         for rev in last_20_reviews:
             r_rating = rev.get('rating') or 0
@@ -198,7 +179,6 @@ def calculate_rep_rules(data):
                             total_days += (a_d - r_d).days
                             valid_times += 1
                     except: pass
-                    
             if r_rating <= 3 and not reply: unanswered_negative += 1
             if r_rating >= 4 and reply: answered_positive += 1
         
@@ -225,55 +205,82 @@ def calculate_conv_rules(data):
     
     if any(b in links_str or b in features_str for b in ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'запись онлайн', 'nethouse']):
         scores['CONV-48.1'] = True
-        
     if "chat" in features_str or data.get('isChatEnabled') == True: scores['CONV-50.1'] = True
-        
     if len(data.get('posts') or data.get('news') or data.get('promos') or []) > 0: scores['CONV-51.1'] = True
     if data.get('actionUrl') or data.get('bookingUrl'): scores['CONV-47.1'] = True
     if len(data.get('questionsAndAnswers') or data.get('faq') or data.get('qna') or []) > 0: scores['CONV-52.1'] = True
         
-    products = (data.get('menu') or {}).get('items') or data.get('productCatalog') or []
-    for p in products:
+    for p in ((data.get('menu') or {}).get('items') or data.get('productCatalog') or []):
         if p.get('oldPrice') or p.get('discount') or any(kw in str(p).lower() for kw in ['хит', 'новинка', 'скидка', 'акция']):
             scores['CONV-53.1'] = True; break
-            
     return scores, logs
 
 def calculate_seo_rules(data):
     scores, logs = {}, []
     if len(data.get('address') or '') > 5: scores['SEO-18.1'] = True
-
     areas = data.get('serviceArea') or data.get('deliveryArea')
     if areas or any(k in str(data.get('features') or []).lower() for k in ['выезд', 'доставк', 'зона обслуживани', 'радиус']):
         scores['SEO-18.2'] = True
-        
     return scores, logs
 
 def calculate_act_rules(data):
     scores, logs = {}, []
-    fresh_found = False
-    now_utc = datetime.now(timezone.utc)
-    
+    fresh_found, now_utc = False, datetime.now(timezone.utc)
     for p in data.get('posts', []) + data.get('news', []) + data.get('promos', []):
         d_str = p.get('date') or p.get('publishedAt') or p.get('createdAt')
         if d_str:
             try:
-                d = datetime.fromisoformat(d_str.replace('Z', '+00:00'))
-                if (now_utc - d).days <= 30: fresh_found = True; break
+                if (now_utc - datetime.fromisoformat(d_str.replace('Z', '+00:00'))).days <= 30: fresh_found = True; break
             except: pass
-            
-    if not fresh_found and (data.get('stories') or data.get('storyUrls')):
-        fresh_found = True
+    if not fresh_found and (data.get('stories') or data.get('storyUrls')): fresh_found = True
+    if fresh_found: scores['ACT-68.1'] = True
+    if data.get('isAdvertiser') or data.get('advertiser'): scores['ACT-69.1'] = True
+    return scores, logs
+
+# === НОВЫЙ БЛОК: ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ (УРОВЕНЬ 3) ===
+def calculate_ai_rules(data):
+    scores, logs = {}, []
+    description = data.get('description', '')
+    
+    if not description or not ai_model:
+        return scores, logs
         
-    if fresh_found:
-        scores['ACT-68.1'] = True
-        logs.append("🔥 [ACT-68.1] Найдена свежая активность (история или пост за последние 30 дней).")
+    prompt = f"""
+    Проанализируй описание профиля компании и ответь на 4 вопроса строго в формате JSON.
+    Текст описания: "{description}"
+
+    Вопросы:
+    1. PROF-10.6: Присутствует ли в тексте явный призыв к действию (CTA)? Например: звоните, приходите, записывайтесь, переходите на сайт.
+    2. PROF-10.3: Перечислены ли конкретные услуги компании, или текст написан только общими хвалебными фразами? (true - если услуги перечислены).
+    3. CONV-49.1: Содержит ли первый абзац (первые 200 символов) сильное, понятное Уникальное Торговое Предложение (УТП)? Сразу ли понятно, чем они выделяются?
+    4. SEO-18.3: Есть ли в тексте названия конкретных городов, районов, улиц или станций метро (топонимы)?
+
+    Верни ТОЛЬКО валидный JSON объект с булевыми значениями (true или false), без дополнительных символов или форматирования Markdown:
+    {{
+      "PROF-10.6": true,
+      "PROF-10.3": true,
+      "CONV-49.1": false,
+      "SEO-18.3": true
+    }}
+    """
+    
+    try:
+        response = ai_model.generate_content(prompt)
+        # Очищаем ответ от маркдауна (если нейросеть добавит ```json ... ```)
+        raw_text = response.text.replace('```json', '').replace('```', '').strip()
+        ai_result = json.loads(raw_text)
         
-    if data.get('isAdvertiser') or data.get('advertiser'):
-        scores['ACT-69.1'] = True
-        logs.append("🚀 [ACT-69.1] Карточка использует платное продвижение (Приоритет).")
+        if ai_result.get("PROF-10.6"): scores["PROF-10.6"] = True
+        if ai_result.get("PROF-10.3"): scores["PROF-10.3"] = True
+        if ai_result.get("CONV-49.1"): scores["CONV-49.1"] = True
+        if ai_result.get("SEO-18.3"): scores["SEO-18.3"] = True
+        
+        logs.append(f"🧠 [AI-Анализ описания] Успешно завершен. Найдено CTA: {scores.get('PROF-10.6', False)}, Услуги: {scores.get('PROF-10.3', False)}")
+    except Exception as e:
+        logs.append(f"⚠️ [AI-Ошибка] Не удалось проанализировать текст через Gemini: {e}")
         
     return scores, logs
+
 
 def calculate_all_python_rules(data):
     all_scores, all_logs = {}, []
@@ -283,7 +290,8 @@ def calculate_all_python_rules(data):
         calculate_rep_rules(data),
         calculate_conv_rules(data),
         calculate_seo_rules(data),
-        calculate_act_rules(data)
+        calculate_act_rules(data),
+        calculate_ai_rules(data) # Добавлен модуль ИИ
     ]
     for s_dict, l_list in mods:
         all_scores.update(s_dict)
@@ -293,7 +301,7 @@ def calculate_all_python_rules(data):
 # ==========================================
 # 4. ИНТЕРФЕЙС И ЛОГИКА
 # ==========================================
-st.set_page_config(page_title="MAP100 | Полуавтомат", page_icon="📍", layout="wide")
+st.set_page_config(page_title="MAP100 | Нейро-Аудитор", page_icon="🧠", layout="wide")
 
 try:
     rules_data = get_rules_from_sheets()
@@ -321,14 +329,14 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 6.0 - Чистый Алгоритм)")
+st.title("📍 MAP100: AI-Аудитор (Версия 7.0 - Нейросети Gemini)")
 
 stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
 stat_manual = sum(1 for r in rules_data if r.get('Статус') == "Ручной")
 stat_stub = sum(1 for r in rules_data if r.get('Статус') not in ["Python", "Ручной"] and str(r.get('Код', '')).strip())
 
 col_s1, col_s2, col_s3 = st.columns(3)
-col_s1.metric("🟢 Готово (Python)", stat_python)
+col_s1.metric("🟢 Готово (Python+AI)", stat_python)
 col_s2.metric("🧠 Ручной режим", stat_manual)
 col_s3.metric("🟡 В разработке (Заглушки)", stat_stub)
 st.divider()
@@ -340,16 +348,15 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
         st.error("❌ Введите корректную ссылку на Яндекс.Карты.")
     else:
         doc = init_google_sheets()
-        with st.spinner("Python собирает данные и применяет правила..."):
+        with st.spinner("Синтезирую данные: парсер + ИИ анализирует тексты..."):
             try:
                 raw_yandex_data = fetch_apify_data(yandex_url)
                 company_name = raw_yandex_data.get('title', 'Без названия')
                 python_scores_dict, python_logs = calculate_all_python_rules(raw_yandex_data)
             except Exception as e:
-                st.error(f"Ошибка сбора данных: {e}")
+                st.error(f"Ошибка: {e}")
                 st.stop()
                 
-            # СЛИЯНИЕ ВСЕХ ДАННЫХ (ДИНАМИЧЕСКАЯ РАЗВЕСОВКА)
             final_scores_dict = {}
             for r in rules_data:
                 code = str(r.get('Код', '')).strip()
@@ -360,7 +367,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 current_val = 0.0
                 
                 if status == "Python" and python_scores_dict.get(code):
-                    current_val = max_score # Берет ровно столько баллов, сколько указано в таблице!
+                    current_val = max_score 
                 elif status == "Ручной" and code in manual_overrides:
                     current_val = min(float(manual_overrides[code]), max_score)
                 
@@ -376,7 +383,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
 
             with st.expander("📊 Детализация баллов по критериям"): st.json(final_scores_dict)
-            with st.expander("📝 Логи работы алгоритмов"):
+            with st.expander("📝 Логи работы (Что нашел Python и ИИ)"):
                 for log in python_logs: st.write(log)
 
             try:
@@ -414,7 +421,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
 st.divider()
 st.subheader("🛠 Сервисная панель разработчика")
 
-col_btn1, col_btn2, col_btn3 = st.columns(3)
+col_btn1, col_btn2 = st.columns(2)
 
 with col_btn1:
     if st.button("🪄 1. Разметка статусов"):
@@ -425,9 +432,9 @@ with col_btn1:
                 headers = sheet.row_values(1)
                 
                 col_idx = headers.index("Статус") + 1 if "Статус" in headers else len(headers) + 1
-                if "Статус" not in headers: sheet.update_cell(1, col_idx, "Статус")
-                    
+                
                 records = sheet.get_all_records()
+                # 45 + 4 AI МЕТРИКИ = 49 МЕТРИК!
                 python_codes = [
                     "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", "PROF-07.1", "PROF-08.1", "PROF-11.1", 
                     "PROF-11.2", "PROF-11.3", "PROF-11.4", "PROF-11.5", "PROF-12.1", "PROF-13.1", "PROF-13.2", 
@@ -435,7 +442,8 @@ with col_btn1:
                     "PROF-04.1", "PROF-04.2", "PROF-10.1", "SEO-18.1", "CONT-44.1", "CONT-42.1", "CONV-51.1", 
                     "CONV-47.1", "PROF-15.1", "REP-29.1", "REP-30.1", "REP-30.2", "CONV-52.1", "PROF-07.2", 
                     "SEO-18.2", "CONT-43.1", "REP-32.1", "REP-30.3", "REP-31.1", "CONV-53.1", "PROF-14.1",
-                    "ACT-68.1", "REP-35.1", "ACT-69.1"
+                    "ACT-68.1", "REP-35.1", "ACT-69.1", 
+                    "PROF-10.6", "PROF-10.3", "CONV-49.1", "SEO-18.3" # Новые метрики ИИ
                 ]
                 
                 cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
@@ -448,25 +456,25 @@ with col_btn1:
                     else: cell_list[i].value = "Заглушка"
                         
                 sheet.update_cells(cell_list)
-                st.success("✅ Статусы обновлены!")
+                st.success("✅ Статусы обновлены! ИИ-метрики теперь переведены в разряд автоматических.")
             except Exception as e: st.error(f"Ошибка: {e}")
 
 with col_btn2:
-    if st.button("📝 2. Записать алгоритмы"):
-        with st.spinner("Выгружаю логику..."):
+    if st.button("📝 2. Записать инструкции ИИ"):
+        with st.spinner("Записываю логику нейросети..."):
             try:
                 doc = init_google_sheets()
                 sheet = doc.worksheet("Rules")
                 headers = sheet.row_values(1)
                 
                 col_idx = headers.index("Инструкция по вычислению") + 1 if "Инструкция по вычислению" in headers else len(headers) + 1
-                if "Инструкция по вычислению" not in headers: sheet.update_cell(1, col_idx, "Инструкция по вычислению")
                 
                 records = sheet.get_all_records()
                 logic_dict = {
-                    "ACT-68.1": "Скрипт проверяет даты последних постов или историй. Если опубликовано менее 30 дней назад - начисляет балл.",
-                    "REP-35.1": "Среди 20 последних отзывов найдено более 10% отзывов с прикрепленными фотографиями.",
-                    "ACT-69.1": "Карточка оплатила Приоритетное размещение (зеленая метка) в Яндекс Бизнесе."
+                    "PROF-10.6": "AI (Gemini) читает текст описания и ищет явный призыв к действию (Звоните, переходите на сайт).",
+                    "PROF-10.3": "AI (Gemini) проверяет, перечислены ли конкретные услуги компании, а не просто хвалебная вода.",
+                    "CONV-49.1": "AI (Gemini) анализирует первый абзац текста на наличие сильного Уникального Торгового Предложения (УТП).",
+                    "SEO-18.3": "AI (Gemini) ищет в описании топонимы (названия городов, районов, улиц, метро)."
                 }
                 
                 cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
@@ -476,64 +484,6 @@ with col_btn2:
                     else: cell_list[i].value = str(row.get('Инструкция по вычислению', ''))
                         
                 sheet.update_cells(cell_list)
-                st.success("✅ Инструкции успешно записаны!")
-            except Exception as e: st.error(f"Ошибка: {e}")
-
-with col_btn3:
-    if st.button("🧨 3. Генеральная уборка (Рефакторинг)", type="primary"):
-        with st.spinner("Удаляю лишнее, добавляю новые метрики и пересчитываю баллы..."):
-            try:
-                doc = init_google_sheets()
-                sheet = doc.worksheet("Rules")
-                headers = sheet.row_values(1)
-                records = sheet.get_all_records()
-
-                to_delete = ["ACT-64.1", "REP-34.1", "SEO-24.1", "SEO-25.1", "COMP-62.1", "COMP-61.1", "REP-28.2", "SEO-20.2", "SEO-18.4", "SEO-23.1", "CONT-39.2", "PROF-10.5"]
-                to_update = {
-                    "PROF-12.1": 5.0, "CONV-48.1": 4.0, "REP-27.1": 3.0, "REP-27.2": 3.0,
-                    "REP-28.1": 3.0, "REP-30.1": 3.0, "REP-30.2": 3.0, "REP-32.1": 2.0,
-                    "CONV-47.1": 2.0, "PROF-08.1": 1.5
-                }
-                to_add = [
-                    {"Код": "ACT-68.1", "Критерий": "Свежая активность (< 30 дн)", "Балл": 2.0, "Статус": "Python", "Как считаем": "Алгоритм"},
-                    {"Код": "REP-35.1", "Критерий": "Отзывы с фото (> 10%)", "Балл": 2.0, "Статус": "Python", "Как считаем": "Алгоритм"},
-                    {"Код": "ACT-69.1", "Критерий": "Рекламная подписка", "Балл": 3.0, "Статус": "Python", "Как считаем": "Алгоритм"}
-                ]
-
-                score_idx = headers.index("Балл") + 1 if "Балл" in headers else None
-                rows_to_delete = []
-                cells_to_update = []
-
-                # Ищем кого удалить и кому обновить баллы
-                for i, row in enumerate(records):
-                    row_num = i + 2 # +2 из-за заголовка и 0-индексации
-                    code = str(row.get('Код', '')).strip()
-
-                    if code in to_delete:
-                        rows_to_delete.append(row_num)
-                    elif code in to_update and score_idx:
-                        # Если текущий балл не совпадает с нужным - обновляем
-                        if float(row.get('Балл', 0)) != to_update[code]:
-                            cells_to_update.append(gspread.Cell(row=row_num, col=score_idx, value=to_update[code]))
-
-                # 1. Обновляем баллы
-                if cells_to_update:
-                    sheet.update_cells(cells_to_update)
-
-                # 2. Удаляем строки (строго с конца, чтобы не сбить индексы!)
-                rows_to_delete.sort(reverse=True)
-                for r_idx in rows_to_delete:
-                    sheet.delete_rows(r_idx)
-
-                # 3. Добавляем 3 новые строки
-                for new_row_data in to_add:
-                    new_row = [""] * len(headers)
-                    for key, val in new_row_data.items():
-                        if key in headers:
-                            new_row[headers.index(key)] = val
-                    sheet.append_row(new_row)
-
-                st.success("✅ Рефакторинг таблицы завершен! Удалено 12 метрик, обновлено 10 баллов, добавлено 3 новых правила. Сумма снова 100!")
+                st.success("✅ Логика ИИ записана в таблицу!")
                 st.balloons()
-            except Exception as e:
-                st.error(f"Произошла ошибка при рефакторинге: {e}")
+            except Exception as e: st.error(f"Ошибка: {e}")
