@@ -1,5 +1,6 @@
 streamlit
 requests
 google-generativeai
+pandas
 gspread
 google-auth
