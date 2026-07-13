@@ -20,7 +20,7 @@ APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper"
 # Настройка Gemini AI
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    ai_model = genai.GenerativeModel('gemini-1.5-flash') 
+    ai_model = genai.GenerativeModel('gemini-3.5-flash') 
 except Exception as e:
     st.warning("⚠️ Ключ Gemini API не найден или настроен неверно. AI-функции будут отключены.")
     ai_model = None
