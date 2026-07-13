@@ -4,7 +4,7 @@ import time
 import json
 import numpy as np
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -108,6 +108,12 @@ def calculate_prof_rules(data):
         if "utm_" in str(website).lower():
             scores['PROF-04.2'] = 0.5 # UTM-метки
 
+    # PROF-15.1: Юридические данные
+    requisites = data.get('requisites') or data.get('legalInfo')
+    if requisites:
+        scores['PROF-15.1'] = 1.0
+        logs.append("✅ [PROF-15.1] Найдены юридические данные (реквизиты).")
+
     # --- КАТАЛОГ (11.X) ---
     products = (data.get('menu') or {}).get('items') or data.get('productCatalog') or []
     if len(products) >= 10:
@@ -131,23 +137,59 @@ def calculate_prof_rules(data):
 
 def calculate_cont_rules(data):
     scores, logs = {}, []
+    
+    # CONT-36.1, 36.2: Галерея фото
     photo_count = data.get('photoCount') or data.get('photosCount') or 0
     if photo_count >= 15: 
         scores['CONT-36.1'] = 1.5
-        logs.append(f"📸 [CONT-36.1] Найдено {photo_count} фото (>= 15).")
     if photo_count >= 30: 
         scores['CONT-36.2'] = 1.0
-        logs.append(f"📸 [CONT-36.2] Найдено {photo_count} фото (>= 30).")
+        
+    # CONT-44.1: Истории (Stories)
+    stories = data.get('stories') or data.get('storyUrls') or []
+    if len(stories) > 0:
+        scores['CONT-44.1'] = 1.5
+        logs.append(f"📸 [CONT-44.1] Найдены истории ({len(stories)} шт).")
+        
+    # CONT-42.1: Панорамы и Видео
+    panorama = data.get('panoramaUrl') or data.get('panoramas')
+    videos = data.get('videos') or []
+    if panorama or len(videos) > 0:
+        scores['CONT-42.1'] = 1.0
+        logs.append(f"📸 [CONT-42.1] Найдено видео или 3D-панорама.")
+        
     return scores, logs
 
 def calculate_rep_rules(data):
     scores, logs = {}, []
+    
+    # REP-27.1, 27.2: Рейтинг
     rating = data.get('rating') or 0.0
     if rating >= 4.5: scores['REP-27.1'] = 2.0
     if rating >= 4.8: scores['REP-27.2'] = 2.0
     
+    # REP-28.1: Количество отзывов
     rev_count = data.get('reviewsCount') or data.get('ratingsCount') or 0
     if rev_count >= 50: scores['REP-28.1'] = 2.0
+    
+    # REP-29.1: Свежий отзыв (< 14 дней)
+    reviews = data.get('reviews') or []
+    if reviews:
+        # Берем самый первый (свежий) отзыв
+        first_review = reviews[0]
+        rev_date_str = first_review.get('date') or first_review.get('createdAt')
+        if rev_date_str:
+            try:
+                # Парсинг ISO формата даты Яндекса
+                rev_date = datetime.fromisoformat(rev_date_str.replace('Z', '+00:00'))
+                now = datetime.now(rev_date.tzinfo)
+                delta = now - rev_date
+                if delta.days < 14:
+                    scores['REP-29.1'] = 2.0
+                    logs.append(f"⭐ [REP-29.1] Свежий отзыв найден (оставлен {delta.days} дней назад).")
+            except Exception as e:
+                logs.append(f"⚠️ [REP-29.1] Ошибка парсинга даты: {e}")
+                
     return scores, logs
 
 def calculate_conv_rules(data):
@@ -155,14 +197,26 @@ def calculate_conv_rules(data):
     links_str = " ".join(str(l).lower() for l in (data.get('links') or []) + (data.get('socials') or []))
     features_str = " ".join(str(f).lower() for f in (data.get('features') or []))
     
-    # Поиск систем онлайн-записи
+    # CONV-48.1: Поиск систем онлайн-записи
     booking_systems = ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'запись онлайн', 'nethouse']
     if any(b in links_str or b in features_str for b in booking_systems):
         scores['CONV-48.1'] = 3.0
         
-    # Чат с компанией
+    # CONV-50.1: Чат с компанией
     if "chat" in features_str or data.get('isChatEnabled') == True:
         scores['CONV-50.1'] = 1.0
+        
+    # CONV-51.1: Акции / Новости
+    posts = data.get('posts') or data.get('news') or data.get('promos') or data.get('announcements') or []
+    if len(posts) > 0:
+        scores['CONV-51.1'] = 1.0
+        logs.append(f"🔗 [CONV-51.1] Найдены новости/акции ({len(posts)} шт).")
+        
+    # CONV-47.1: Кнопка действия (CTA)
+    action_url = data.get('actionUrl') or data.get('bookingUrl')
+    if action_url:
+        scores['CONV-47.1'] = 1.5
+        logs.append("🔗 [CONV-47.1] Найдена кнопка целевого действия.")
         
     return scores, logs
 
@@ -176,7 +230,6 @@ def calculate_seo_rules(data):
 def calculate_all_python_rules(data):
     all_scores, all_logs = {}, []
     
-    # Запускаем все модули
     mods = [
         calculate_prof_rules(data),
         calculate_cont_rules(data),
@@ -229,7 +282,7 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 5.4 - Документация)")
+st.title("📍 MAP100: AI-Аудитор (Версия 5.5 - Добавлено 6 новых алгоритмов)")
 
 # Панель статистики
 stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
@@ -349,6 +402,7 @@ with col_btn1:
                     col_idx = headers.index("Статус") + 1
                     
                 records = sheet.get_all_records()
+                # 31 МЕТРИКА
                 python_codes = [
                     "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", 
                     "PROF-07.1", "PROF-08.1", "PROF-11.1", "PROF-11.2", 
@@ -356,7 +410,8 @@ with col_btn1:
                     "PROF-13.1", "PROF-13.2", "CONT-36.1", "CONT-36.2",
                     "REP-27.1", "REP-27.2", "REP-28.1", "CONV-48.1",
                     "CONV-50.1", "PROF-04.1", "PROF-04.2", "PROF-10.1",
-                    "SEO-18.1"
+                    "SEO-18.1", "CONT-44.1", "CONT-42.1", "CONV-51.1", 
+                    "CONV-47.1", "PROF-15.1", "REP-29.1"
                 ]
                 
                 cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
@@ -390,7 +445,6 @@ with col_btn2:
                 
                 records = sheet.get_all_records()
                 
-                # Словарь логики
                 logic_dict = {
                     "PROF-01.1": "Если есть Синяя галочка ИЛИ длина названия компании > 2 символов.",
                     "PROF-03.1": "Если есть Синяя галочка ИЛИ заполнена хотя бы одна категория деятельности.",
@@ -416,7 +470,13 @@ with col_btn2:
                     "PROF-04.1": "Указана ссылка на официальный сайт компании.",
                     "PROF-04.2": "В ссылке на сайт присутствует параметр UTM-метки ('utm_').",
                     "PROF-10.1": "Длина текста в разделе 'О компании' (description) строго больше 1500 символов.",
-                    "SEO-18.1": "Поле адреса корректно заполнено (длина строки адреса > 5 символов)."
+                    "SEO-18.1": "Поле адреса корректно заполнено (длина строки адреса > 5 символов).",
+                    "CONT-44.1": "В карточке загружены Истории (Stories) или есть активные ссылки на них.",
+                    "CONT-42.1": "В карточке добавлена 3D-панорама (виртуальный тур) или загружено видео.",
+                    "CONV-51.1": "Опубликована хотя бы одна новость, акция или пост в разделе 'Публикации/Новости'.",
+                    "CONV-47.1": "Настроена главная кнопка действия (actionUrl) - например 'Записаться', 'Сайт' в профиле.",
+                    "PROF-15.1": "Заполнена вкладка с юридическими данными (реквизиты, ИНН, ОГРН).",
+                    "REP-29.1": "Последний оставленный отзыв датирован менее чем 14 днями назад."
                 }
                 
                 cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
@@ -426,7 +486,6 @@ with col_btn2:
                     if code in logic_dict:
                         cell_list[i].value = logic_dict[code]
                     else:
-                        # Если ячейка пустая, не затираем её, если там уже что-то было написано руками
                         current_val = str(row.get('Инструкция по вычислению', ''))
                         cell_list[i].value = current_val
                         
