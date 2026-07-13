@@ -114,6 +114,12 @@ def calculate_prof_rules(data):
         scores['PROF-15.1'] = 1.0
         logs.append("✅ [PROF-15.1] Найдены юридические данные (реквизиты).")
 
+    # PROF-07.2: Специальный график (перерывы, спец.дни)
+    schedule_str = str(data.get('workingHours') or data.get('schedule') or '').lower()
+    if "перерыв" in schedule_str or "special" in schedule_str or "intervals" in schedule_str:
+        scores['PROF-07.2'] = 0.5
+        logs.append("✅ [PROF-07.2] Найден специальный график работы или перерывы.")
+
     # --- КАТАЛОГ (11.X) ---
     products = (data.get('menu') or {}).get('items') or data.get('productCatalog') or []
     if len(products) >= 10:
@@ -157,6 +163,18 @@ def calculate_cont_rules(data):
     if panorama or len(videos) > 0:
         scores['CONT-42.1'] = 1.0
         logs.append(f"📸 [CONT-42.1] Найдено видео или 3D-панорама.")
+
+    # CONT-43.1: Фото интерьера
+    photos_array = data.get('photos') or data.get('images') or []
+    interior_found = False
+    for p in photos_array:
+        p_str = str(p).lower()
+        if any(kw in p_str for kw in ['внутри', 'интерьер', 'interior', 'inside', 'залы']):
+            interior_found = True
+            break
+    if interior_found:
+        scores['CONT-43.1'] = 1.0
+        logs.append("📸 [CONT-43.1] Найдены фотографии категории 'Интерьер/Внутри'.")
         
     return scores, logs
 
@@ -172,23 +190,55 @@ def calculate_rep_rules(data):
     rev_count = data.get('reviewsCount') or data.get('ratingsCount') or 0
     if rev_count >= 50: scores['REP-28.1'] = 2.0
     
-    # REP-29.1: Свежий отзыв (< 14 дней)
+    # REP-29.1: Свежий отзыв, REP-30.1: Coverage, REP-30.2: Скорость ответов
     reviews = data.get('reviews') or []
     if reviews:
-        # Берем самый первый (свежий) отзыв
+        # Проверка свежего отзыва
         first_review = reviews[0]
-        rev_date_str = first_review.get('date') or first_review.get('createdAt')
-        if rev_date_str:
+        first_rev_date_str = first_review.get('date') or first_review.get('createdAt')
+        if first_rev_date_str:
             try:
-                # Парсинг ISO формата даты Яндекса
-                rev_date = datetime.fromisoformat(rev_date_str.replace('Z', '+00:00'))
+                rev_date = datetime.fromisoformat(first_rev_date_str.replace('Z', '+00:00'))
                 now = datetime.now(rev_date.tzinfo)
-                delta = now - rev_date
-                if delta.days < 14:
+                if (now - rev_date).days < 14:
                     scores['REP-29.1'] = 2.0
-                    logs.append(f"⭐ [REP-29.1] Свежий отзыв найден (оставлен {delta.days} дней назад).")
-            except Exception as e:
-                logs.append(f"⚠️ [REP-29.1] Ошибка парсинга даты: {e}")
+            except:
+                pass
+                
+        # Проверка Coverage и Скорости по 20 последним отзывам
+        last_20_reviews = reviews[:20]
+        replied_count = 0
+        total_response_time_days = 0
+        valid_response_times = 0
+        
+        for rev in last_20_reviews:
+            reply = rev.get('reply') or rev.get('ownerAnswer')
+            if reply:
+                replied_count += 1
+                rev_date_str = rev.get('date') or rev.get('createdAt')
+                rep_date_str = reply.get('date') or reply.get('createdAt') or reply.get('updatedAt')
+                
+                if rev_date_str and rep_date_str:
+                    try:
+                        r_date = datetime.fromisoformat(rev_date_str.replace('Z', '+00:00'))
+                        ans_date = datetime.fromisoformat(rep_date_str.replace('Z', '+00:00'))
+                        delta = ans_date - r_date
+                        if delta.days >= 0:
+                            total_response_time_days += delta.days
+                            valid_response_times += 1
+                    except:
+                        pass
+        
+        coverage = replied_count / len(last_20_reviews)
+        if coverage >= 0.9:
+            scores['REP-30.1'] = 2.0
+            logs.append(f"💬 [REP-30.1] Охват ответов: {round(coverage*100)}% (по последним {len(last_20_reviews)}).")
+            
+        if valid_response_times > 0:
+            avg_speed = total_response_time_days / valid_response_times
+            if avg_speed <= 3:
+                scores['REP-30.2'] = 2.0
+                logs.append(f"⚡ [REP-30.2] Средняя скорость ответа: {round(avg_speed, 1)} дн.")
                 
     return scores, logs
 
@@ -217,6 +267,12 @@ def calculate_conv_rules(data):
     if action_url:
         scores['CONV-47.1'] = 1.5
         logs.append("🔗 [CONV-47.1] Найдена кнопка целевого действия.")
+
+    # CONV-52.1: Блок FAQ (Вопросы и ответы)
+    qna = data.get('questionsAndAnswers') or data.get('faq') or data.get('qna') or []
+    if len(qna) > 0:
+        scores['CONV-52.1'] = 0.5
+        logs.append("🔗 [CONV-52.1] Найден заполненный блок FAQ (Вопросы и ответы).")
         
     return scores, logs
 
@@ -225,6 +281,14 @@ def calculate_seo_rules(data):
     address = data.get('address') or ''
     if len(address) > 5:  # Базовая проверка, что адрес не пустой
         scores['SEO-18.1'] = 0.5
+
+    # SEO-18.2: Обслуживаемые районы
+    features_str = str(data.get('features') or []).lower()
+    areas = data.get('serviceArea') or data.get('deliveryArea') or data.get('serviceRadius')
+    if areas or any(k in features_str for k in ['выезд', 'доставк', 'зона обслуживани', 'радиус']):
+        scores['SEO-18.2'] = 0.5
+        logs.append("🌍 [SEO-18.2] Указаны обслуживаемые районы или доставка.")
+        
     return scores, logs
 
 def calculate_all_python_rules(data):
@@ -282,7 +346,7 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 5.5 - Добавлено 6 новых алгоритмов)")
+st.title("📍 MAP100: AI-Аудитор (Версия 5.7 - Алгоритмический Максимум)")
 
 # Панель статистики
 stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
@@ -322,11 +386,8 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 status = r.get('Статус', 'Заглушка')
                 current_val = 0.0
                 
-                # Если статус Python -> берем из расчетов
                 if status == "Python" and code in python_scores_dict:
                     current_val = min(float(python_scores_dict[code]), max_score)
-                
-                # Если статус Ручной -> берем из сайдбара
                 elif status == "Ручной" and code in manual_overrides:
                     current_val = min(float(manual_overrides[code]), max_score)
                 
@@ -378,7 +439,6 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
             except:
                 st.warning("Не удалось сохранить в результаты (проверьте вкладку Results).")
 
-
 # ==========================================
 # 5. СЕРВИСНАЯ ПАНЕЛЬ ДЛЯ РАЗРАБОТЧИКА
 # ==========================================
@@ -402,7 +462,7 @@ with col_btn1:
                     col_idx = headers.index("Статус") + 1
                     
                 records = sheet.get_all_records()
-                # 31 МЕТРИКА
+                # 37 МЕТРИК
                 python_codes = [
                     "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", 
                     "PROF-07.1", "PROF-08.1", "PROF-11.1", "PROF-11.2", 
@@ -411,7 +471,9 @@ with col_btn1:
                     "REP-27.1", "REP-27.2", "REP-28.1", "CONV-48.1",
                     "CONV-50.1", "PROF-04.1", "PROF-04.2", "PROF-10.1",
                     "SEO-18.1", "CONT-44.1", "CONT-42.1", "CONV-51.1", 
-                    "CONV-47.1", "PROF-15.1", "REP-29.1"
+                    "CONV-47.1", "PROF-15.1", "REP-29.1", "REP-30.1", 
+                    "REP-30.2", "CONV-52.1", "PROF-07.2", "SEO-18.2", 
+                    "CONT-43.1"
                 ]
                 
                 cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
@@ -476,7 +538,13 @@ with col_btn2:
                     "CONV-51.1": "Опубликована хотя бы одна новость, акция или пост в разделе 'Публикации/Новости'.",
                     "CONV-47.1": "Настроена главная кнопка действия (actionUrl) - например 'Записаться', 'Сайт' в профиле.",
                     "PROF-15.1": "Заполнена вкладка с юридическими данными (реквизиты, ИНН, ОГРН).",
-                    "REP-29.1": "Последний оставленный отзыв датирован менее чем 14 днями назад."
+                    "REP-29.1": "Последний оставленный отзыв датирован менее чем 14 днями назад.",
+                    "REP-30.1": "Анализ последних 20 отзывов: владелец ответил на 90% и более из них (Coverage).",
+                    "REP-30.2": "Анализ последних 20 отзывов: средняя скорость ответа владельца на отзыв <= 3 дней.",
+                    "CONV-52.1": "В карточке заполнен блок 'Вопросы и ответы' (Q&A/FAQ).",
+                    "PROF-07.2": "В графике работы указаны перерывы или задан специальный режим работы (праздники и т.д.).",
+                    "SEO-18.2": "Указана зона обслуживания (радиус доставки, выезд на дом или обслуживаемые районы).",
+                    "CONT-43.1": "В галерее загружены фотографии, отмеченные категорией 'Интерьер' или 'Внутри'."
                 }
                 
                 cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
