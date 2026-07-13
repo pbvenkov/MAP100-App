@@ -72,88 +72,125 @@ def fetch_apify_data(yandex_url):
 # ==========================================
 # 3. МОДУЛЬНАЯ АРХИТЕКТУРА (УРОВНИ 1 и 2)
 # ==========================================
+
 def calculate_prof_rules(data):
     scores = {}
     logs = []
     
-    # 1. ПРОВЕРКА СИНЕЙ ГАЛОЧКИ (БАЗА)
+    # --- БАЗА И СИНЯЯ ГАЛОЧКА (12.1, 01.1, 03.1, 05.1, 07.1) ---
     has_blue_tick = data.get('isVerifiedOwner', False)
-    
     if has_blue_tick:
         scores['PROF-12.1'] = 4.0
-        logs.append("✅ [PROF-12.1] Найдена синяя галочка. Базовые поля засчитаны автоматически.")
-        scores['PROF-01.1'] = 0.5  # Название
-        scores['PROF-03.1'] = 0.5  # Категория
-        scores['PROF-05.1'] = 1.0  # Телефон
-        scores['PROF-07.1'] = 1.0  # График работы
+        logs.append("✅ [PROF-12.1] Синяя галочка: Базовые поля засчитаны автоматически.")
+        scores['PROF-01.1'] = 0.5
+        scores['PROF-03.1'] = 0.5
+        scores['PROF-05.1'] = 1.0
+        scores['PROF-07.1'] = 1.0
     else:
-        logs.append("❌ [PROF-12.1] Синей галочки нет. Проверяем поля вручную.")
-        if len(data.get('title', '')) > 2: 
-            scores['PROF-01.1'] = 0.5
-        if len(data.get('categories') or []) > 0: 
-            scores['PROF-03.1'] = 0.5
-        if data.get('phones'): 
-            scores['PROF-05.1'] = 1.0
-        if len(data.get('schedule') or data.get('workingHours') or []) >= 7: 
-            scores['PROF-07.1'] = 1.0
+        if len(data.get('title', '')) > 2: scores['PROF-01.1'] = 0.5
+        if len(data.get('categories') or []) > 0: scores['PROF-03.1'] = 0.5
+        if data.get('phones'): scores['PROF-05.1'] = 1.0
+        if len(data.get('schedule') or data.get('workingHours') or []) >= 7: scores['PROF-07.1'] = 1.0
 
-    # 2. ДОПОЛНИТЕЛЬНЫЕ ПРОВЕРКИ ПРОФИЛЯ
-    
-    # PROF-05.2: Качество телефона
-    if data.get('phones'):
-        valid_phone = False
-        for p in data.get('phones'):
-            p_str = str(p).lower()
-            if "доб" not in p_str and len(re.sub(r'\D', '', p_str)) >= 10:
-                valid_phone = True
-                break
-        if valid_phone:
+    # --- ДОП. ПРОВЕРКИ ПРОФИЛЯ ---
+    if data.get('phones'): # PROF-05.2 (Формат)
+        if any("доб" not in str(p).lower() and len(re.sub(r'\D', '', str(p))) >= 10 for p in data.get('phones')):
             scores['PROF-05.2'] = 0.5
+            
+    if data.get('features') and len(data['features']) > 0: scores['PROF-08.1'] = 0.5 # Атрибуты
+    
+    desc = data.get('description') or ''
+    if len(desc) > 1500: scores['PROF-10.1'] = 0.5 # Объем описания
+    
+    website = data.get('url') or data.get('website') or ''
+    if website: 
+        scores['PROF-04.1'] = 0.5 # Рабочая ссылка
+        if "utm_" in str(website).lower():
+            scores['PROF-04.2'] = 0.5 # UTM-метки
 
-    # PROF-08.1: Наличие особенностей (Features)
-    if data.get('features') and len(data['features']) > 0:
-        scores['PROF-08.1'] = 0.5
-
-    # 3. КАТАЛОГ ТОВАРОВ И УСЛУГ (PROF-11)
+    # --- КАТАЛОГ (11.X) ---
     products = (data.get('menu') or {}).get('items') or data.get('productCatalog') or []
     if len(products) >= 10:
         scores['PROF-11.1'] = 1.5
-        
         with_photo = sum(1 for p in products if p.get('photoUrl') or p.get('imageUrl') or p.get('image'))
         with_price = sum(1 for p in products if p.get('price'))
         with_desc = sum(1 for p in products if len(str(p.get('description') or '')) > 50)
-        
-        categories_set = set()
-        for p in products:
-            if p.get('category'):
-                cat_name = p['category'].get('name') if isinstance(p['category'], dict) else p['category']
-                if cat_name: categories_set.add(cat_name)
+        categories_set = set(p['category'].get('name') if isinstance(p.get('category'), dict) else p.get('category') for p in products if p.get('category'))
         
         if (with_photo / len(products)) >= 0.8: scores['PROF-11.2'] = 1.0
         if (with_price / len(products)) >= 0.8: scores['PROF-11.3'] = 1.0
         if (with_desc / len(products)) >= 0.8: scores['PROF-11.4'] = 1.0
         if len(categories_set) >= 2: scores['PROF-11.5'] = 0.5
             
-    # 4. ССЫЛКИ И МЕССЕНДЖЕРЫ (PROF-13)
+    # --- ССЫЛКИ (13.X) ---
     links_str = " ".join(str(l).lower() for l in (data.get('links') or []) + (data.get('socials') or []))
-    
-    if any(s in links_str for s in ["t.me", "tg://", "wa.me", "whatsapp"]): 
-        scores['PROF-13.1'] = 0.5
-    if any(s in links_str for s in ["vk.com", "youtube", "dzen"]): 
-        scores['PROF-13.2'] = 0.5
+    if any(s in links_str for s in ["t.me", "tg://", "wa.me", "whatsapp"]): scores['PROF-13.1'] = 0.5
+    if any(s in links_str for s in ["vk.com", "youtube", "dzen"]): scores['PROF-13.2'] = 0.5
 
     return scores, logs
 
+def calculate_cont_rules(data):
+    scores, logs = {}, []
+    photo_count = data.get('photoCount') or data.get('photosCount') or 0
+    if photo_count >= 15: 
+        scores['CONT-36.1'] = 1.5
+        logs.append(f"📸 [CONT-36.1] Найдено {photo_count} фото (>= 15).")
+    if photo_count >= 30: 
+        scores['CONT-36.2'] = 1.0
+        logs.append(f"📸 [CONT-36.2] Найдено {photo_count} фото (>= 30).")
+    return scores, logs
+
+def calculate_rep_rules(data):
+    scores, logs = {}, []
+    rating = data.get('rating') or 0.0
+    if rating >= 4.5: scores['REP-27.1'] = 2.0
+    if rating >= 4.8: scores['REP-27.2'] = 2.0
+    
+    rev_count = data.get('reviewsCount') or data.get('ratingsCount') or 0
+    if rev_count >= 50: scores['REP-28.1'] = 2.0
+    return scores, logs
+
+def calculate_conv_rules(data):
+    scores, logs = {}, []
+    links_str = " ".join(str(l).lower() for l in (data.get('links') or []) + (data.get('socials') or []))
+    features_str = " ".join(str(f).lower() for f in (data.get('features') or []))
+    
+    # Поиск систем онлайн-записи
+    booking_systems = ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'запись онлайн', 'nethouse']
+    if any(b in links_str or b in features_str for b in booking_systems):
+        scores['CONV-48.1'] = 3.0
+        
+    # Чат с компанией
+    if "chat" in features_str or data.get('isChatEnabled') == True:
+        scores['CONV-50.1'] = 1.0
+        
+    return scores, logs
+
+def calculate_seo_rules(data):
+    scores, logs = {}, []
+    address = data.get('address') or ''
+    if len(address) > 5:  # Базовая проверка, что адрес не пустой
+        scores['SEO-18.1'] = 0.5
+    return scores, logs
+
 def calculate_all_python_rules(data):
-    all_scores = {}
-    all_logs = []
+    all_scores, all_logs = {}, []
     
-    # Пока мы написали код только для PROF. Остальные блоки ждут своей очереди.
-    prof_scores, prof_logs = calculate_prof_rules(data)
-    all_scores.update(prof_scores)
-    all_logs.extend(prof_logs)
+    # Запускаем все модули
+    mods = [
+        calculate_prof_rules(data),
+        calculate_cont_rules(data),
+        calculate_rep_rules(data),
+        calculate_conv_rules(data),
+        calculate_seo_rules(data)
+    ]
     
+    for s_dict, l_list in mods:
+        all_scores.update(s_dict)
+        all_logs.extend(l_list)
+        
     return all_scores, all_logs
+
 
 # ==========================================
 # 4. ИНТЕРФЕЙС И ЛОГИКА
@@ -167,7 +204,6 @@ except Exception as e:
     st.stop()
 
 # --- САЙДБАР: ПУЛЬТ РУЧНОГО УПРАВЛЕНИЯ (УРОВЕНЬ 3) ---
-# Теперь берем только те правила, которые четко помечены статусом "Ручной"
 manual_rules = [r for r in rules_data if r.get('Статус') == "Ручной"]
 
 manual_overrides = {}
@@ -193,7 +229,7 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 5.2 - Архитектура Статусов)")
+st.title("📍 MAP100: AI-Аудитор (Версия 5.3 - Расширенная)")
 
 # Панель статистики
 stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
@@ -311,11 +347,15 @@ if st.button("🪄 Магия: Авто-разметка столбца 'Ста�
                 
             records = sheet.get_all_records()
             
+            # РАСШИРЕННЫЙ СПИСОК (25 метрик)
             python_codes = [
                 "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", 
                 "PROF-07.1", "PROF-08.1", "PROF-11.1", "PROF-11.2", 
                 "PROF-11.3", "PROF-11.4", "PROF-11.5", "PROF-12.1", 
-                "PROF-13.1", "PROF-13.2"
+                "PROF-13.1", "PROF-13.2", "CONT-36.1", "CONT-36.2",
+                "REP-27.1", "REP-27.2", "REP-28.1", "CONV-48.1",
+                "CONV-50.1", "PROF-04.1", "PROF-04.2", "PROF-10.1",
+                "SEO-18.1"
             ]
             
             cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
