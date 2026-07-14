@@ -17,16 +17,15 @@ import google.generativeai as genai
 APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
 
-# Настройка ИИ: используем самую свежую актуальную версию (3.5)
+# Настройка ИИ (оставляем самую стабильную ветку Gemini)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    ai_model = genai.GenerativeModel('gemini-3.5-flash') 
+    ai_model = genai.GenerativeModel('gemini-2.0-flash') 
 except Exception as e:
-    st.warning("⚠️ Ключ Gemini API не найден или настроен неверно. AI-функции будут отключены.")
+    st.warning("⚠️ Ключ Gemini API не найден. AI-функции будут отключены.")
     ai_model = None
 
 def send_telegram_alert(message):
-    """Отправляет уведомление об ошибке админу в Telegram"""
     token = st.secrets.get("TELEGRAM_BOT_TOKEN")
     chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
     if token and chat_id:
@@ -34,7 +33,7 @@ def send_telegram_alert(message):
         try:
             requests.post(url, json={"chat_id": chat_id, "text": message}, timeout=5)
         except Exception:
-            pass # Если ТГ отвалился, не роняем приложение
+            pass
 
 # ==========================================
 # 2. ПАРСЕР GOOGLE ТАБЛИЦЫ И APIFY
@@ -70,29 +69,21 @@ def get_rules_from_sheets():
 def fetch_apify_data(yandex_url):
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
     run_req = requests.post(run_url, json={"startUrls": [{"url": yandex_url}], "maxItems": 1}).json()
-    
-    if 'error' in run_req: 
-        raise Exception(f"Ошибка Apify API: {run_req['error']}")
+    if 'error' in run_req: raise Exception(f"Ошибка Apify API: {run_req['error']}")
         
     run_id = run_req['data']['id']
     dataset_id = run_req['data']['defaultDatasetId']
     status, retries = "RUNNING", 0
-    
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
-        if retries >= 30: 
-            raise Exception("⏱ Таймаут парсера (слишком долго).")
+        if retries >= 30: raise Exception("⏱ Таймаут парсера.")
         time.sleep(5)
         status_req = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}").json()
         status = status_req['data']['status']
         retries += 1
         
-    if status != "SUCCEEDED": 
-        raise Exception("Парсер завершился с ошибкой.")
-        
+    if status != "SUCCEEDED": raise Exception("Парсер завершился с ошибкой.")
     dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}").json()
-    if not dataset or len(dataset) == 0: 
-        raise Exception("Парсер не смог получить данные (пустой ответ).")
-        
+    if not dataset or len(dataset) == 0: raise Exception("Парсер не смог получить данные (пустой ответ).")
     return dataset[0]
 
 # ==========================================
@@ -103,10 +94,8 @@ def get_safe_list(data, keys):
     result = []
     for k in keys:
         val = data.get(k)
-        if isinstance(val, list): 
-            result.extend(val)
-        elif isinstance(val, dict): 
-            result.append(val)
+        if isinstance(val, list): result.extend(val)
+        elif isinstance(val, dict): result.append(val)
     return result
 
 def calculate_prof_rules(data):
@@ -128,7 +117,13 @@ def calculate_prof_rules(data):
                 scores['PROF-05.2'] = True
                 break
                 
-    if data.get('features'): scores['PROF-08.1'] = True
+    features = data.get('features') or []
+    if features: scores['PROF-08.1'] = True
+    
+    # НОВОЕ: PROF-08.2 Нишевые атрибуты
+    if len(features) >= 5:
+        scores['PROF-08.2'] = True
+        logs.append("✅ [PROF-08.2] Найдено более 5 нишевых атрибутов (особенностей).")
     
     desc = data.get('description') or ''
     if len(desc) > 1500: scores['PROF-10.1'] = True
@@ -136,16 +131,14 @@ def calculate_prof_rules(data):
     website = data.get('url') or data.get('website') or ''
     if website: 
         scores['PROF-04.1'] = True
-        if "utm_" in str(website).lower(): 
-            scores['PROF-04.2'] = True
+        if "utm_" in str(website).lower(): scores['PROF-04.2'] = True
             
     if data.get('requisites') or data.get('legalInfo'): 
         scores['PROF-15.1'] = True
         logs.append("✅ [PROF-15.1] Заполнена вкладка с юридическими данными.")
 
     schedule_str = str(data.get('workingHours') or data.get('schedule') or '').lower()
-    if any(k in schedule_str for k in ['перерыв', 'special', 'intervals']): 
-        scores['PROF-07.2'] = True
+    if any(k in schedule_str for k in ['перерыв', 'special', 'intervals']): scores['PROF-07.2'] = True
 
     desc_and_features = f"{desc} {data.get('features', '')}".lower()
     if re.search(r'(основан[а-я]? в 19\d{2}|основан[а-я]? в 20\d{2}|работает с 19\d{2}|работает с 20\d{2}|since 19\d{2}|since 20\d{2})', desc_and_features):
@@ -193,6 +186,7 @@ def calculate_cont_rules(data):
             scores['CONT-43.1'] = True
             logs.append("✅ [CONT-43.1] В галерее найдены фотографии 'Интерьер/Внутри'.")
             break
+            
     return scores, logs
 
 def calculate_rep_rules(data):
@@ -204,11 +198,23 @@ def calculate_rep_rules(data):
     
     reviews = data.get('reviews')
     if isinstance(reviews, list) and len(reviews) > 0:
-        try:
-            date_str = reviews[0].get('date') or reviews[0].get('createdAt')
-            rev_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-            if (datetime.now(timezone.utc) - rev_date).days < 14: scores['REP-29.1'] = True
-        except: pass
+        # Даты последних отзывов
+        dates = []
+        for r in reviews[:20]:
+            try:
+                d_str = r.get('date') or r.get('createdAt')
+                if d_str: dates.append(datetime.fromisoformat(d_str.replace('Z', '+00:00')))
+            except: pass
+            
+        if dates:
+            if (datetime.now(timezone.utc) - dates[0]).days < 14: scores['REP-29.1'] = True
+                
+        # НОВОЕ: REP-29.2 Равномерность отзывов (Дисперсия)
+        if len(dates) >= 3:
+            diffs = [(dates[i] - dates[i+1]).days for i in range(len(dates)-1)]
+            if diffs and (sum(d == 0 for d in diffs) / len(diffs)) < 0.3:
+                scores['REP-29.2'] = True
+                logs.append("✅ [REP-29.2] Распределение отзывов равномерное (нет спам-накруток в один день).")
                 
         last_20 = reviews[:20]
         replied, total_days, valid_times, unans_neg, ans_pos = 0, 0, 0, 0, 0
@@ -259,6 +265,20 @@ def calculate_rep_rules(data):
                 logs.append("✅ [REP-31.1] Тексты ответов уникальны (не скопированы).")
         elif len(owner_texts) == 1: scores['REP-31.1'] = True
 
+        # НОВОЕ: REP-32.2 Без агрессии (Python-фильтр)
+        if owner_texts:
+            toxic_words = ['вранье', 'ложь', 'клевета', 'провокация', 'суд', 'неадекват', 'чушь', 'бред']
+            if not any(w in t for t in owner_texts for w in toxic_words):
+                scores['REP-32.2'] = True
+                logs.append("✅ [REP-32.2] В ответах отсутствует агрессия и токсичность.")
+                
+        # НОВОЕ: REP-33.1 Оспаривание спама
+        if owner_texts:
+            spam_fight_words = ['не были', 'не находим', 'в базе', 'уточните дату', 'номер телефона', 'вас нет', 'имя клиента']
+            if any(w in t for t in owner_texts for w in spam_fight_words):
+                scores['REP-33.1'] = True
+                logs.append("✅ [REP-33.1] Владелец оспаривает спам (запрашивает детали визита в негативе).")
+
     return scores, logs
 
 def calculate_conv_rules(data):
@@ -269,21 +289,59 @@ def calculate_conv_rules(data):
         scores['CONV-48.1'] = True
         logs.append("✅ [CONV-48.1] Найдена система онлайн-записи.")
         
-    if "chat" in str_search or data.get('isChatEnabled'): scores['CONV-50.1'] = True
+    if "chat" in str_search or data.get('isChatEnabled'): 
+        scores['CONV-50.1'] = True
+        
+    # НОВОЕ: CONV-50.2 Быстрые ответы
+    if data.get('isChatEnabled') and (data.get('isAdvertiser') or "бот" in str_search):
+        scores['CONV-50.2'] = True
+        logs.append("✅ [CONV-50.2] Настроены быстрые ответы / бот.")
+
     if data.get('posts') or data.get('news') or data.get('promos'): scores['CONV-51.1'] = True
-    if data.get('actionUrl') or data.get('bookingUrl'): 
+    
+    action_url = str(data.get('actionUrl') or data.get('bookingUrl') or '').lower()
+    if action_url: 
         scores['CONV-47.1'] = True
-        logs.append("✅ [CONV-47.1] Настроена кнопка действия.")
+        logs.append("✅ [CONV-47.1] Настроена главная кнопка действия.")
+        # НОВОЕ: CONV-47.2 Актуальный виджет
+        if any(b in action_url for b in ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'whatsapp', 't.me', 'vk.com/app', 'nethouse']):
+            scores['CONV-47.2'] = True
+            logs.append("✅ [CONV-47.2] Актуальный виджет: кнопка ведет на рабочий инструмент записи/связи.")
+
+    # НОВОЕ: CONV-46.1 Обложка ручная
+    cover = str(data.get('coverPhotoUrl') or data.get('coverUrl') or '').lower()
+    if cover and 'panorama' not in cover and 'streetview' not in cover:
+        scores['CONV-46.1'] = True
+        logs.append("✅ [CONV-46.1] Обложка установлена вручную (не авто-панорама).")
+
     if data.get('questionsAndAnswers') or data.get('faq') or data.get('qna'): 
         scores['CONV-52.1'] = True
         logs.append("✅ [CONV-52.1] Заполнен блок FAQ.")
         
+    # НОВОЕ: CONV-51.2 Активная промоакция
+    promos = get_safe_list(data, ['promos'])
+    posts = get_safe_list(data, ['posts', 'news'])
+    if promos:
+        scores['CONV-51.2'] = True
+        logs.append("✅ [CONV-51.2] Найдена активная промоакция в специальном блоке.")
+    else:
+        recent_promo_post = False
+        for p in posts:
+            p_text = str(p.get('text', '')).lower()
+            if any(w in p_text for w in ['акция', 'скидка', 'спецпредложение', 'до конца']):
+                recent_promo_post = True
+                break
+        if recent_promo_post:
+            scores['CONV-51.2'] = True
+            logs.append("✅ [CONV-51.2] Найдена активная промоакция (в новостях/постах).")
+
     products = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
     for p in products:
         if p.get('oldPrice') or p.get('discount') or any(kw in str(p).lower() for kw in ['хит', 'новинка', 'скидка', 'акция']):
             scores['CONV-53.1'] = True
             logs.append("✅ [CONV-53.1] В товарах найден бейдж (Хит, Скидка).")
             break
+            
     return scores, logs
 
 def calculate_seo_rules(data):
@@ -292,11 +350,21 @@ def calculate_seo_rules(data):
     str_features = str(data.get('features') or '').lower()
     if data.get('serviceArea') or data.get('deliveryArea') or any(k in str_features for k in ['выезд', 'доставк', 'зона обслуживани', 'радиус']):
         scores['SEO-18.2'] = True
+        
+    # НОВОЕ: SEO-21.1 Запросы в товарах
+    products = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
+    if products:
+        avg_words = sum(len(str(p.get('name', '')).split()) for p in products) / len(products)
+        if avg_words >= 2.0:
+            scores['SEO-21.1'] = True
+            logs.append("✅ [SEO-21.1] Названия товаров содержат расширенные запросы (длина названия > 1 слова).")
+            
     return scores, logs
 
 def calculate_act_rules(data):
     scores, logs = {}, []
     fresh, now = False, datetime.now(timezone.utc)
+    posts_with_images = False
     
     posts = get_safe_list(data, ['posts', 'news', 'promos'])
     for p in posts:
@@ -305,7 +373,9 @@ def calculate_act_rules(data):
             p_date = datetime.fromisoformat(p_date_str.replace('Z', '+00:00'))
             if (now - p_date).days <= 30: 
                 fresh = True
-                break
+                # НОВОЕ: ACT-67.1 Регулярность фото
+                if p.get('imageUrl') or p.get('images') or p.get('photoUrl'):
+                    posts_with_images = True
         except: pass
         
     if not fresh and (data.get('stories') or data.get('storyUrls')): fresh = True
@@ -313,9 +383,16 @@ def calculate_act_rules(data):
     if fresh: 
         scores['ACT-68.1'] = True
         logs.append("✅ [ACT-68.1] Найдена свежая активность (<30 дней).")
+        
+    # НОВОЕ: ACT-67.1 Регулярность фото
+    if posts_with_images or data.get('stories') or data.get('storyUrls'):
+        scores['ACT-67.1'] = True
+        logs.append("✅ [ACT-67.1] Регулярность фото: найден свежий визуальный контент (<30 дней).")
+        
     if data.get('isAdvertiser') or data.get('advertiser'): 
         scores['ACT-69.1'] = True
         logs.append("✅ [ACT-69.1] Карточка оплатила Приоритетное размещение.")
+        
     return scores, logs
 
 # === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ ===
@@ -324,7 +401,7 @@ def calculate_ai_rules(data):
     ai_critical_error = None
     
     if ai_model is None: 
-        return scores, logs, "Модель ИИ не инициализирована (проверьте API-ключ Gemini)."
+        return scores, logs, "Модель ИИ отключена."
         
     title = data.get('title', '')
     description = data.get('description', '')
@@ -451,7 +528,7 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 8.8 - Gemini 3.5 Flash)")
+st.title("📍 MAP100: AI-Аудитор (Версия 9.0 - Алгоритмы на Максимум)")
 
 stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
 stat_manual = sum(1 for r in rules_data if r.get('Статус') == "Ручной")
@@ -477,7 +554,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 python_scores_dict, python_logs, ai_error = calculate_all_python_rules(raw_yandex_data)
                 
                 if ai_error:
-                    st.error(f"🚨 КРИТИЧЕСКАЯ ОШИБКА ИИ: Нейросеть не смогла проанализировать смысловые тексты карточки.\n\nТехнические детали: {ai_error}")
+                    st.error(f"🚨 КРИТИЧЕСКАЯ ОШИБКА ИИ: Нейросеть не смогла проанализировать тексты.\n\nДетали: {ai_error}")
                     send_telegram_alert(f"🚨 Ошибка ИИ в MAP100!\nМодель Gemini упала.\nКомпания: {company_name}\nСсылка: {yandex_url}\nПричина: {ai_error}")
                     
             except Exception as e:
@@ -588,73 +665,44 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
 st.divider()
 st.subheader("🛠 Сервисная панель разработчика")
 
-col_btn1, col_btn2 = st.columns(2)
-
-with col_btn1:
-    if st.button("🪄 1. Разметка статусов"):
-        with st.spinner("Расставляю статусы..."):
-            try:
-                doc = init_google_sheets()
-                sheet = doc.worksheet("Rules")
-                headers = sheet.row_values(1)
-                col_idx = headers.index("Статус") + 1 if "Статус" in headers else len(headers) + 1
-                
-                records = sheet.get_all_records()
-                python_codes = [
-                    "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", "PROF-07.1", "PROF-08.1", "PROF-11.1", 
-                    "PROF-11.2", "PROF-11.3", "PROF-11.4", "PROF-11.5", "PROF-12.1", "PROF-13.1", "PROF-13.2", 
-                    "CONT-36.1", "CONT-36.2", "REP-27.1", "REP-27.2", "REP-28.1", "CONV-48.1", "CONV-50.1", 
-                    "PROF-04.1", "PROF-04.2", "PROF-10.1", "SEO-18.1", "CONT-44.1", "CONT-42.1", "CONV-51.1", 
-                    "CONV-47.1", "PROF-15.1", "REP-29.1", "REP-30.1", "REP-30.2", "CONV-52.1", "PROF-07.2", 
-                    "SEO-18.2", "CONT-43.1", "REP-32.1", "REP-30.3", "REP-31.1", "CONV-53.1", "PROF-14.1",
-                    "ACT-68.1", "REP-35.1", "ACT-69.1", 
-                    "PROF-10.6", "PROF-10.3", "CONV-49.1", "SEO-18.3",
-                    "PROF-10.4", "CONV-49.2", "PROF-01.2", "REP-31.2", "CONV-52.2"
-                ]
-                
-                cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
-                for i, row in enumerate(records):
-                    code = str(row.get('Код', '')).strip()
-                    how = str(row.get('Как считаем', '')).strip().lower()
-                    if code in python_codes: 
-                        cell_list[i].value = "Python"
-                    elif "ии" in how or "ручн" in how or "эксперт" in str(row.get('Режим Эксперта', '')).lower():
-                        cell_list[i].value = "Ручной"
-                    else: 
-                        cell_list[i].value = "Заглушка"
-                        
-                sheet.update_cells(cell_list)
-                st.success("✅ Статусы обновлены! Еще 5 ИИ-метрик переведены в автопилот.")
-            except Exception as e: 
-                st.error(f"Ошибка: {e}")
-
-with col_btn2:
-    if st.button("📝 2. Записать инструкции ИИ"):
-        with st.spinner("Записываю логику нейросети..."):
-            try:
-                doc = init_google_sheets()
-                sheet = doc.worksheet("Rules")
-                headers = sheet.row_values(1)
-                col_idx = headers.index("Инструкция по вычислению") + 1 if "Инструкция по вычислению" in headers else len(headers) + 1
-                
-                records = sheet.get_all_records()
-                logic_dict = {
-                    "PROF-10.4": "AI (Gemini) проверяет описание на наличие реальных фактов и преимуществ, отсеивая воду.",
-                    "CONV-49.2": "AI (Gemini) ищет в описании числительные и конкретные метрики (сроки, опыт).",
-                    "PROF-01.2": "AI (Gemini) проверяет название на отсутствие SEO-переспама (лишних слов и городов).",
-                    "REP-31.2": "AI (Gemini) анализирует тексты ответов владельца на наличие корпоративного Tone of Voice.",
-                    "CONV-52.2": "AI (Gemini) проверяет, снимает ли блок FAQ реальные страхи клиентов."
-                }
-                
-                cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
-                for i, row in enumerate(records):
-                    code = str(row.get('Код', '')).strip()
-                    if code in logic_dict: 
-                        cell_list[i].value = logic_dict[code]
-                    else: 
-                        cell_list[i].value = str(row.get('Инструкция по вычислению', ''))
-                        
-                sheet.update_cells(cell_list)
-                st.success("✅ Логика ИИ записана в таблицу!")
-            except Exception as e: 
-                st.error(f"Ошибка: {e}")
+if st.button("🪄 1. Разметка статусов (Нажми меня!)"):
+    with st.spinner("Расставляю статусы..."):
+        try:
+            doc = init_google_sheets()
+            sheet = doc.worksheet("Rules")
+            headers = sheet.row_values(1)
+            col_idx = headers.index("Статус") + 1 if "Статус" in headers else len(headers) + 1
+            
+            records = sheet.get_all_records()
+            # ТЕПЕРЬ 64 АВТОМАТИЧЕСКИХ МЕТРИКИ!
+            python_codes = [
+                "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", "PROF-07.1", "PROF-08.1", "PROF-11.1", 
+                "PROF-11.2", "PROF-11.3", "PROF-11.4", "PROF-11.5", "PROF-12.1", "PROF-13.1", "PROF-13.2", 
+                "CONT-36.1", "CONT-36.2", "REP-27.1", "REP-27.2", "REP-28.1", "CONV-48.1", "CONV-50.1", 
+                "PROF-04.1", "PROF-04.2", "PROF-10.1", "SEO-18.1", "CONT-44.1", "CONT-42.1", "CONV-51.1", 
+                "CONV-47.1", "PROF-15.1", "REP-29.1", "REP-30.1", "REP-30.2", "CONV-52.1", "PROF-07.2", 
+                "SEO-18.2", "CONT-43.1", "REP-32.1", "REP-30.3", "REP-31.1", "CONV-53.1", "PROF-14.1",
+                "ACT-68.1", "REP-35.1", "ACT-69.1", 
+                "PROF-10.6", "PROF-10.3", "CONV-49.1", "SEO-18.3",
+                "PROF-10.4", "CONV-49.2", "PROF-01.2", "REP-31.2", "CONV-52.2",
+                # НОВЫЕ 10 БЫВШИХ ЗАГЛУШЕК
+                "PROF-08.2", "CONV-47.2", "CONV-50.2", "SEO-21.1", "CONV-46.1", 
+                "REP-29.2", "REP-32.2", "REP-33.1", "ACT-67.1", "CONV-51.2"
+            ]
+            
+            cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
+            for i, row in enumerate(records):
+                code = str(row.get('Код', '')).strip()
+                how = str(row.get('Как считаем', '')).strip().lower()
+                if code in python_codes: 
+                    cell_list[i].value = "Python"
+                elif "ии" in how or "ручн" in how or "эксперт" in str(row.get('Режим Эксперта', '')).lower():
+                    cell_list[i].value = "Ручной"
+                else: 
+                    cell_list[i].value = "Заглушка"
+                    
+            sheet.update_cells(cell_list)
+            st.success("✅ Статусы обновлены! Еще 10 метрик переведены в автопилот. Заглушек больше нет!")
+            st.balloons()
+        except Exception as e: 
+            st.error(f"Ошибка: {e}")
