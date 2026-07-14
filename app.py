@@ -31,7 +31,7 @@ except Exception as e:
 def init_google_sheets():
     try:
         creds_dict = json.loads(st.secrets["GCP_CREDENTIALS"])
-        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        scopes = ["[https://www.googleapis.com/auth/spreadsheets](https://www.googleapis.com/auth/spreadsheets)", "[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)"]
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(credentials).open_by_url(st.secrets["SPREADSHEET_URL"])
     except Exception as e:
@@ -55,7 +55,7 @@ def get_rules_from_sheets():
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_apify_data(yandex_url):
-    run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
+    run_url = f"[https://api.apify.com/v2/acts/](https://api.apify.com/v2/acts/){APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
     run_req = requests.post(run_url, json={"startUrls": [{"url": yandex_url}], "maxItems": 1}).json()
     if 'error' in run_req: raise Exception(run_req['error'])
     run_id, dataset_id = run_req['data']['id'], run_req['data']['defaultDatasetId']
@@ -63,10 +63,10 @@ def fetch_apify_data(yandex_url):
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
         if retries >= 30: raise Exception("⏱ Таймаут парсера.")
         time.sleep(5)
-        status = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}").json()['data']['status']
+        status = requests.get(f"[https://api.apify.com/v2/actor-runs/](https://api.apify.com/v2/actor-runs/){run_id}?token={APIFY_API_TOKEN}").json()['data']['status']
         retries += 1
     if status != "SUCCEEDED": raise Exception("Ошибка парсинга Apify.")
-    dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}").json()
+    dataset = requests.get(f"[https://api.apify.com/v2/datasets/](https://api.apify.com/v2/datasets/){dataset_id}/items?token={APIFY_API_TOKEN}").json()
     if not dataset: raise Exception("Нет данных.")
     return dataset[0]
 
@@ -75,7 +75,6 @@ def fetch_apify_data(yandex_url):
 # ==========================================
 
 def get_safe_list(data, keys):
-    """Безопасно извлекает данные в виде списка, даже если пришел словарь или None."""
     result = []
     for k in keys:
         val = data.get(k)
@@ -112,12 +111,10 @@ def calculate_prof_rules(data):
     if any(k in str(data.get('workingHours') or data.get('schedule') or '').lower() for k in ['перерыв', 'special', 'intervals']): 
         scores['PROF-07.2'] = True
 
-    # Безопасный поиск по описанию и особенностям
     desc_and_features = f"{desc} {data.get('features', '')}".lower()
     if re.search(r'(основан[а-я]? в 19\d{2}|основан[а-я]? в 20\d{2}|работает с 19\d{2}|работает с 20\d{2}|since 19\d{2}|since 20\d{2})', desc_and_features):
         scores['PROF-14.1'] = True
 
-    # Безопасный сбор товаров
     products = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
     if len(products) >= 10:
         scores['PROF-11.1'] = True
@@ -265,49 +262,4 @@ def calculate_act_rules(data):
 # === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ ===
 def calculate_ai_rules(data):
     scores, logs = {}, []
-    if not ai_model: return scores, logs
-        
-    title = data.get('title', '')
-    description = data.get('description', '')
-    
-    owner_texts = []
-    reviews_data = data.get('reviews')
-    if isinstance(reviews_data, list):
-        for rev in reviews_data[:10]:
-            reply = rev.get('reply') or rev.get('ownerAnswer')
-            if isinstance(reply, dict) and reply.get('text'): owner_texts.append(reply.get('text'))
-    owner_replies_str = " | ".join(owner_texts[:3]) if owner_texts else "Ответов нет"
-    
-    faq_list = get_safe_list(data, ['questionsAndAnswers', 'faq', 'qna'])
-    faq_str = " | ".join([f"Вопрос: {q.get('question')} Ответ: {q.get('answer')}" for q in faq_list[:3]]) if faq_list else "FAQ нет"
-        
-    prompt = f"""
-    Проанализируй текстовые данные компании и ответь на 9 вопросов строго в формате JSON.
-    
-    ДАННЫЕ ДЛЯ АНАЛИЗА:
-    Название: "{title}"
-    Описание: "{description}"
-    Примеры ответов владельца: "{owner_replies_str}"
-    Блок FAQ: "{faq_str}"
-
-    ВОПРОСЫ:
-    1. PROF-10.6: Есть ли в описании явный призыв к действию (CTA - звоните, приходите, сайт)?
-    2. PROF-10.3: Перечислены ли в описании конкретные услуги, или только общие фразы?
-    3. CONV-49.1: Содержит ли первый абзац описания сильное, понятное УТП (чем компания выделяется)?
-    4. SEO-18.3: Есть ли в описании названия городов, районов, улиц, метро (топонимы)?
-    5. PROF-10.4: Есть ли в описании конкретные преимущества (факты), а не просто клише "качественно", "быстро"?
-    6. CONV-49.2: Есть ли в описании числительные и измеримые показатели (годы опыта, сроки в днях, цифры)?
-    7. PROF-01.2: Является ли название чистым брендом без SEO-спама? (Верни false, если в названии есть перечисление услуг или городов, например "Ремонт авто Москва Ромашка").
-    8. REP-31.2: Прослеживается ли в ответах владельца вежливый корпоративный Tone of Voice (наличие приветствий, уважение)? (Если 'Ответов нет' -> false).
-    9. CONV-52.2: Снимают ли вопросы из блока FAQ реальные страхи клиентов (гарантии, возврат, сроки, цены)? (Если 'FAQ нет' -> false).
-
-    Верни ТОЛЬКО валидный JSON объект с булевыми значениями (true или false), без markdown:
-    {{
-      "PROF-10.6": false, "PROF-10.3": false, "CONV-49.1": false, "SEO-18.3": false,
-      "PROF-10.4": false, "CONV-49.2": false, "PROF-01.2": false, "REP-31.2": false, "CONV-52.2": false
-    }}
-    """
-    
-    try:
-        response = ai_model.generate_content(prompt)
-        raw_text = response.text.replace('```json', '').replace('
+    if not ai_model:
