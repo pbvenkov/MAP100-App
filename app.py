@@ -17,10 +17,10 @@ import google.generativeai as genai
 APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
 
-# Настройка ИИ (оставляем самую стабильную ветку Gemini)
+# Настройка ИИ (СТРОГО gemini-3.5-flash для 2026 года)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    ai_model = genai.GenerativeModel('gemini-2.0-flash') 
+    ai_model = genai.GenerativeModel('gemini-3.5-flash') 
 except Exception as e:
     st.warning("⚠️ Ключ Gemini API не найден. AI-функции будут отключены.")
     ai_model = None
@@ -120,7 +120,6 @@ def calculate_prof_rules(data):
     features = data.get('features') or []
     if features: scores['PROF-08.1'] = True
     
-    # НОВОЕ: PROF-08.2 Нишевые атрибуты
     if len(features) >= 5:
         scores['PROF-08.2'] = True
         logs.append("✅ [PROF-08.2] Найдено более 5 нишевых атрибутов (особенностей).")
@@ -198,7 +197,6 @@ def calculate_rep_rules(data):
     
     reviews = data.get('reviews')
     if isinstance(reviews, list) and len(reviews) > 0:
-        # Даты последних отзывов
         dates = []
         for r in reviews[:20]:
             try:
@@ -209,7 +207,6 @@ def calculate_rep_rules(data):
         if dates:
             if (datetime.now(timezone.utc) - dates[0]).days < 14: scores['REP-29.1'] = True
                 
-        # НОВОЕ: REP-29.2 Равномерность отзывов (Дисперсия)
         if len(dates) >= 3:
             diffs = [(dates[i] - dates[i+1]).days for i in range(len(dates)-1)]
             if diffs and (sum(d == 0 for d in diffs) / len(diffs)) < 0.3:
@@ -265,14 +262,12 @@ def calculate_rep_rules(data):
                 logs.append("✅ [REP-31.1] Тексты ответов уникальны (не скопированы).")
         elif len(owner_texts) == 1: scores['REP-31.1'] = True
 
-        # НОВОЕ: REP-32.2 Без агрессии (Python-фильтр)
         if owner_texts:
             toxic_words = ['вранье', 'ложь', 'клевета', 'провокация', 'суд', 'неадекват', 'чушь', 'бред']
             if not any(w in t for t in owner_texts for w in toxic_words):
                 scores['REP-32.2'] = True
                 logs.append("✅ [REP-32.2] В ответах отсутствует агрессия и токсичность.")
                 
-        # НОВОЕ: REP-33.1 Оспаривание спама
         if owner_texts:
             spam_fight_words = ['не были', 'не находим', 'в базе', 'уточните дату', 'номер телефона', 'вас нет', 'имя клиента']
             if any(w in t for t in owner_texts for w in spam_fight_words):
@@ -292,7 +287,6 @@ def calculate_conv_rules(data):
     if "chat" in str_search or data.get('isChatEnabled'): 
         scores['CONV-50.1'] = True
         
-    # НОВОЕ: CONV-50.2 Быстрые ответы
     if data.get('isChatEnabled') and (data.get('isAdvertiser') or "бот" in str_search):
         scores['CONV-50.2'] = True
         logs.append("✅ [CONV-50.2] Настроены быстрые ответы / бот.")
@@ -303,12 +297,10 @@ def calculate_conv_rules(data):
     if action_url: 
         scores['CONV-47.1'] = True
         logs.append("✅ [CONV-47.1] Настроена главная кнопка действия.")
-        # НОВОЕ: CONV-47.2 Актуальный виджет
         if any(b in action_url for b in ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'whatsapp', 't.me', 'vk.com/app', 'nethouse']):
             scores['CONV-47.2'] = True
             logs.append("✅ [CONV-47.2] Актуальный виджет: кнопка ведет на рабочий инструмент записи/связи.")
 
-    # НОВОЕ: CONV-46.1 Обложка ручная
     cover = str(data.get('coverPhotoUrl') or data.get('coverUrl') or '').lower()
     if cover and 'panorama' not in cover and 'streetview' not in cover:
         scores['CONV-46.1'] = True
@@ -318,7 +310,6 @@ def calculate_conv_rules(data):
         scores['CONV-52.1'] = True
         logs.append("✅ [CONV-52.1] Заполнен блок FAQ.")
         
-    # НОВОЕ: CONV-51.2 Активная промоакция
     promos = get_safe_list(data, ['promos'])
     posts = get_safe_list(data, ['posts', 'news'])
     if promos:
@@ -351,7 +342,6 @@ def calculate_seo_rules(data):
     if data.get('serviceArea') or data.get('deliveryArea') or any(k in str_features for k in ['выезд', 'доставк', 'зона обслуживани', 'радиус']):
         scores['SEO-18.2'] = True
         
-    # НОВОЕ: SEO-21.1 Запросы в товарах
     products = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
     if products:
         avg_words = sum(len(str(p.get('name', '')).split()) for p in products) / len(products)
@@ -373,7 +363,6 @@ def calculate_act_rules(data):
             p_date = datetime.fromisoformat(p_date_str.replace('Z', '+00:00'))
             if (now - p_date).days <= 30: 
                 fresh = True
-                # НОВОЕ: ACT-67.1 Регулярность фото
                 if p.get('imageUrl') or p.get('images') or p.get('photoUrl'):
                     posts_with_images = True
         except: pass
@@ -384,7 +373,6 @@ def calculate_act_rules(data):
         scores['ACT-68.1'] = True
         logs.append("✅ [ACT-68.1] Найдена свежая активность (<30 дней).")
         
-    # НОВОЕ: ACT-67.1 Регулярность фото
     if posts_with_images or data.get('stories') or data.get('storyUrls'):
         scores['ACT-67.1'] = True
         logs.append("✅ [ACT-67.1] Регулярность фото: найден свежий визуальный контент (<30 дней).")
@@ -401,7 +389,7 @@ def calculate_ai_rules(data):
     ai_critical_error = None
     
     if ai_model is None: 
-        return scores, logs, "Модель ИИ отключена."
+        return scores, logs, "Модель ИИ не инициализирована (проверьте API-ключ Gemini)."
         
     title = data.get('title', '')
     description = data.get('description', '')
@@ -528,7 +516,7 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 9.0 - Алгоритмы на Максимум)")
+st.title("📍 MAP100: AI-Аудитор (Версия 9.1 - Gemini 3.5 Flash)")
 
 stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
 stat_manual = sum(1 for r in rules_data if r.get('Статус') == "Ручной")
@@ -674,7 +662,6 @@ if st.button("🪄 1. Разметка статусов (Нажми меня!)")
             col_idx = headers.index("Статус") + 1 if "Статус" in headers else len(headers) + 1
             
             records = sheet.get_all_records()
-            # ТЕПЕРЬ 64 АВТОМАТИЧЕСКИХ МЕТРИКИ!
             python_codes = [
                 "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", "PROF-07.1", "PROF-08.1", "PROF-11.1", 
                 "PROF-11.2", "PROF-11.3", "PROF-11.4", "PROF-11.5", "PROF-12.1", "PROF-13.1", "PROF-13.2", 
@@ -685,7 +672,6 @@ if st.button("🪄 1. Разметка статусов (Нажми меня!)")
                 "ACT-68.1", "REP-35.1", "ACT-69.1", 
                 "PROF-10.6", "PROF-10.3", "CONV-49.1", "SEO-18.3",
                 "PROF-10.4", "CONV-49.2", "PROF-01.2", "REP-31.2", "CONV-52.2",
-                # НОВЫЕ 10 БЫВШИХ ЗАГЛУШЕК
                 "PROF-08.2", "CONV-47.2", "CONV-50.2", "SEO-21.1", "CONV-46.1", 
                 "REP-29.2", "REP-32.2", "REP-33.1", "ACT-67.1", "CONV-51.2"
             ]
