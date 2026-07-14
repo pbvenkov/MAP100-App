@@ -17,7 +17,7 @@ import google.generativeai as genai
 APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
 
-# Настройка ИИ (СТРОГО gemini-3.5-flash для 2026 года)
+# Настройка ИИ 
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     ai_model = genai.GenerativeModel('gemini-3.5-flash') 
@@ -383,51 +383,83 @@ def calculate_act_rules(data):
         
     return scores, logs
 
-# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ ===
+# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ (ТЕПЕРЬ 18 МЕТРИК) ===
 def calculate_ai_rules(data):
     scores, logs = {}, []
     ai_critical_error = None
     
     if ai_model is None: 
-        return scores, logs, "Модель ИИ не инициализирована (проверьте API-ключ Gemini)."
+        return scores, logs, "Модель ИИ отключена."
         
     title = data.get('title', '')
     description = data.get('description', '')
+    category = ""
+    if data.get('categories') and len(data['categories']) > 0:
+        cat_obj = data['categories'][0]
+        category = cat_obj.get('name') if isinstance(cat_obj, dict) else str(cat_obj)
+        
+    all_categories = []
+    if data.get('categories'):
+        for c in data['categories']:
+            all_categories.append(c.get('name') if isinstance(c, dict) else str(c))
+    cats_str = ", ".join(all_categories)
     
-    owner_texts = []
     reviews_data = data.get('reviews')
+    owner_texts = []
+    client_texts = []
     if isinstance(reviews_data, list):
-        for rev in reviews_data[:10]:
+        for rev in reviews_data[:15]: # Берем 15 последних отзывов для надежности
+            if rev.get('text'): client_texts.append(rev.get('text'))
             reply = rev.get('reply') or rev.get('ownerAnswer')
             if isinstance(reply, dict) and reply.get('text'): 
                 owner_texts.append(reply.get('text'))
                 
     owner_replies_str = " | ".join(owner_texts[:3]) if owner_texts else "Ответов нет"
+    client_reviews_str = " | ".join(client_texts[:5]) if client_texts else "Отзывов нет"
     
     faq_list = get_safe_list(data, ['questionsAndAnswers', 'faq', 'qna'])
     faq_str_list = [f"В: {q.get('question')} О: {q.get('answer')}" for q in faq_list[:3]]
     faq_str = " | ".join(faq_str_list) if faq_str_list else "FAQ нет"
+    
+    products = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
+    prod_desc_list = [str(p.get('description')) for p in products[:5] if p.get('description')]
+    prod_desc_str = " | ".join(prod_desc_list) if prod_desc_list else "Описаний товаров нет"
         
     prompt = f"""
-    Проанализируй данные компании и ответь на 9 вопросов.
-    Верни результат СТРОГО в виде JSON объекта (только скобки {{ и }}, без форматирования Markdown).
+    Ты Senior SEO-специалист и маркетолог. Проанализируй данные компании и ответь на 18 вопросов.
+    Шаг 1: Определи нишу бизнеса по Названию и Категории. Вспомни главные "боли" клиентов этой ниши и ее LSI-словарь (ключевые термины).
+    Шаг 2: Ответь на вопросы строго "true" или "false".
+    Верни результат ТОЛЬКО в виде валидного JSON объекта. Никакого Markdown (без ```json).
 
-    ДАННЫЕ:
+    ДАННЫЕ КОМПАНИИ:
     Название: "{title}"
+    Основная категория: "{category}"
+    Все категории: "{cats_str}"
     Описание: "{description}"
-    Ответы: "{owner_replies_str}"
+    Ответы владельца: "{owner_replies_str}"
+    Отзывы клиентов: "{client_reviews_str}"
+    Описания товаров: "{prod_desc_str}"
     FAQ: "{faq_str}"
 
-    ВОПРОСЫ (значение должно быть true или false):
+    ВОПРОСЫ:
     "PROF-10.6": Есть ли в описании призыв к действию (звоните, сайт)?
     "PROF-10.3": Перечислены ли конкретные услуги, а не общие фразы?
     "CONV-49.1": Есть ли в начале описания сильное УТП?
     "SEO-18.3": Есть ли в описании названия городов/районов (топонимы)?
     "PROF-10.4": Есть ли в описании конкретные факты/преимущества, а не вода?
     "CONV-49.2": Есть ли в описании измеримые показатели (годы, цифры)?
-    "PROF-01.2": Является ли название чистым брендом без SEO-спама (без лишних слов услуг/городов)?
+    "PROF-01.2": Является ли название чистым брендом без SEO-спама (без перечисления услуг/городов)?
     "REP-31.2": Есть ли в ответах владельца вежливость и корпоративный стиль? (Если ответов нет - false).
     "CONV-52.2": Снимает ли FAQ реальные страхи клиентов? (Если FAQ нет - false).
+    "PROF-02.1": Соответствует ли Основная категория смыслу Описания компании? (true если да).
+    "PROF-03.2": Нет ли в списке Всех категорий "мусорных", не связанных с основным бизнесом? (true если мусора нет).
+    "SEO-17.1": Есть ли в Описании целевые ключевые запросы этой ниши (3-5 шт)?
+    "SEO-17.2": Написано ли Описание для людей, без жесткого SEO-переспама одним словом? (true если текст читаемый).
+    "SEO-17.3": Есть ли в Описании LSI-термины (профессиональные слова, задающие контекст ниши)?
+    "CONV-49.4": Закрывает ли Описание или УТП типичные "боли" клиентов этой ниши?
+    "SEO-19.1": Вплетает ли владелец в свои Ответы ключевые коммерческие запросы (названия услуг)? (Если ответов нет - false).
+    "SEO-19.2": Упоминают ли клиенты в своих Отзывах конкретные названия услуг? (Если отзывов нет - false).
+    "SEO-21.2": Содержат ли Описания товаров развернутые SEO/LSI термины? (Если описаний нет - false).
     """
     
     try:
@@ -440,255 +472,14 @@ def calculate_ai_rules(data):
             ai_result = json.loads(clean_json)
             
             metrics_mapping = {
-                "PROF-10.6": "AI: Нашел явный призыв к действию (CTA).",
-                "PROF-10.3": "AI: Услуги конкретно перечислены в тексте.",
-                "CONV-49.1": "AI: В первом абзаце найдено сильное УТП.",
-                "SEO-18.3": "AI: Нашел топонимы (города/районы) в тексте.",
-                "PROF-10.4": "AI: Нашел конкретные факты и преимущества, нет лишней 'воды'.",
-                "CONV-49.2": "AI: В УТП/описании присутствуют конкретные числительные и метрики.",
-                "PROF-01.2": "AI: Название компании (Бренд) чистое, без SEO-переспама ключами.",
-                "REP-31.2": "AI: В ответах на отзывы выдержан вежливый Tone of Voice и приветствия.",
-                "CONV-52.2": "AI: Блок FAQ закрывает реальные страхи и возражения клиентов."
-            }
-            
-            for code, msg in metrics_mapping.items():
-                if ai_result.get(code):
-                    scores[code] = True
-                    logs.append(f"✅ [{code}] {msg}")
-        else:
-            ai_critical_error = "Нейросеть не вернула валидный JSON-ответ."
-            logs.append(f"⚠️ [AI-Ошибка] {ai_critical_error}")
-                
-    except Exception as e:
-        ai_critical_error = str(e)
-        logs.append(f"⚠️ [AI-Ошибка] Сбой при обращении к Gemini: {e}")
-        
-    return scores, logs, ai_critical_error
-
-def calculate_all_python_rules(data):
-    all_scores, all_logs = {}, []
-    global_ai_error = None
-    
-    mods = [
-        calculate_prof_rules(data), calculate_cont_rules(data), calculate_rep_rules(data),
-        calculate_conv_rules(data), calculate_seo_rules(data), calculate_act_rules(data)
-    ]
-    for s_dict, l_list in mods:
-        all_scores.update(s_dict)
-        all_logs.extend(l_list)
-        
-    ai_scores, ai_logs, ai_err = calculate_ai_rules(data)
-    all_scores.update(ai_scores)
-    all_logs.extend(ai_logs)
-    if ai_err:
-        global_ai_error = ai_err
-        
-    return all_scores, all_logs, global_ai_error
-
-# ==========================================
-# 4. ИНТЕРФЕЙС И ЛОГИКА
-# ==========================================
-st.set_page_config(page_title="MAP100 | Нейро-Аудитор", page_icon="🧠", layout="wide")
-
-try:
-    rules_data = get_rules_from_sheets()
-except Exception as e:
-    st.error("⚠️ Не удалось загрузить базу правил. Проверьте Google Sheets API.")
-    st.stop()
-
-# --- САЙДБАР ---
-manual_rules = [r for r in rules_data if r.get('Статус') == "Ручной"]
-manual_overrides = {}
-with st.sidebar:
-    st.header("🎛 Ручная оценка")
-    current_prefix = ""
-    for r in manual_rules:
-        code = str(r.get('Код', '')).strip()
-        if not code: continue
-        prefix = code.split('-')[0] if '-' in code else "ДРУГОЕ"
-        if prefix != current_prefix:
-            st.markdown(f"### Блок {prefix}")
-            current_prefix = prefix
-        name = str(r.get('Критерий', '')).strip()
-        max_score = float(r.get('Балл', 1.0))
-        if max_score > 0:
-            val = st.number_input(f"[{code}] {name}", min_value=0.0, max_value=max_score, value=0.0, step=0.5, help=str(r.get('Инструкция по вычислению', '')))
-            manual_overrides[code] = val
-
-# --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 9.1 - Gemini 3.5 Flash)")
-
-stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
-stat_manual = sum(1 for r in rules_data if r.get('Статус') == "Ручной")
-stat_stub = sum(1 for r in rules_data if r.get('Статус') not in ["Python", "Ручной"] and str(r.get('Код', '')).strip())
-
-col_s1, col_s2, col_s3 = st.columns(3)
-col_s1.metric("🟢 Готово (Python+AI)", stat_python)
-col_s2.metric("🧠 Ручной режим", stat_manual)
-col_s3.metric("🟡 В разработке (Заглушки)", stat_stub)
-st.divider()
-
-yandex_url = st.text_input("Ссылка на карточку Яндекс.Бизнеса")
-
-if st.button("🚀 Запустить аудит", type="primary", use_container_width=True):
-    if not yandex_url or "yandex" not in yandex_url.lower():
-        st.error("❌ Введите корректную ссылку на Яндекс.Карты.")
-    else:
-        doc = init_google_sheets()
-        with st.spinner("Синтезирую данные: парсер + ИИ анализирует тексты..."):
-            try:
-                raw_yandex_data = fetch_apify_data(yandex_url)
-                company_name = raw_yandex_data.get('title', 'Без названия')
-                python_scores_dict, python_logs, ai_error = calculate_all_python_rules(raw_yandex_data)
-                
-                if ai_error:
-                    st.error(f"🚨 КРИТИЧЕСКАЯ ОШИБКА ИИ: Нейросеть не смогла проанализировать тексты.\n\nДетали: {ai_error}")
-                    send_telegram_alert(f"🚨 Ошибка ИИ в MAP100!\nМодель Gemini упала.\nКомпания: {company_name}\nСсылка: {yandex_url}\nПричина: {ai_error}")
-                    
-            except Exception as e:
-                st.error(f"⚠️ Ошибка работы алгоритма: {e}")
-                send_telegram_alert(f"🚨 Критическая ошибка MAP100 (Парсер упал)!\nСсылка: {yandex_url}\nПричина: {e}")
-                st.stop()
-                
-            final_scores_dict = {}
-            detailed_results = []
-            
-            for r in rules_data:
-                code = str(r.get('Код', '')).strip()
-                if not code: continue
-                name = str(r.get('Критерий', '')).strip()
-                max_score = float(r.get('Балл', 0.0))
-                status = str(r.get('Статус', 'Заглушка')).strip()
-                instruction = str(r.get('Инструкция по вычислению', ''))
-                
-                current_val = 0.0
-                if status == "Python" and python_scores_dict.get(code): 
-                    current_val = max_score 
-                elif status == "Ручной" and code in manual_overrides: 
-                    current_val = min(float(manual_overrides[code]), max_score)
-                    
-                final_scores_dict[code] = current_val
-                
-                comment = ""
-                if status == "Python":
-                    specific_log = None
-                    for log in python_logs:
-                        if f"[{code}]" in log:
-                            parts = log.split("]", 1)
-                            if len(parts) > 1:
-                                specific_log = parts[1].strip()
-                                break
-                    if current_val > 0:
-                        comment = f"✅ {specific_log}" if specific_log else (f"✅ {instruction}" if instruction else "✅ Выполнено")
-                    else:
-                        comment = "❌ Не выполнено / Данные отсутствуют"
-                elif status == "Ручной":
-                    comment = "🧠 Оценено вручную экспертом" if current_val > 0 else "⚪ Не оценивалось (0 баллов)"
-                else:
-                    comment = "🟡 В разработке (Заглушка)"
-                    
-                detailed_results.append({
-                    "Код": code, "Критерий": name, "Балл": current_val, 
-                    "Макс": max_score, "Комментарий": comment
-                })
-                
-            final_total_score = sum(final_scores_dict.values())
-            
-            st.divider()
-            col1, col2 = st.columns([3, 1])
-            with col1: st.subheader(f"🏢 {company_name}")
-            with col2: 
-                color = "normal" if final_total_score >= 80 else ("off" if final_total_score >= 50 else "inverse")
-                st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
-
-            with st.expander("📊 Детализация баллов по критериям", expanded=True):
-                st.dataframe(
-                    pd.DataFrame(detailed_results), 
-                    column_config={
-                        "Код": st.column_config.TextColumn("Код", width="small"), 
-                        "Критерий": st.column_config.TextColumn("Критерий", width="medium"), 
-                        "Балл": st.column_config.NumberColumn("Балл", format="%.1f"), 
-                        "Макс": st.column_config.NumberColumn("Макс.", format="%.1f"), 
-                        "Комментарий": st.column_config.TextColumn("Комментарий (Почему так)", width="large")
-                    }, 
-                    hide_index=True, use_container_width=True
-                )
-
-            with st.expander("🛠️ Системные логи (Отладка)", expanded=False):
-                for log in python_logs: st.write(log)
-
-            # Сохранение в БД
-            try:
-                results_sheet = doc.worksheet("Results")
-                headers = results_sheet.row_values(1)
-                if not headers: headers = ["Дата", "Ссылка", "Компания", "Общий балл"]
-                    
-                headers_changed = False
-                for c in final_scores_dict.keys():
-                    if c not in headers:
-                        headers.append(c)
-                        headers_changed = True
-                        
-                if headers_changed:
-                    cell_list = results_sheet.range(1, 1, 1, len(headers))
-                    for i, val in enumerate(headers): cell_list[i].value = val
-                    results_sheet.update_cells(cell_list)
-                    
-                row_data = []
-                for h in headers:
-                    if h == "Дата": row_data.append(time.strftime("%d.%m.%Y %H:%M:%S"))
-                    elif h == "Ссылка": row_data.append(yandex_url)
-                    elif h == "Компания": row_data.append(company_name)
-                    elif h == "Общий балл": row_data.append(final_total_score)
-                    else: row_data.append(final_scores_dict.get(h, 0.0))
-                        
-                results_sheet.append_row(row_data)
-                st.success("✅ Результат успешно сохранен в базу!")
-            except:
-                st.warning("Не удалось сохранить в результаты (проверьте вкладку Results).")
-
-# ==========================================
-# 5. СЕРВИСНАЯ ПАНЕЛЬ ДЛЯ РАЗРАБОТЧИКА
-# ==========================================
-st.divider()
-st.subheader("🛠 Сервисная панель разработчика")
-
-if st.button("🪄 1. Разметка статусов (Нажми меня!)"):
-    with st.spinner("Расставляю статусы..."):
-        try:
-            doc = init_google_sheets()
-            sheet = doc.worksheet("Rules")
-            headers = sheet.row_values(1)
-            col_idx = headers.index("Статус") + 1 if "Статус" in headers else len(headers) + 1
-            
-            records = sheet.get_all_records()
-            python_codes = [
-                "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", "PROF-07.1", "PROF-08.1", "PROF-11.1", 
-                "PROF-11.2", "PROF-11.3", "PROF-11.4", "PROF-11.5", "PROF-12.1", "PROF-13.1", "PROF-13.2", 
-                "CONT-36.1", "CONT-36.2", "REP-27.1", "REP-27.2", "REP-28.1", "CONV-48.1", "CONV-50.1", 
-                "PROF-04.1", "PROF-04.2", "PROF-10.1", "SEO-18.1", "CONT-44.1", "CONT-42.1", "CONV-51.1", 
-                "CONV-47.1", "PROF-15.1", "REP-29.1", "REP-30.1", "REP-30.2", "CONV-52.1", "PROF-07.2", 
-                "SEO-18.2", "CONT-43.1", "REP-32.1", "REP-30.3", "REP-31.1", "CONV-53.1", "PROF-14.1",
-                "ACT-68.1", "REP-35.1", "ACT-69.1", 
-                "PROF-10.6", "PROF-10.3", "CONV-49.1", "SEO-18.3",
-                "PROF-10.4", "CONV-49.2", "PROF-01.2", "REP-31.2", "CONV-52.2",
-                "PROF-08.2", "CONV-47.2", "CONV-50.2", "SEO-21.1", "CONV-46.1", 
-                "REP-29.2", "REP-32.2", "REP-33.1", "ACT-67.1", "CONV-51.2"
-            ]
-            
-            cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
-            for i, row in enumerate(records):
-                code = str(row.get('Код', '')).strip()
-                how = str(row.get('Как считаем', '')).strip().lower()
-                if code in python_codes: 
-                    cell_list[i].value = "Python"
-                elif "ии" in how or "ручн" in how or "эксперт" in str(row.get('Режим Эксперта', '')).lower():
-                    cell_list[i].value = "Ручной"
-                else: 
-                    cell_list[i].value = "Заглушка"
-                    
-            sheet.update_cells(cell_list)
-            st.success("✅ Статусы обновлены! Еще 10 метрик переведены в автопилот. Заглушек больше нет!")
-            st.balloons()
-        except Exception as e: 
-            st.error(f"Ошибка: {e}")
+                "PROF-10.6": "AI: Нашел призыв к действию (CTA).",
+                "PROF-10.3": "AI: Услуги перечислены конкретно.",
+                "CONV-49.1": "AI: Найдено сильное УТП в первом абзаце.",
+                "SEO-18.3": "AI: Найдены топонимы в тексте.",
+                "PROF-10.4": "AI: Найдены конкретные факты/преимущества (без воды).",
+                "CONV-49.2": "AI: Найдены числительные и метрики в УТП.",
+                "PROF-01.2": "AI: Название чистое (без SEO-спама).",
+                "REP-31.2": "AI: Ответы владельца выдержаны в Tone of Voice.",
+                "CONV-52.2": "AI: Блок FAQ закрывает страхи ЦА.",
+                "PROF-02.1": "AI: Основная категория полностью соответствует Описанию.",
+                "PROF-03.2": "AI: Мусорных (
