@@ -17,13 +17,24 @@ import google.generativeai as genai
 APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
 
-# Настройка ИИ (Gemini)
+# Настройка ИИ: используем самую свежую актуальную версию (3.5)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    ai_model = genai.GenerativeModel('gemini-1.5-flash') 
+    ai_model = genai.GenerativeModel('gemini-3.5-flash') 
 except Exception as e:
     st.warning("⚠️ Ключ Gemini API не найден или настроен неверно. AI-функции будут отключены.")
     ai_model = None
+
+def send_telegram_alert(message):
+    """Отправляет уведомление об ошибке админу в Telegram"""
+    token = st.secrets.get("TELEGRAM_BOT_TOKEN")
+    chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+    if token and chat_id:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        try:
+            requests.post(url, json={"chat_id": chat_id, "text": message}, timeout=5)
+        except Exception:
+            pass # Если ТГ отвалился, не роняем приложение
 
 # ==========================================
 # 2. ПАРСЕР GOOGLE ТАБЛИЦЫ И APIFY
@@ -89,7 +100,6 @@ def fetch_apify_data(yandex_url):
 # ==========================================
 
 def get_safe_list(data, keys):
-    """Утилита: безопасно склеивает списки из разных полей JSON"""
     result = []
     for k in keys:
         val = data.get(k)
@@ -101,8 +111,6 @@ def get_safe_list(data, keys):
 
 def calculate_prof_rules(data):
     scores, logs = {}, []
-    
-    # Синяя галочка
     if data.get('isVerifiedOwner', False):
         for k in ['PROF-12.1', 'PROF-01.1', 'PROF-03.1', 'PROF-05.1', 'PROF-07.1']:
             scores[k] = True
@@ -113,7 +121,6 @@ def calculate_prof_rules(data):
         if data.get('phones'): scores['PROF-05.1'] = True
         if len(data.get('schedule') or data.get('workingHours') or []) >= 7: scores['PROF-07.1'] = True
 
-    # Проверка телефонов
     phones = data.get('phones')
     if isinstance(phones, list):
         for p in phones:
@@ -144,20 +151,15 @@ def calculate_prof_rules(data):
     if re.search(r'(основан[а-я]? в 19\d{2}|основан[а-я]? в 20\d{2}|работает с 19\d{2}|работает с 20\d{2}|since 19\d{2}|since 20\d{2})', desc_and_features):
         scores['PROF-14.1'] = True
 
-    # Каталог товаров
     products = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
     if len(products) >= 10:
         scores['PROF-11.1'] = True
-        
         with_photo = sum(1 for p in products if p.get('photoUrl') or p.get('imageUrl') or p.get('image'))
         if with_photo / len(products) >= 0.8: scores['PROF-11.2'] = True
-            
         with_price = sum(1 for p in products if p.get('price'))
         if with_price / len(products) >= 0.8: scores['PROF-11.3'] = True
-            
         with_desc = sum(1 for p in products if len(str(p.get('description') or '')) > 50)
         if with_desc / len(products) >= 0.8: scores['PROF-11.4'] = True
-            
         cat_set = set()
         for p in products:
             cat = p.get('category')
@@ -165,12 +167,9 @@ def calculate_prof_rules(data):
             else: cat_set.add(cat)
         if len(cat_set) >= 2: scores['PROF-11.5'] = True
             
-    # Ссылки и мессенджеры
     links_str = f"{data.get('links', '')} {data.get('socials', '')}".lower()
-    if any(s in links_str for s in ["t.me", "tg://", "wa.me", "whatsapp"]): 
-        scores['PROF-13.1'] = True
-    if any(s in links_str for s in ["vk.com", "youtube", "dzen"]): 
-        scores['PROF-13.2'] = True
+    if any(s in links_str for s in ["t.me", "tg://", "wa.me", "whatsapp"]): scores['PROF-13.1'] = True
+    if any(s in links_str for s in ["vk.com", "youtube", "dzen"]): scores['PROF-13.2'] = True
 
     return scores, logs
 
@@ -194,7 +193,6 @@ def calculate_cont_rules(data):
             scores['CONT-43.1'] = True
             logs.append("✅ [CONT-43.1] В галерее найдены фотографии 'Интерьер/Внутри'.")
             break
-            
     return scores, logs
 
 def calculate_rep_rules(data):
@@ -202,19 +200,15 @@ def calculate_rep_rules(data):
     rating = data.get('rating') or 0.0
     if rating >= 4.5: scores['REP-27.1'] = True
     if rating >= 4.8: scores['REP-27.2'] = True
-        
-    if (data.get('reviewsCount') or data.get('ratingsCount') or 0) >= 50: 
-        scores['REP-28.1'] = True
+    if (data.get('reviewsCount') or data.get('ratingsCount') or 0) >= 50: scores['REP-28.1'] = True
     
     reviews = data.get('reviews')
     if isinstance(reviews, list) and len(reviews) > 0:
         try:
             date_str = reviews[0].get('date') or reviews[0].get('createdAt')
             rev_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-            if (datetime.now(timezone.utc) - rev_date).days < 14: 
-                scores['REP-29.1'] = True
-        except: 
-            pass
+            if (datetime.now(timezone.utc) - rev_date).days < 14: scores['REP-29.1'] = True
+        except: pass
                 
         last_20 = reviews[:20]
         replied, total_days, valid_times, unans_neg, ans_pos = 0, 0, 0, 0, 0
@@ -238,42 +232,32 @@ def calculate_rep_rules(data):
                     if (a_d - r_d).days >= 0:
                         total_days += (a_d - r_d).days
                         valid_times += 1
-                except: 
-                    pass
-                    
+                except: pass
             if r_rate <= 3 and not reply: unans_neg += 1
             if r_rate >= 4 and reply: ans_pos += 1
         
         if len(last_20) > 0 and (replied / len(last_20)) >= 0.9: 
             scores['REP-30.1'] = True
             logs.append("✅ [REP-30.1] Владелец ответил на 90%+ отзывов.")
-            
         if valid_times > 0 and (total_days / valid_times) <= 3: 
             scores['REP-30.2'] = True
             logs.append("✅ [REP-30.2] Средняя скорость ответа <= 3 дней.")
-            
         if unans_neg == 0 and len(last_20) > 0: 
             scores['REP-32.1'] = True
             logs.append("✅ [REP-32.1] Нет брошенного негатива.")
-            
         if ans_pos > 0: scores['REP-30.3'] = True
             
-        # Проверка на шаблонные ответы
         if len(owner_texts) >= 2:
             is_templated = False
             for t1, t2 in itertools.combinations(owner_texts[:10], 2):
-                words1 = set(re.findall(r'\w+', t1))
-                words2 = set(re.findall(r'\w+', t2))
-                union_len = max(1, len(words1 | words2))
-                if (len(words1 & words2) / union_len) > 0.8:
+                words1, words2 = set(re.findall(r'\w+', t1)), set(re.findall(r'\w+', t2))
+                if (len(words1 & words2) / max(1, len(words1 | words2))) > 0.8:
                     is_templated = True
                     break
-                    
             if not is_templated:
                 scores['REP-31.1'] = True
                 logs.append("✅ [REP-31.1] Тексты ответов уникальны (не скопированы).")
-        elif len(owner_texts) == 1: 
-            scores['REP-31.1'] = True
+        elif len(owner_texts) == 1: scores['REP-31.1'] = True
 
     return scores, logs
 
@@ -287,11 +271,9 @@ def calculate_conv_rules(data):
         
     if "chat" in str_search or data.get('isChatEnabled'): scores['CONV-50.1'] = True
     if data.get('posts') or data.get('news') or data.get('promos'): scores['CONV-51.1'] = True
-    
     if data.get('actionUrl') or data.get('bookingUrl'): 
         scores['CONV-47.1'] = True
         logs.append("✅ [CONV-47.1] Настроена кнопка действия.")
-        
     if data.get('questionsAndAnswers') or data.get('faq') or data.get('qna'): 
         scores['CONV-52.1'] = True
         logs.append("✅ [CONV-52.1] Заполнен блок FAQ.")
@@ -300,9 +282,8 @@ def calculate_conv_rules(data):
     for p in products:
         if p.get('oldPrice') or p.get('discount') or any(kw in str(p).lower() for kw in ['хит', 'новинка', 'скидка', 'акция']):
             scores['CONV-53.1'] = True
-            logs.append("✅ [CONV-53.1] В товарах найдены бейджи (Хит, Скидка).")
+            logs.append("✅ [CONV-53.1] В товарах найден бейдж (Хит, Скидка).")
             break
-            
     return scores, logs
 
 def calculate_seo_rules(data):
@@ -332,19 +313,18 @@ def calculate_act_rules(data):
     if fresh: 
         scores['ACT-68.1'] = True
         logs.append("✅ [ACT-68.1] Найдена свежая активность (<30 дней).")
-        
     if data.get('isAdvertiser') or data.get('advertiser'): 
         scores['ACT-69.1'] = True
         logs.append("✅ [ACT-69.1] Карточка оплатила Приоритетное размещение.")
-        
     return scores, logs
 
-# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ (БЕЗОПАСНЫЙ ПАРСИНГ) ===
+# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ ===
 def calculate_ai_rules(data):
     scores, logs = {}, []
+    ai_critical_error = None
     
     if ai_model is None: 
-        return scores, logs
+        return scores, logs, "Модель ИИ не инициализирована (проверьте API-ключ Gemini)."
         
     title = data.get('title', '')
     description = data.get('description', '')
@@ -389,7 +369,6 @@ def calculate_ai_rules(data):
         response = ai_model.generate_content(prompt)
         raw_text = response.text
         
-        # Защищенный парсинг: ищем JSON блок с помощью регулярки, игнорируя markdown
         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
         if json_match:
             clean_json = json_match.group(0)
@@ -412,24 +391,34 @@ def calculate_ai_rules(data):
                     scores[code] = True
                     logs.append(f"✅ [{code}] {msg}")
         else:
-            logs.append("⚠️ [AI-Ошибка] Нейросеть не вернула валидный JSON.")
+            ai_critical_error = "Нейросеть не вернула валидный JSON-ответ."
+            logs.append(f"⚠️ [AI-Ошибка] {ai_critical_error}")
                 
     except Exception as e:
+        ai_critical_error = str(e)
         logs.append(f"⚠️ [AI-Ошибка] Сбой при обращении к Gemini: {e}")
         
-    return scores, logs
+    return scores, logs, ai_critical_error
 
 def calculate_all_python_rules(data):
     all_scores, all_logs = {}, []
+    global_ai_error = None
+    
     mods = [
         calculate_prof_rules(data), calculate_cont_rules(data), calculate_rep_rules(data),
-        calculate_conv_rules(data), calculate_seo_rules(data), calculate_act_rules(data), 
-        calculate_ai_rules(data)
+        calculate_conv_rules(data), calculate_seo_rules(data), calculate_act_rules(data)
     ]
     for s_dict, l_list in mods:
         all_scores.update(s_dict)
         all_logs.extend(l_list)
-    return all_scores, all_logs
+        
+    ai_scores, ai_logs, ai_err = calculate_ai_rules(data)
+    all_scores.update(ai_scores)
+    all_logs.extend(ai_logs)
+    if ai_err:
+        global_ai_error = ai_err
+        
+    return all_scores, all_logs, global_ai_error
 
 # ==========================================
 # 4. ИНТЕРФЕЙС И ЛОГИКА
@@ -439,7 +428,7 @@ st.set_page_config(page_title="MAP100 | Нейро-Аудитор", page_icon="�
 try:
     rules_data = get_rules_from_sheets()
 except Exception as e:
-    st.error("⚠️ Не удалось загрузить базу правил.")
+    st.error("⚠️ Не удалось загрузить базу правил. Проверьте Google Sheets API.")
     st.stop()
 
 # --- САЙДБАР ---
@@ -462,7 +451,7 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 8.4 - Релиз)")
+st.title("📍 MAP100: AI-Аудитор (Версия 8.8 - Gemini 3.5 Flash)")
 
 stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
 stat_manual = sum(1 for r in rules_data if r.get('Статус') == "Ручной")
@@ -485,9 +474,15 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
             try:
                 raw_yandex_data = fetch_apify_data(yandex_url)
                 company_name = raw_yandex_data.get('title', 'Без названия')
-                python_scores_dict, python_logs = calculate_all_python_rules(raw_yandex_data)
+                python_scores_dict, python_logs, ai_error = calculate_all_python_rules(raw_yandex_data)
+                
+                if ai_error:
+                    st.error(f"🚨 КРИТИЧЕСКАЯ ОШИБКА ИИ: Нейросеть не смогла проанализировать смысловые тексты карточки.\n\nТехнические детали: {ai_error}")
+                    send_telegram_alert(f"🚨 Ошибка ИИ в MAP100!\nМодель Gemini упала.\nКомпания: {company_name}\nСсылка: {yandex_url}\nПричина: {ai_error}")
+                    
             except Exception as e:
                 st.error(f"⚠️ Ошибка работы алгоритма: {e}")
+                send_telegram_alert(f"🚨 Критическая ошибка MAP100 (Парсер упал)!\nСсылка: {yandex_url}\nПричина: {e}")
                 st.stop()
                 
             final_scores_dict = {}
