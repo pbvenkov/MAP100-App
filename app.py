@@ -11,13 +11,18 @@ import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 
+# === НОВЫЕ ИМПОРТЫ ДЛЯ ЗРЕНИЯ ИИ ===
+from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
+from PIL import Image
+
 # ==========================================
 # 1. НАСТРОЙКИ СЕКРЕТОВ И API
 # ==========================================
 APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
 
-# Настройка ИИ (СТРОГО gemini-3.5-flash для 2026 года)
+# Настройка ИИ (СТРОГО gemini-3.5-flash)
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     ai_model = genai.GenerativeModel('gemini-3.5-flash') 
@@ -383,7 +388,7 @@ def calculate_act_rules(data):
         
     return scores, logs
 
-# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ (БЕЗОПАСНЫЙ СЛОВАРЬ) ===
+# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ: ТЕКСТЫ ===
 def calculate_ai_rules(data):
     scores, logs = {}, []
     ai_critical_error = None
@@ -465,13 +470,10 @@ def calculate_ai_rules(data):
     try:
         response = ai_model.generate_content(prompt)
         raw_text = response.text
-        
         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
         if json_match:
             clean_json = json_match.group(0)
             ai_result = json.loads(clean_json)
-            
-            # Словарь в строгом однострочном формате (Anti-SyntaxError)
             m = {}
             m["PROF-10.6"] = "AI: Нашел призыв к действию (CTA)."
             m["PROF-10.3"] = "AI: Услуги перечислены конкретно."
@@ -506,6 +508,98 @@ def calculate_ai_rules(data):
         
     return scores, logs, ai_critical_error
 
+
+# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ: ЗРЕНИЕ (7 НОВЫХ МЕТРИК) ===
+def fetch_image_for_ai(url):
+    """Скачивает и сжимает картинку 'на лету' (без сохранения на диск)"""
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            img = Image.open(BytesIO(response.content)).convert('RGB')
+            img.thumbnail((800, 800)) # Сжимаем до разумных пределов для скорости
+            return img
+    except Exception:
+        pass
+    return None
+
+def calculate_vision_rules(data):
+    scores, logs = {}, []
+    
+    if ai_model is None:
+        return scores, logs, "AI Vision отключен (нет модели)."
+        
+    image_urls = []
+    
+    # 1. Берем обложку профиля
+    cover = str(data.get('coverPhotoUrl') or data.get('coverUrl') or '')
+    if cover and 'panorama' not in cover and 'streetview' not in cover:
+        image_urls.append(cover)
+        
+    # 2. Берем до 4 свежих фото из галереи
+    photos = get_safe_list(data, ['photos', 'images'])
+    for p in photos[:4]:
+        p_url = p.get('url') if isinstance(p, dict) else str(p)
+        if p_url and 'panorama' not in p_url and 'streetview' not in p_url:
+            image_urls.append(p_url)
+
+    if not image_urls:
+        logs.append("⚠️ [AI-Vision] Нет доступных фото для визуального анализа. Пропуск.")
+        return scores, logs, None
+
+    # ПАРАЛЛЕЛЬНОЕ СКАЧИВАНИЕ (очень быстро)
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        pil_images = list(filter(None, executor.map(fetch_image_for_ai, image_urls)))
+        
+    if not pil_images:
+        logs.append("⚠️ [AI-Vision] Не удалось скачать фото по ссылкам. Пропуск.")
+        return scores, logs, None
+        
+    prompt = """
+    Ты Арт-директор и маркетолог. Изучи эти фотографии компании (первая - это обложка профиля, остальные - фото из галереи).
+    Ответь строго в JSON (используй true или false) на 7 вопросов. Никакого Markdown.
+
+    ВОПРОСЫ:
+    "CONV-49.3": Есть ли на первой картинке (обложке) читаемый текст, дублирующий оффер или УТП бизнеса?
+    "CONT-37.2": Выглядят ли фото как реальные живые кадры компании, а НЕ как пластиковые стоковые фото из интернета?
+    "CONT-37.3": Фотографии хорошо освещены (не слишком темные, нормальная контрастность)?
+    "CONT-39.1": Есть ли на фото лица людей, сотрудники или живая команда в процессе работы/отдыха?
+    "CONT-40.1": Есть ли на фото "бэкстейдж" (виден процесс работы, оказания услуги или производства)?
+    "CONT-41.1": Есть ли предметные фотографии (товар, блюдо или результат работы сняты крупно)?
+    "CONT-41.2": Высокая ли детализация на предметных фото (фокус на деталях, макро-съемка)?
+    """
+    
+    try:
+        # Отправляем промпт + массив картинок одним пакетом
+        response = ai_model.generate_content([prompt] + pil_images)
+        raw_text = response.text
+        
+        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+        if json_match:
+            clean_json = json_match.group(0)
+            ai_result = json.loads(clean_json)
+            
+            m = {}
+            m["CONV-49.3"] = "AI Vision: На главной обложке есть текст / визуальный оффер."
+            m["CONT-37.2"] = "AI Vision: Фотографии признаны 'своими живыми', а не стоком."
+            m["CONT-37.3"] = "AI Vision: Освещенность и контрастность фото в норме."
+            m["CONT-39.1"] = "AI Vision: На фотографиях присутствуют люди/команда."
+            m["CONT-40.1"] = "AI Vision: Распознан процесс оказания услуги (бэкстейдж)."
+            m["CONT-41.1"] = "AI Vision: Присутствуют предметные фотографии товаров."
+            m["CONT-41.2"] = "AI Vision: Детализация и крупный план (макро) на высоком уровне."
+            
+            for code, msg in m.items():
+                if ai_result.get(code):
+                    scores[code] = True
+                    logs.append(f"✅ [{code}] {msg}")
+        else:
+            logs.append("⚠️ [AI-Vision-Ошибка] Нейросеть не вернула валидный JSON-ответ.")
+            
+    except Exception as e:
+        logs.append(f"⚠️ [AI-Vision-Ошибка] Сбой Gemini Vision: {e}")
+        
+    return scores, logs, None
+
+
 def calculate_all_python_rules(data):
     all_scores, all_logs = {}, []
     global_ai_error = None
@@ -518,11 +612,16 @@ def calculate_all_python_rules(data):
         all_scores.update(s_dict)
         all_logs.extend(l_list)
         
+    # Смысловой ИИ
     ai_scores, ai_logs, ai_err = calculate_ai_rules(data)
     all_scores.update(ai_scores)
     all_logs.extend(ai_logs)
-    if ai_err:
-        global_ai_error = ai_err
+    if ai_err: global_ai_error = ai_err
+        
+    # Визуальный ИИ
+    vis_scores, vis_logs, vis_err = calculate_vision_rules(data)
+    all_scores.update(vis_scores)
+    all_logs.extend(vis_logs)
         
     return all_scores, all_logs, global_ai_error
 
@@ -557,7 +656,7 @@ with st.sidebar:
             manual_overrides[code] = val
 
 # --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 10.3 - Полная сборка)")
+st.title("📍 MAP100: AI-Аудитор (Версия 11.0 - 100% Автоматизация!)")
 
 stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
 stat_manual = sum(1 for r in rules_data if r.get('Статус') == "Ручной")
@@ -576,14 +675,14 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
         st.error("❌ Введите корректную ссылку на Яндекс.Карты.")
     else:
         doc = init_google_sheets()
-        with st.spinner("Синтезирую данные: парсер + ИИ анализирует тексты..."):
+        with st.spinner("Синтезирую данные: парсер + ИИ читает тексты + ИИ смотрит фото..."):
             try:
                 raw_yandex_data = fetch_apify_data(yandex_url)
                 company_name = raw_yandex_data.get('title', 'Без названия')
                 python_scores_dict, python_logs, ai_error = calculate_all_python_rules(raw_yandex_data)
                 
                 if ai_error:
-                    st.error(f"🚨 КРИТИЧЕСКАЯ ОШИБКА ИИ: Нейросеть не смогла проанализировать тексты.\n\nДетали: {ai_error}")
+                    st.error(f"🚨 КРИТИЧЕСКАЯ ОШИБКА ИИ: Нейросеть не смогла проанализировать данные.\n\nДетали: {ai_error}")
                     send_telegram_alert(f"🚨 Ошибка ИИ в MAP100!\nМодель Gemini упала.\nКомпания: {company_name}\nСсылка: {yandex_url}\nПричина: {ai_error}")
                     
             except Exception as e:
@@ -703,7 +802,7 @@ if st.button("🪄 1. Разметка статусов (Нажми меня!)")
             col_idx = headers.index("Статус") + 1 if "Статус" in headers else len(headers) + 1
             
             records = sheet.get_all_records()
-            # 73 АВТОМАТИЧЕСКИХ МЕТРИКИ!
+            # ВСЕ 80 МЕТРИК АВТОМАТИЗИРОВАНЫ!
             python_codes = [
                 "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", "PROF-07.1", "PROF-08.1", "PROF-11.1", 
                 "PROF-11.2", "PROF-11.3", "PROF-11.4", "PROF-11.5", "PROF-12.1", "PROF-13.1", "PROF-13.2", 
@@ -711,13 +810,13 @@ if st.button("🪄 1. Разметка статусов (Нажми меня!)")
                 "PROF-04.1", "PROF-04.2", "PROF-10.1", "SEO-18.1", "CONT-44.1", "CONT-42.1", "CONV-51.1", 
                 "CONV-47.1", "PROF-15.1", "REP-29.1", "REP-30.1", "REP-30.2", "CONV-52.1", "PROF-07.2", 
                 "SEO-18.2", "CONT-43.1", "REP-32.1", "REP-30.3", "REP-31.1", "CONV-53.1", "PROF-14.1",
-                "ACT-68.1", "REP-35.1", "ACT-69.1", 
-                "PROF-10.6", "PROF-10.3", "CONV-49.1", "SEO-18.3",
-                "PROF-10.4", "CONV-49.2", "PROF-01.2", "REP-31.2", "CONV-52.2",
-                "PROF-08.2", "CONV-47.2", "CONV-50.2", "SEO-21.1", "CONV-46.1", 
-                "REP-29.2", "REP-32.2", "REP-33.1", "ACT-67.1", "CONV-51.2",
-                "PROF-02.1", "PROF-03.2", "SEO-17.1", "SEO-17.2", "SEO-17.3", 
-                "CONV-49.4", "SEO-19.1", "SEO-19.2", "SEO-21.2"
+                "ACT-68.1", "REP-35.1", "ACT-69.1", "PROF-10.6", "PROF-10.3", "CONV-49.1", "SEO-18.3",
+                "PROF-10.4", "CONV-49.2", "PROF-01.2", "REP-31.2", "CONV-52.2", "PROF-08.2", "CONV-47.2", 
+                "CONV-50.2", "SEO-21.1", "CONV-46.1", "REP-29.2", "REP-32.2", "REP-33.1", "ACT-67.1", 
+                "CONV-51.2", "PROF-02.1", "PROF-03.2", "SEO-17.1", "SEO-17.2", "SEO-17.3", 
+                "CONV-49.4", "SEO-19.1", "SEO-19.2", "SEO-21.2", 
+                # НОВЫЕ 7 ВИЗУАЛЬНЫХ МЕТРИК
+                "CONV-49.3", "CONT-37.2", "CONT-37.3", "CONT-39.1", "CONT-40.1", "CONT-41.1", "CONT-41.2"
             ]
             
             cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
@@ -726,10 +825,10 @@ if st.button("🪄 1. Разметка статусов (Нажми меня!)")
                 if code in python_codes: 
                     cell_list[i].value = "Python"
                 else: 
-                    cell_list[i].value = "Ручной"
+                    cell_list[i].value = "Заглушка"
                     
             sheet.update_cells(cell_list)
-            st.success("✅ Статусы обновлены! В ИИ перенесено еще 9 метрик. Осталось всего 7 ручных!")
+            st.success("✅ Статусы обновлены! Абсолютно ВСЕ 80 метрик перенесены в Python! 🎉")
             st.balloons()
         except Exception as e: 
             st.error(f"Ошибка: {e}")
