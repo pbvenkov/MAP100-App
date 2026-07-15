@@ -4,3 +4,4 @@ google-generativeai
 pandas
 gspread
 google-auth
+pillow
