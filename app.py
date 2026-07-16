@@ -36,8 +36,18 @@ def send_telegram_alert(message):
         except: pass
 
 # ==========================================
-# 1.5. ИИ-РОУТЕР НИШ
+# 1.5. ИИ-РОУТЕР НИШ И ЭКОНОМИКА
 # ==========================================
+NICHE_ECONOMICS = {
+    "HORECA": {"leads": 300, "check": 2500},
+    "B2B_PRODUCTION": {"leads": 20, "check": 100000},
+    "RETAIL": {"leads": 400, "check": 1500},
+    "AUTO": {"leads": 150, "check": 8000},
+    "SERVICES": {"leads": 100, "check": 5000},
+    "BEAUTY_MEDICAL": {"leads": 150, "check": 4000},
+    "OTHER": {"leads": 100, "check": 3000}
+}
+
 def determine_niche(title, category):
     if not ai_model: return "OTHER"
     prompt = f"""
@@ -146,7 +156,7 @@ def calculate_prof_rules(data):
         c_set = set(p.get('category', {}).get('name') if isinstance(p.get('category'), dict) else p.get('category') for p in valid_prods)
         if len(c_set) >= 2: scores['PROF-11.5'] = True
             
-    # Агрессивный поиск соцсетей по всему JSON карточки (Патч 11.5)
+    # ПАТЧ: Поиск соцсетей по всему JSON
     raw_data_str = json.dumps(data).lower()
     if any(s in raw_data_str for s in ["t.me", "wa.me", "whatsapp", "viber", "tg://"]): 
         scores['PROF-13.1'] = True
@@ -164,9 +174,9 @@ def calculate_cont_rules(data):
     if data.get('stories') or data.get('storyUrls'): scores['CONT-44.1'] = True
     if data.get('panoramaUrl') or data.get('panoramas') or data.get('videos'): scores['CONT-42.1'] = True
         
+    # ПАТЧ: Расширенный словарь интерьеров
     for p in get_safe_list(data, ['photos', 'images']):
         if isinstance(p, dict):
-            # Расширенный словарь, включая ресторанные "залы" (Патч 11.5)
             keywords = ['внутри', 'интерьер', 'interior', 'inside', 'indoor', 'залы', 'зал', 'hall', 'room']
             if any(kw in str(p).lower() for kw in keywords):
                 scores['CONT-43.1'] = True
@@ -325,18 +335,18 @@ def calculate_vision_rules(data):
 # ==========================================
 # 4. СБОРКА И ИНТЕРФЕЙС
 # ==========================================
-st.set_page_config(page_title="MAP100 | Нейро-Аудитор", layout="wide")
+st.set_page_config(page_title="MAP100 | Нейро-Аудитор", layout="wide", page_icon="📈")
 
 rules_data = get_rules_from_sheets()
 with st.sidebar: st.write("✅ База данных подключена напрямую. Управление весами в Google Sheets.")
-st.title("📍 MAP100: AI-Аудитор (Версия 11.5 - Прямая маршрутизация)")
+st.title("📍 MAP100: AI-Аудитор (Версия 11.6 - Финансовый прогноз)")
 
 url = st.text_input("Ссылка на Яндекс.Бизнес")
 
 if st.button("🚀 Запустить аудит", type="primary"):
     if "yandex" not in url.lower(): st.error("❌ Неверная ссылка.")
     else:
-        with st.spinner("Анализ данных и поиск нишевых весов..."):
+        with st.spinner("Анализ данных, маршрутизация и расчет экономики..."):
             data = fetch_apify_data(url)
             title = data.get('title', 'Без названия')
             c_list = data.get('categories', [])
@@ -365,10 +375,8 @@ if st.button("🚀 Запустить аудит", type="primary"):
                 if not code: continue
                 name = str(r.get('Критерий', '')).strip()
                 
-                try:
-                    max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
-                except:
-                    max_s = float(r.get('Балл', 0.0))
+                try: max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
+                except: max_s = float(r.get('Балл', 0.0))
                 
                 if max_s == 0.0:
                     final_scores[code] = 0.0
@@ -380,28 +388,49 @@ if st.button("🚀 Запустить аудит", type="primary"):
                     comm = "✅ Выполнено" if val > 0 else "❌ Не выполнено"
                     results.append({"Код": code, "Критерий": name, "Балл": val, "Макс": max_s, "Комментарий": comm})
             
+            # 4. РАСЧЕТ УПУЩЕННОЙ ВЫРУЧКИ (ЭКОНОМИКА)
+            eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
+            potential_leads = eco["leads"]
+            avg_check = eco["check"]
+            
+            lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
+            lost_revenue = int(potential_leads * lost_percentage * avg_check)
+            formatted_loss = f"{lost_revenue:,}".replace(',', ' ')
+            
             st.divider()
-            col1, col2 = st.columns([3, 1])
+            
+            # ВЕРХНИЙ БЛОК: ОЦЕНКА И ДЕНЬГИ
+            col1, col2, col3 = st.columns([2, 1, 1.2])
             with col1: 
                 st.subheader(f"🏢 {title}")
-                st.caption(f"🧠 ИИ определил нишу бизнеса как: **{niche_key}**. Используется столбец весов: **{target_column}**")
+                st.caption(f"🧠 Ниша бизнеса: **{niche_key}** (Используются адаптированные веса)")
             with col2: 
                 color = "normal" if final_total_score >= 80 else ("off" if final_total_score >= 50 else "inverse")
                 st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
-
+            with col3:
+                st.metric("Упущенная выручка (мес)", f"- {formatted_loss} ₽", delta="Недополученный трафик", delta_color="inverse")
+            
+            # CTA И ПОЯСНЕНИЕ
+            st.error(f"""
+            💸 **Откуда эта цифра?**  
+            Ваша карточка отрабатывает только на **{round(final_total_score, 1)}%** от своего потенциала. 
+            Мы рассчитали потери на основе средних отраслевых показателей для ниши **{niche_key}** (Потенциал: ~{potential_leads} горячих лидов/мес, Средний чек: ~{avg_check:,} ₽). Вы теряете около **{int(lost_percentage*100)}%** клиентов, которые уходят к конкурентам из-за недооформленной карточки и пробелов в репутации.
+            
+            🚀 **Если вы хотите точнее узнать сумму потерь для ВАШЕГО бизнеса с учетом ваших реальных чеков и получить пошаговый план возврата этих денег — [оставьте заявку на бесплатный разбор с экспертом](#).**
+            """)
+            
+            st.divider()
             st.dataframe(pd.DataFrame(results), hide_index=True, use_container_width=True)
 
             try:
                 results_sheet = doc.worksheet("Results")
                 headers = results_sheet.row_values(1)
-                
-                if not headers: headers = ["Дата", "Ссылка", "Компания", "Общий балл"]
+                if not headers: headers = ["Дата", "Ссылка", "Компания", "Общий балл", "Упущенная выручка"]
                 headers_changed = False
                 for c in final_scores_dict.keys():
                     if c not in headers:
                         headers.append(c)
                         headers_changed = True
-                        
                 if headers_changed:
                     cell_list = results_sheet.range(1, 1, 1, len(headers))
                     for i, val in enumerate(headers): cell_list[i].value = val
@@ -410,11 +439,10 @@ if st.button("🚀 Запустить аудит", type="primary"):
                 row_data = []
                 for h in headers:
                     if h == "Дата": row_data.append(time.strftime("%d.%m.%Y %H:%M:%S"))
-                    elif h == "Ссылка": row_data.append(yandex_url)
+                    elif h == "Ссылка": row_data.append(url)
                     elif h == "Компания": row_data.append(title)
                     elif h == "Общий балл": row_data.append(final_total_score)
+                    elif h == "Упущенная выручка": row_data.append(lost_revenue)
                     else: row_data.append(final_scores_dict.get(h, 0.0))
-                        
                 results_sheet.append_row(row_data)
-                st.success("✅ Результат успешно сохранен в базу!")
             except: pass
