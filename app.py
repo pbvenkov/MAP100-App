@@ -11,7 +11,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 
-# === НОВЫЕ ИМПОРТЫ ДЛЯ ЗРЕНИЯ ИИ ===
+# Импорты для зрения
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from PIL import Image
@@ -22,7 +22,7 @@ from PIL import Image
 APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
 
-# Настройка ИИ (СТРОГО gemini-3.5-flash)
+# Настройка ИИ 
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     ai_model = genai.GenerativeModel('gemini-3.5-flash') 
@@ -108,7 +108,7 @@ def calculate_prof_rules(data):
     if data.get('isVerifiedOwner', False):
         for k in ['PROF-12.1', 'PROF-01.1', 'PROF-03.1', 'PROF-05.1', 'PROF-07.1']:
             scores[k] = True
-        logs.append("✅ [PROF-12.1] Синяя галочка (Верифицирован) подтверждена.")
+        logs.append("✅ [PROF-12.1] Синяя галочка подтверждена.")
     else:
         if len(data.get('title', '')) > 2: scores['PROF-01.1'] = True
         if len(data.get('categories') or []) > 0: scores['PROF-03.1'] = True
@@ -124,10 +124,7 @@ def calculate_prof_rules(data):
                 
     features = data.get('features') or []
     if features: scores['PROF-08.1'] = True
-    
-    if len(features) >= 5:
-        scores['PROF-08.2'] = True
-        logs.append("✅ [PROF-08.2] Найдено более 5 нишевых атрибутов (особенностей).")
+    if len(features) >= 5: scores['PROF-08.2'] = True
     
     desc = data.get('description') or ''
     if len(desc) > 1500: scores['PROF-10.1'] = True
@@ -137,9 +134,7 @@ def calculate_prof_rules(data):
         scores['PROF-04.1'] = True
         if "utm_" in str(website).lower(): scores['PROF-04.2'] = True
             
-    if data.get('requisites') or data.get('legalInfo'): 
-        scores['PROF-15.1'] = True
-        logs.append("✅ [PROF-15.1] Заполнена вкладка с юридическими данными.")
+    if data.get('requisites') or data.get('legalInfo'): scores['PROF-15.1'] = True
 
     schedule_str = str(data.get('workingHours') or data.get('schedule') or '').lower()
     if any(k in schedule_str for k in ['перерыв', 'special', 'intervals']): scores['PROF-07.2'] = True
@@ -157,11 +152,7 @@ def calculate_prof_rules(data):
         if with_price / len(products) >= 0.8: scores['PROF-11.3'] = True
         with_desc = sum(1 for p in products if len(str(p.get('description') or '')) > 50)
         if with_desc / len(products) >= 0.8: scores['PROF-11.4'] = True
-        cat_set = set()
-        for p in products:
-            cat = p.get('category')
-            if isinstance(cat, dict): cat_set.add(cat.get('name'))
-            else: cat_set.add(cat)
+        cat_set = set(p.get('category', {}).get('name') if isinstance(p.get('category'), dict) else p.get('category') for p in products)
         if len(cat_set) >= 2: scores['PROF-11.5'] = True
             
     links_str = f"{data.get('links', '')} {data.get('socials', '')}".lower()
@@ -176,19 +167,13 @@ def calculate_cont_rules(data):
     if photo_count >= 15: scores['CONT-36.1'] = True
     if photo_count >= 30: scores['CONT-36.2'] = True
     
-    if data.get('stories') or data.get('storyUrls'): 
-        scores['CONT-44.1'] = True
-        logs.append("✅ [CONT-44.1] В карточке найдены Истории (Stories).")
-        
-    if data.get('panoramaUrl') or data.get('panoramas') or data.get('videos'): 
-        scores['CONT-42.1'] = True
-        logs.append("✅ [CONT-42.1] Найдено видео или 3D-панорама.")
+    if data.get('stories') or data.get('storyUrls'): scores['CONT-44.1'] = True
+    if data.get('panoramaUrl') or data.get('panoramas') or data.get('videos'): scores['CONT-42.1'] = True
         
     photos = get_safe_list(data, ['photos', 'images'])
     for p in photos:
         if any(kw in str(p).lower() for kw in ['внутри', 'интерьер', 'interior', 'inside', 'залы']):
             scores['CONT-43.1'] = True
-            logs.append("✅ [CONT-43.1] В галерее найдены фотографии 'Интерьер/Внутри'.")
             break
             
     return scores, logs
@@ -216,16 +201,13 @@ def calculate_rep_rules(data):
             diffs = [(dates[i] - dates[i+1]).days for i in range(len(dates)-1)]
             if diffs and (sum(d == 0 for d in diffs) / len(diffs)) < 0.3:
                 scores['REP-29.2'] = True
-                logs.append("✅ [REP-29.2] Распределение отзывов равномерное (нет спам-накруток в один день).")
                 
         last_20 = reviews[:20]
         replied, total_days, valid_times, unans_neg, ans_pos = 0, 0, 0, 0, 0
         owner_texts = []
         
         with_photo = sum(1 for r in last_20 if r.get('photos') or r.get('images'))
-        if len(last_20) > 0 and (with_photo / len(last_20)) >= 0.1: 
-            scores['REP-35.1'] = True
-            logs.append(f"✅ [REP-35.1] Доля отзывов с фото > 10% ({with_photo} шт).")
+        if len(last_20) > 0 and (with_photo / len(last_20)) >= 0.1: scores['REP-35.1'] = True
         
         for rev in last_20:
             r_rate = rev.get('rating') or 0
@@ -244,15 +226,9 @@ def calculate_rep_rules(data):
             if r_rate <= 3 and not reply: unans_neg += 1
             if r_rate >= 4 and reply: ans_pos += 1
         
-        if len(last_20) > 0 and (replied / len(last_20)) >= 0.9: 
-            scores['REP-30.1'] = True
-            logs.append("✅ [REP-30.1] Владелец ответил на 90%+ отзывов.")
-        if valid_times > 0 and (total_days / valid_times) <= 3: 
-            scores['REP-30.2'] = True
-            logs.append("✅ [REP-30.2] Средняя скорость ответа <= 3 дней.")
-        if unans_neg == 0 and len(last_20) > 0: 
-            scores['REP-32.1'] = True
-            logs.append("✅ [REP-32.1] Нет брошенного негатива.")
+        if len(last_20) > 0 and (replied / len(last_20)) >= 0.9: scores['REP-30.1'] = True
+        if valid_times > 0 and (total_days / valid_times) <= 3: scores['REP-30.2'] = True
+        if unans_neg == 0 and len(last_20) > 0: scores['REP-32.1'] = True
         if ans_pos > 0: scores['REP-30.3'] = True
             
         if len(owner_texts) >= 2:
@@ -262,22 +238,15 @@ def calculate_rep_rules(data):
                 if (len(words1 & words2) / max(1, len(words1 | words2))) > 0.8:
                     is_templated = True
                     break
-            if not is_templated:
-                scores['REP-31.1'] = True
-                logs.append("✅ [REP-31.1] Тексты ответов уникальны (не скопированы).")
+            if not is_templated: scores['REP-31.1'] = True
         elif len(owner_texts) == 1: scores['REP-31.1'] = True
 
         if owner_texts:
             toxic_words = ['вранье', 'ложь', 'клевета', 'провокация', 'суд', 'неадекват', 'чушь', 'бред']
-            if not any(w in t for t in owner_texts for w in toxic_words):
-                scores['REP-32.2'] = True
-                logs.append("✅ [REP-32.2] В ответах отсутствует агрессия и токсичность.")
-                
-        if owner_texts:
+            if not any(w in t for t in owner_texts for w in toxic_words): scores['REP-32.2'] = True
+            
             spam_fight_words = ['не были', 'не находим', 'в базе', 'уточните дату', 'номер телефона', 'вас нет', 'имя клиента']
-            if any(w in t for t in owner_texts for w in spam_fight_words):
-                scores['REP-33.1'] = True
-                logs.append("✅ [REP-33.1] Владелец оспаривает спам (запрашивает детали визита в негативе).")
+            if any(w in t for t in owner_texts for w in spam_fight_words): scores['REP-33.1'] = True
 
     return scores, logs
 
@@ -285,57 +254,47 @@ def calculate_conv_rules(data):
     scores, logs = {}, []
     str_search = f"{data.get('links', '')} {data.get('features', '')} {data.get('socials', '')}".lower()
     
-    if any(b in str_search for b in ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'запись онлайн', 'nethouse']):
+    # ПАТЧ: Добавлены системы бронирования ресторанов и клиник
+    booking_systems = ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'запись онлайн', 'nethouse', 'leclick', 'tomesto', 'restoclub', 'afisha', 'prodoctorov', 'docdoc', 'sberhealth']
+    
+    if any(b in str_search for b in booking_systems):
         scores['CONV-48.1'] = True
-        logs.append("✅ [CONV-48.1] Найдена система онлайн-записи.")
         
-    if "chat" in str_search or data.get('isChatEnabled'): 
-        scores['CONV-50.1'] = True
+    if "chat" in str_search or data.get('isChatEnabled'): scores['CONV-50.1'] = True
         
     if data.get('isChatEnabled') and (data.get('isAdvertiser') or "бот" in str_search):
         scores['CONV-50.2'] = True
-        logs.append("✅ [CONV-50.2] Настроены быстрые ответы / бот.")
 
     if data.get('posts') or data.get('news') or data.get('promos'): scores['CONV-51.1'] = True
     
     action_url = str(data.get('actionUrl') or data.get('bookingUrl') or '').lower()
     if action_url: 
         scores['CONV-47.1'] = True
-        logs.append("✅ [CONV-47.1] Настроена главная кнопка действия.")
-        if any(b in action_url for b in ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'whatsapp', 't.me', 'vk.com/app', 'nethouse']):
+        if any(b in action_url for b in booking_systems + ['whatsapp', 't.me', 'vk.com/app']):
             scores['CONV-47.2'] = True
-            logs.append("✅ [CONV-47.2] Актуальный виджет: кнопка ведет на рабочий инструмент записи/связи.")
 
     cover = str(data.get('coverPhotoUrl') or data.get('coverUrl') or '').lower()
     if cover and 'panorama' not in cover and 'streetview' not in cover:
         scores['CONV-46.1'] = True
-        logs.append("✅ [CONV-46.1] Обложка установлена вручную (не авто-панорама).")
 
-    if data.get('questionsAndAnswers') or data.get('faq') or data.get('qna'): 
-        scores['CONV-52.1'] = True
-        logs.append("✅ [CONV-52.1] Заполнен блок FAQ.")
+    if data.get('questionsAndAnswers') or data.get('faq') or data.get('qna'): scores['CONV-52.1'] = True
         
     promos = get_safe_list(data, ['promos'])
     posts = get_safe_list(data, ['posts', 'news'])
     if promos:
         scores['CONV-51.2'] = True
-        logs.append("✅ [CONV-51.2] Найдена активная промоакция в специальном блоке.")
     else:
-        recent_promo_post = False
+        recent_promo = False
         for p in posts:
-            p_text = str(p.get('text', '')).lower()
-            if any(w in p_text for w in ['акция', 'скидка', 'спецпредложение', 'до конца']):
-                recent_promo_post = True
+            if any(w in str(p.get('text', '')).lower() for w in ['акция', 'скидка', 'спецпредложение', 'до конца']):
+                recent_promo = True
                 break
-        if recent_promo_post:
-            scores['CONV-51.2'] = True
-            logs.append("✅ [CONV-51.2] Найдена активная промоакция (в новостях/постах).")
+        if recent_promo: scores['CONV-51.2'] = True
 
     products = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
     for p in products:
         if p.get('oldPrice') or p.get('discount') or any(kw in str(p).lower() for kw in ['хит', 'новинка', 'скидка', 'акция']):
             scores['CONV-53.1'] = True
-            logs.append("✅ [CONV-53.1] В товарах найден бейдж (Хит, Скидка).")
             break
             
     return scores, logs
@@ -352,7 +311,6 @@ def calculate_seo_rules(data):
         avg_words = sum(len(str(p.get('name', '')).split()) for p in products) / len(products)
         if avg_words >= 2.0:
             scores['SEO-21.1'] = True
-            logs.append("✅ [SEO-21.1] Названия товаров содержат расширенные запросы (длина названия > 1 слова).")
             
     return scores, logs
 
@@ -364,241 +322,157 @@ def calculate_act_rules(data):
     posts = get_safe_list(data, ['posts', 'news', 'promos'])
     for p in posts:
         try:
-            p_date_str = p.get('date') or p.get('publishedAt') or p.get('createdAt')
-            p_date = datetime.fromisoformat(p_date_str.replace('Z', '+00:00'))
+            p_date = datetime.fromisoformat((p.get('date') or p.get('publishedAt') or p.get('createdAt')).replace('Z', '+00:00'))
             if (now - p_date).days <= 30: 
                 fresh = True
-                if p.get('imageUrl') or p.get('images') or p.get('photoUrl'):
-                    posts_with_images = True
+                if p.get('imageUrl') or p.get('images') or p.get('photoUrl'): posts_with_images = True
         except: pass
         
     if not fresh and (data.get('stories') or data.get('storyUrls')): fresh = True
-        
-    if fresh: 
-        scores['ACT-68.1'] = True
-        logs.append("✅ [ACT-68.1] Найдена свежая активность (<30 дней).")
-        
-    if posts_with_images or data.get('stories') or data.get('storyUrls'):
-        scores['ACT-67.1'] = True
-        logs.append("✅ [ACT-67.1] Регулярность фото: найден свежий визуальный контент (<30 дней).")
-        
-    if data.get('isAdvertiser') or data.get('advertiser'): 
-        scores['ACT-69.1'] = True
-        logs.append("✅ [ACT-69.1] Карточка оплатила Приоритетное размещение.")
+    if fresh: scores['ACT-68.1'] = True
+    if posts_with_images or data.get('stories') or data.get('storyUrls'): scores['ACT-67.1'] = True
+    if data.get('isAdvertiser') or data.get('advertiser'): scores['ACT-69.1'] = True
         
     return scores, logs
 
-# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ: ТЕКСТЫ ===
+# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ: ТЕКСТЫ (Адаптировано под HoReCa) ===
 def calculate_ai_rules(data):
     scores, logs = {}, []
-    ai_critical_error = None
-    
-    if ai_model is None: 
-        return scores, logs, "Модель ИИ не инициализирована (проверьте API-ключ Gemini)."
+    if ai_model is None: return scores, logs, "Модель ИИ отключена."
         
     title = data.get('title', '')
     description = data.get('description', '')
-    category = ""
-    if data.get('categories') and len(data['categories']) > 0:
-        cat_obj = data['categories'][0]
-        category = cat_obj.get('name') if isinstance(cat_obj, dict) else str(cat_obj)
-        
-    all_categories = []
-    if data.get('categories'):
-        for c in data['categories']:
-            all_categories.append(c.get('name') if isinstance(c, dict) else str(c))
-    cats_str = ", ".join(all_categories)
+    category = data.get('categories', [{}])[0].get('name', '') if data.get('categories') else ''
+    cats_str = ", ".join([c.get('name', str(c)) for c in data.get('categories', [])])
     
-    reviews_data = data.get('reviews')
-    owner_texts = []
-    client_texts = []
-    if isinstance(reviews_data, list):
-        for rev in reviews_data[:15]:
-            if rev.get('text'): client_texts.append(rev.get('text'))
-            reply = rev.get('reply') or rev.get('ownerAnswer')
-            if isinstance(reply, dict) and reply.get('text'): 
-                owner_texts.append(reply.get('text'))
+    owner_texts, client_texts = [], []
+    for rev in data.get('reviews', [])[:15]:
+        if rev.get('text'): client_texts.append(rev.get('text'))
+        reply = rev.get('reply') or rev.get('ownerAnswer')
+        if isinstance(reply, dict) and reply.get('text'): owner_texts.append(reply.get('text'))
                 
-    owner_replies_str = " | ".join(owner_texts[:3]) if owner_texts else "Ответов нет"
-    client_reviews_str = " | ".join(client_texts[:5]) if client_texts else "Отзывов нет"
+    owner_str = " | ".join(owner_texts[:3]) if owner_texts else "Ответов нет"
+    client_str = " | ".join(client_texts[:5]) if client_texts else "Отзывов нет"
+    faq_str = " | ".join([f"В: {q.get('question')} О: {q.get('answer')}" for q in get_safe_list(data, ['questionsAndAnswers', 'faq', 'qna'])[:3]]) if get_safe_list(data, ['questionsAndAnswers', 'faq', 'qna']) else "FAQ нет"
     
-    faq_list = get_safe_list(data, ['questionsAndAnswers', 'faq', 'qna'])
-    faq_str_list = [f"В: {q.get('question')} О: {q.get('answer')}" for q in faq_list[:3]]
-    faq_str = " | ".join(faq_str_list) if faq_str_list else "FAQ нет"
-    
-    products = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
-    prod_desc_list = [str(p.get('description')) for p in products[:5] if p.get('description')]
-    prod_desc_str = " | ".join(prod_desc_list) if prod_desc_list else "Описаний товаров нет"
+    prods = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
+    prod_str = " | ".join([str(p.get('description')) for p in prods[:5] if p.get('description')]) if prods else "Описаний нет"
         
     prompt = f"""
-    Ты Senior SEO-специалист и маркетолог. Проанализируй данные компании и ответь на 18 вопросов.
-    Шаг 1: Определи нишу бизнеса по Названию и Категории. Вспомни главные "боли" клиентов этой ниши и ее LSI-словарь (ключевые термины).
-    Шаг 2: Ответь на вопросы строго "true" или "false".
-    Верни результат ТОЛЬКО в виде валидного JSON объекта. Никакого Markdown.
+    Ты Senior SEO-специалист и маркетолог.
+    Шаг 1: Определи нишу (Название: {title}, Категория: {category}). 
+    ВАЖНО: Если это Ресторан/Бар/HoReCa или премиум-сегмент — будь лояльнее. В ресторанах не должно быть жесткого SEO и агрессивных призывов к действию, текст должен быть вкусным и атмосферным.
+    Шаг 2: Ответь строго "true" или "false" в формате JSON. Никакого Markdown.
 
-    ДАННЫЕ КОМПАНИИ:
-    Название: "{title}"
-    Основная категория: "{category}"
-    Все категории: "{cats_str}"
-    Описание: "{description}"
-    Ответы владельца: "{owner_replies_str}"
-    Отзывы клиентов: "{client_reviews_str}"
-    Описания товаров: "{prod_desc_str}"
+    ОПИСАНИЕ: "{description}"
+    ОТВЕТЫ: "{owner_str}"
+    ОТЗЫВЫ: "{client_str}"
+    ТОВАРЫ: "{prod_str}"
     FAQ: "{faq_str}"
 
     ВОПРОСЫ (ключи JSON):
-    "PROF-10.6": Есть ли в описании призыв к действию (звоните, сайт)?
-    "PROF-10.3": Перечислены ли конкретные услуги, а не общие фразы?
-    "CONV-49.1": Есть ли в начале описания сильное УТП?
+    "PROF-10.6": Есть ли в описании призыв к действию (или мягкое приглашение для ресторанов)?
+    "PROF-10.3": Перечислены ли конкретные услуги/особенности меню?
+    "CONV-49.1": Есть ли в начале описания сильное УТП/Концепция?
     "SEO-18.3": Есть ли в описании названия городов/районов (топонимы)?
-    "PROF-10.4": Есть ли в описании конкретные факты/преимущества, а не вода?
-    "CONV-49.2": Есть ли в описании измеримые показатели (годы, цифры)?
+    "PROF-10.4": Есть ли в описании факты, цифры или четкая концепция без воды?
+    "CONV-49.2": Есть ли в описании измеримые показатели (годы, метрики)?
     "PROF-01.2": Является ли название чистым брендом без SEO-спама?
-    "REP-31.2": Есть ли в ответах владельца вежливость и корпоративный стиль?
-    "CONV-52.2": Снимает ли FAQ реальные страхи клиентов?
-    "PROF-02.1": Соответствует ли Основная категория смыслу Описания компании?
-    "PROF-03.2": Нет ли в списке Всех категорий "мусорных", не связанных с основным бизнесом?
-    "SEO-17.1": Есть ли в Описании целевые ключевые запросы этой ниши?
-    "SEO-17.2": Написано ли Описание для людей, без жесткого SEO-переспама?
-    "SEO-17.3": Есть ли в Описании LSI-термины (профессиональные слова)?
-    "CONV-49.4": Закрывает ли Описание типичные "боли" клиентов этой ниши?
-    "SEO-19.1": Вплетает ли владелец в Ответы ключевые коммерческие запросы?
-    "SEO-19.2": Упоминают ли клиенты в Отзывах названия услуг?
-    "SEO-21.2": Содержат ли Описания товаров развернутые SEO-термины?
+    "REP-31.2": Есть ли в ответах владельца корпоративный стиль (если ответов нет - false)?
+    "CONV-52.2": Снимает ли FAQ вопросы клиентов?
+    "PROF-02.1": Соответствует ли Категория Описанию?
+    "PROF-03.2": Нет ли "мусорных" категорий?
+    "SEO-17.1": Есть ли в Описании ключи ниши (для ресторанов - атмосферные LSI)?
+    "SEO-17.2": Описание читаемое, без SEO-переспама?
+    "SEO-17.3": Есть ли LSI-термины ниши?
+    "CONV-49.4": Закрывает ли текст боли клиентов (вкус, атмосфера, сервис)?
+    "SEO-19.1": Вплетает ли владелец в Ответы коммерческие ключи/названия блюд?
+    "SEO-19.2": Упоминают ли клиенты в Отзывах конкретные услуги/блюда?
+    "SEO-21.2": Содержат ли Описания товаров развернутые SEO-термины (вкусное описание)?
     """
-    
     try:
         response = ai_model.generate_content(prompt)
-        raw_text = response.text
-        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-        if json_match:
-            clean_json = json_match.group(0)
-            ai_result = json.loads(clean_json)
-            m = {}
-            m["PROF-10.6"] = "AI: Нашел призыв к действию (CTA)."
-            m["PROF-10.3"] = "AI: Услуги перечислены конкретно."
-            m["CONV-49.1"] = "AI: Найдено сильное УТП в первом абзаце."
-            m["SEO-18.3"] = "AI: Найдены топонимы в тексте."
-            m["PROF-10.4"] = "AI: Найдены конкретные факты/преимущества (без воды)."
-            m["CONV-49.2"] = "AI: Найдены числительные и метрики в УТП."
-            m["PROF-01.2"] = "AI: Название чистое (без SEO-спама)."
-            m["REP-31.2"] = "AI: Ответы владельца выдержаны в Tone of Voice."
-            m["CONV-52.2"] = "AI: Блок FAQ закрывает страхи ЦА."
-            m["PROF-02.1"] = "AI: Основная категория полностью соответствует Описанию."
-            m["PROF-03.2"] = "AI: Мусорных (нерелевантных) категорий не обнаружено."
-            m["SEO-17.1"] = "AI: В описании присутствуют целевые ключевые запросы ниши."
-            m["SEO-17.2"] = "AI: Описание читаемое, без SEO-переспама ключами."
-            m["SEO-17.3"] = "AI: В описании найдена качественная LSI-семантика."
-            m["CONV-49.4"] = "AI: Текст релевантен реальным болям ЦА в этой нише."
-            m["SEO-19.1"] = "AI: В ответах владельца вшиты коммерческие SEO-ключи."
-            m["SEO-19.2"] = "AI: Клиенты органично упоминают услуги в своих отзывах."
-            m["SEO-21.2"] = "AI: В карточках товаров есть развернутое SEO-описание."
-            
-            for code, msg in m.items():
-                if ai_result.get(code):
-                    scores[code] = True
-                    logs.append(f"✅ [{code}] {msg}")
-        else:
-            ai_critical_error = "Нейросеть не вернула валидный JSON-ответ."
-            logs.append(f"⚠️ [AI-Ошибка] {ai_critical_error}")
-                
-    except Exception as e:
-        ai_critical_error = str(e)
-        logs.append(f"⚠️ [AI-Ошибка] Сбой Gemini: {e}")
-        
-    return scores, logs, ai_critical_error
+        match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        if match:
+            res = json.loads(match.group(0))
+            for k in res: 
+                if res[k]: scores[k] = True
+        else: return scores, logs, "Невалидный JSON от ИИ."
+    except Exception as e: return scores, logs, str(e)
+    return scores, logs, None
 
 
-# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ: ЗРЕНИЕ (7 НОВЫХ МЕТРИК) ===
+# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ: ЗРЕНИЕ (Агрессивный сканер) ===
 def fetch_image_for_ai(url):
-    """Скачивает и сжимает картинку 'на лету' (без сохранения на диск)"""
     try:
+        if not url.startswith('http'): url = 'https:' + url if url.startswith('//') else 'https://' + url
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             img = Image.open(BytesIO(response.content)).convert('RGB')
-            img.thumbnail((800, 800)) # Сжимаем до разумных пределов для скорости
+            img.thumbnail((800, 800)) 
             return img
-    except Exception:
-        pass
+    except: pass
     return None
 
 def calculate_vision_rules(data):
     scores, logs = {}, []
-    
-    if ai_model is None:
-        return scores, logs, "AI Vision отключен (нет модели)."
+    if ai_model is None: return scores, logs, None
         
     image_urls = []
     
-    # 1. Берем обложку профиля
+    # 1. Сначала ищем по стандартным ключам
     cover = str(data.get('coverPhotoUrl') or data.get('coverUrl') or '')
-    if cover and 'panorama' not in cover and 'streetview' not in cover:
-        image_urls.append(cover)
-        
-    # 2. Берем до 4 свежих фото из галереи
-    photos = get_safe_list(data, ['photos', 'images'])
-    for p in photos[:4]:
-        p_url = p.get('url') if isinstance(p, dict) else str(p)
-        if p_url and 'panorama' not in p_url and 'streetview' not in p_url:
-            image_urls.append(p_url)
+    if cover and 'panorama' not in cover: image_urls.append(cover)
+    for p in get_safe_list(data, ['photos', 'images'])[:4]:
+        u = p.get('url') if isinstance(p, dict) else str(p)
+        if u and 'panorama' not in u: image_urls.append(u)
+            
+    # 2. ПАТЧ: Агрессивный поиск ВСЕХ ссылок на картинки в сыром JSON, если по стандарту ничего не нашлось
+    if not image_urls:
+        raw_string = json.dumps(data)
+        found_urls = re.findall(r'https?://[^\s<>"]+?\.jpg|https?://avatars\.mds\.yandex\.net/[^\s<>"]+', raw_string)
+        # Убираем дубликаты и панорамы
+        valid_urls = list(set([u for u in found_urls if 'panorama' not in u and 'streetview' not in u]))
+        image_urls = valid_urls[:5] # Берем до 5 штук
+        if image_urls:
+            logs.append(f"ℹ️ [AI-Vision] Стандартная галерея пуста, но найдено {len(image_urls)} скрытых фото через RegEx.")
 
     if not image_urls:
-        logs.append("⚠️ [AI-Vision] Нет доступных фото для визуального анализа. Пропуск.")
+        logs.append("⚠️ [AI-Vision] Картинки полностью отсутствуют в данных карточки. Пропуск визуального блока.")
         return scores, logs, None
 
-    # ПАРАЛЛЕЛЬНОЕ СКАЧИВАНИЕ (очень быстро)
     with ThreadPoolExecutor(max_workers=5) as executor:
         pil_images = list(filter(None, executor.map(fetch_image_for_ai, image_urls)))
         
     if not pil_images:
-        logs.append("⚠️ [AI-Vision] Не удалось скачать фото по ссылкам. Пропуск.")
+        logs.append("⚠️ [AI-Vision] Не удалось скачать фото (ошибка 403/404). Пропуск.")
         return scores, logs, None
         
     prompt = """
-    Ты Арт-директор и маркетолог. Изучи эти фотографии компании (первая - это обложка профиля, остальные - фото из галереи).
-    Ответь строго в JSON (используй true или false) на 7 вопросов. Никакого Markdown.
+    Ты Арт-директор. Изучи эти фотографии компании (первая - обложка).
+    Ответь строго в JSON (true/false) на 7 вопросов. Никакого Markdown.
 
-    ВОПРОСЫ:
-    "CONV-49.3": Есть ли на первой картинке (обложке) читаемый текст, дублирующий оффер или УТП бизнеса?
-    "CONT-37.2": Выглядят ли фото как реальные живые кадры компании, а НЕ как пластиковые стоковые фото из интернета?
+    ВОПРОСЫ (ключи JSON):
+    "CONV-49.3": Есть ли на первой картинке (обложке) читаемый добавленный текст (оффер/скидка), который наложен поверх фото? (Если это просто вывеска на здании - false).
+    "CONT-37.2": Выглядят ли фото как реальные живые кадры компании, а НЕ как пластиковые стоковые фото из интернета с идеальными моделями?
     "CONT-37.3": Фотографии хорошо освещены (не слишком темные, нормальная контрастность)?
-    "CONT-39.1": Есть ли на фото лица людей, сотрудники или живая команда в процессе работы/отдыха?
-    "CONT-40.1": Есть ли на фото "бэкстейдж" (виден процесс работы, оказания услуги или производства)?
-    "CONT-41.1": Есть ли предметные фотографии (товар, блюдо или результат работы сняты крупно)?
-    "CONT-41.2": Высокая ли детализация на предметных фото (фокус на деталях, макро-съемка)?
+    "CONT-39.1": Есть ли на фото лица людей, сотрудники, гости или живая команда в процессе работы/отдыха?
+    "CONT-40.1": Есть ли на фото "бэкстейдж" (виден процесс работы, приготовление блюд, оказание услуги или производство)?
+    "CONT-41.1": Есть ли предметные фотографии (товар, еда, результат работы сняты крупно)?
+    "CONT-41.2": Высокая ли детализация на предметных фото (фокус на деталях, качественная макро-съемка)?
     """
-    
     try:
-        # Отправляем промпт + массив картинок одним пакетом
         response = ai_model.generate_content([prompt] + pil_images)
-        raw_text = response.text
-        
-        json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-        if json_match:
-            clean_json = json_match.group(0)
-            ai_result = json.loads(clean_json)
-            
-            m = {}
-            m["CONV-49.3"] = "AI Vision: На главной обложке есть текст / визуальный оффер."
-            m["CONT-37.2"] = "AI Vision: Фотографии признаны 'своими живыми', а не стоком."
-            m["CONT-37.3"] = "AI Vision: Освещенность и контрастность фото в норме."
-            m["CONT-39.1"] = "AI Vision: На фотографиях присутствуют люди/команда."
-            m["CONT-40.1"] = "AI Vision: Распознан процесс оказания услуги (бэкстейдж)."
-            m["CONT-41.1"] = "AI Vision: Присутствуют предметные фотографии товаров."
-            m["CONT-41.2"] = "AI Vision: Детализация и крупный план (макро) на высоком уровне."
-            
-            for code, msg in m.items():
-                if ai_result.get(code):
-                    scores[code] = True
-                    logs.append(f"✅ [{code}] {msg}")
-        else:
-            logs.append("⚠️ [AI-Vision-Ошибка] Нейросеть не вернула валидный JSON-ответ.")
-            
-    except Exception as e:
-        logs.append(f"⚠️ [AI-Vision-Ошибка] Сбой Gemini Vision: {e}")
+        match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        if match:
+            res = json.loads(match.group(0))
+            for k in res: 
+                if res[k]: scores[k] = True
+            logs.append("✅ [AI-Vision] Фотографии успешно проанализированы нейросетью.")
+        else: logs.append("⚠️ [AI-Vision] Невалидный JSON-ответ.")
+    except Exception as e: logs.append(f"⚠️ [AI-Vision] Сбой Gemini Vision: {e}")
         
     return scores, logs, None
-
 
 def calculate_all_python_rules(data):
     all_scores, all_logs = {}, []
@@ -612,13 +486,11 @@ def calculate_all_python_rules(data):
         all_scores.update(s_dict)
         all_logs.extend(l_list)
         
-    # Смысловой ИИ
     ai_scores, ai_logs, ai_err = calculate_ai_rules(data)
     all_scores.update(ai_scores)
     all_logs.extend(ai_logs)
     if ai_err: global_ai_error = ai_err
         
-    # Визуальный ИИ
     vis_scores, vis_logs, vis_err = calculate_vision_rules(data)
     all_scores.update(vis_scores)
     all_logs.extend(vis_logs)
@@ -636,27 +508,11 @@ except Exception as e:
     st.error("⚠️ Не удалось загрузить базу правил. Проверьте Google Sheets API.")
     st.stop()
 
-# --- САЙДБАР ---
-manual_rules = [r for r in rules_data if r.get('Статус') == "Ручной"]
-manual_overrides = {}
 with st.sidebar:
     st.header("🎛 Ручная оценка")
-    current_prefix = ""
-    for r in manual_rules:
-        code = str(r.get('Код', '')).strip()
-        if not code: continue
-        prefix = code.split('-')[0] if '-' in code else "ДРУГОЕ"
-        if prefix != current_prefix:
-            st.markdown(f"### Блок {prefix}")
-            current_prefix = prefix
-        name = str(r.get('Критерий', '')).strip()
-        max_score = float(r.get('Балл', 1.0))
-        if max_score > 0:
-            val = st.number_input(f"[{code}] {name}", min_value=0.0, max_value=max_score, value=0.0, step=0.5, help=str(r.get('Инструкция по вычислению', '')))
-            manual_overrides[code] = val
+    st.write("Все метрики автоматизированы. Ручной ввод отключен за ненадобностью.")
 
-# --- ОСНОВНОЙ ЭКРАН ---
-st.title("📍 MAP100: AI-Аудитор (Версия 11.0 - 100% Автоматизация!)")
+st.title("📍 MAP100: AI-Аудитор (Версия 11.1 - Адаптация и Зрение 2.0)")
 
 stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
 stat_manual = sum(1 for r in rules_data if r.get('Статус') == "Ручной")
@@ -682,12 +538,11 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 python_scores_dict, python_logs, ai_error = calculate_all_python_rules(raw_yandex_data)
                 
                 if ai_error:
-                    st.error(f"🚨 КРИТИЧЕСКАЯ ОШИБКА ИИ: Нейросеть не смогла проанализировать данные.\n\nДетали: {ai_error}")
-                    send_telegram_alert(f"🚨 Ошибка ИИ в MAP100!\nМодель Gemini упала.\nКомпания: {company_name}\nСсылка: {yandex_url}\nПричина: {ai_error}")
+                    st.error(f"🚨 КРИТИЧЕСКАЯ ОШИБКА ИИ: {ai_error}")
+                    send_telegram_alert(f"🚨 Ошибка ИИ в MAP100!\nКомпания: {company_name}\nСсылка: {yandex_url}\nПричина: {ai_error}")
                     
             except Exception as e:
                 st.error(f"⚠️ Ошибка работы алгоритма: {e}")
-                send_telegram_alert(f"🚨 Критическая ошибка MAP100 (Парсер упал)!\nСсылка: {yandex_url}\nПричина: {e}")
                 st.stop()
                 
             final_scores_dict = {}
@@ -698,34 +553,22 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 if not code: continue
                 name = str(r.get('Критерий', '')).strip()
                 max_score = float(r.get('Балл', 0.0))
-                status = str(r.get('Статус', 'Заглушка')).strip()
-                instruction = str(r.get('Инструкция по вычислению', ''))
                 
-                current_val = 0.0
-                if status == "Python" and python_scores_dict.get(code): 
-                    current_val = max_score 
-                elif status == "Ручной" and code in manual_overrides: 
-                    current_val = min(float(manual_overrides[code]), max_score)
-                    
+                current_val = max_score if python_scores_dict.get(code) else 0.0
                 final_scores_dict[code] = current_val
                 
                 comment = ""
-                if status == "Python":
-                    specific_log = None
-                    for log in python_logs:
-                        if f"[{code}]" in log:
-                            parts = log.split("]", 1)
-                            if len(parts) > 1:
-                                specific_log = parts[1].strip()
-                                break
-                    if current_val > 0:
-                        comment = f"✅ {specific_log}" if specific_log else (f"✅ {instruction}" if instruction else "✅ Выполнено")
-                    else:
-                        comment = "❌ Не выполнено / Данные отсутствуют"
-                elif status == "Ручной":
-                    comment = "🧠 Оценено вручную экспертом" if current_val > 0 else "⚪ Не оценивалось (0 баллов)"
+                specific_log = None
+                for log in python_logs:
+                    if f"[{code}]" in log:
+                        parts = log.split("]", 1)
+                        if len(parts) > 1:
+                            specific_log = parts[1].strip()
+                            break
+                if current_val > 0:
+                    comment = f"✅ {specific_log}" if specific_log else "✅ Выполнено"
                 else:
-                    comment = "🟡 В разработке (Заглушка)"
+                    comment = "❌ Не выполнено / Данные отсутствуют"
                     
                 detailed_results.append({
                     "Код": code, "Критерий": name, "Балл": current_val, 
@@ -757,7 +600,6 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
             with st.expander("🛠️ Системные логи (Отладка)", expanded=False):
                 for log in python_logs: st.write(log)
 
-            # Сохранение в БД
             try:
                 results_sheet = doc.worksheet("Results")
                 headers = results_sheet.row_values(1)
@@ -784,51 +626,4 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                         
                 results_sheet.append_row(row_data)
                 st.success("✅ Результат успешно сохранен в базу!")
-            except:
-                st.warning("Не удалось сохранить в результаты (проверьте вкладку Results).")
-
-# ==========================================
-# 5. СЕРВИСНАЯ ПАНЕЛЬ ДЛЯ РАЗРАБОТЧИКА
-# ==========================================
-st.divider()
-st.subheader("🛠 Сервисная панель разработчика")
-
-if st.button("🪄 1. Разметка статусов (Нажми меня!)"):
-    with st.spinner("Расставляю статусы..."):
-        try:
-            doc = init_google_sheets()
-            sheet = doc.worksheet("Rules")
-            headers = sheet.row_values(1)
-            col_idx = headers.index("Статус") + 1 if "Статус" in headers else len(headers) + 1
-            
-            records = sheet.get_all_records()
-            # ВСЕ 80 МЕТРИК АВТОМАТИЗИРОВАНЫ!
-            python_codes = [
-                "PROF-01.1", "PROF-03.1", "PROF-05.1", "PROF-05.2", "PROF-07.1", "PROF-08.1", "PROF-11.1", 
-                "PROF-11.2", "PROF-11.3", "PROF-11.4", "PROF-11.5", "PROF-12.1", "PROF-13.1", "PROF-13.2", 
-                "CONT-36.1", "CONT-36.2", "REP-27.1", "REP-27.2", "REP-28.1", "CONV-48.1", "CONV-50.1", 
-                "PROF-04.1", "PROF-04.2", "PROF-10.1", "SEO-18.1", "CONT-44.1", "CONT-42.1", "CONV-51.1", 
-                "CONV-47.1", "PROF-15.1", "REP-29.1", "REP-30.1", "REP-30.2", "CONV-52.1", "PROF-07.2", 
-                "SEO-18.2", "CONT-43.1", "REP-32.1", "REP-30.3", "REP-31.1", "CONV-53.1", "PROF-14.1",
-                "ACT-68.1", "REP-35.1", "ACT-69.1", "PROF-10.6", "PROF-10.3", "CONV-49.1", "SEO-18.3",
-                "PROF-10.4", "CONV-49.2", "PROF-01.2", "REP-31.2", "CONV-52.2", "PROF-08.2", "CONV-47.2", 
-                "CONV-50.2", "SEO-21.1", "CONV-46.1", "REP-29.2", "REP-32.2", "REP-33.1", "ACT-67.1", 
-                "CONV-51.2", "PROF-02.1", "PROF-03.2", "SEO-17.1", "SEO-17.2", "SEO-17.3", 
-                "CONV-49.4", "SEO-19.1", "SEO-19.2", "SEO-21.2", 
-                # НОВЫЕ 7 ВИЗУАЛЬНЫХ МЕТРИК
-                "CONV-49.3", "CONT-37.2", "CONT-37.3", "CONT-39.1", "CONT-40.1", "CONT-41.1", "CONT-41.2"
-            ]
-            
-            cell_list = sheet.range(2, col_idx, len(records) + 1, col_idx)
-            for i, row in enumerate(records):
-                code = str(row.get('Код', '')).strip()
-                if code in python_codes: 
-                    cell_list[i].value = "Python"
-                else: 
-                    cell_list[i].value = "Заглушка"
-                    
-            sheet.update_cells(cell_list)
-            st.success("✅ Статусы обновлены! Абсолютно ВСЕ 80 метрик перенесены в Python! 🎉")
-            st.balloons()
-        except Exception as e: 
-            st.error(f"Ошибка: {e}")
+            except: pass
