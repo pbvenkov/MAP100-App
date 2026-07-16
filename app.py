@@ -22,7 +22,6 @@ from PIL import Image
 APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
 
-# Настройка ИИ 
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     ai_model = genai.GenerativeModel('gemini-3.5-flash') 
@@ -146,14 +145,23 @@ def calculate_prof_rules(data):
     products = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
     if len(products) >= 10:
         scores['PROF-11.1'] = True
-        with_photo = sum(1 for p in products if p.get('photoUrl') or p.get('imageUrl') or p.get('image'))
-        if with_photo / len(products) >= 0.8: scores['PROF-11.2'] = True
-        with_price = sum(1 for p in products if p.get('price'))
-        if with_price / len(products) >= 0.8: scores['PROF-11.3'] = True
-        with_desc = sum(1 for p in products if len(str(p.get('description') or '')) > 50)
-        if with_desc / len(products) >= 0.8: scores['PROF-11.4'] = True
-        cat_set = set(p.get('category', {}).get('name') if isinstance(p.get('category'), dict) else p.get('category') for p in products)
-        if len(cat_set) >= 2: scores['PROF-11.5'] = True
+        
+        # ЗАЩИТА: проверяем, что продукт - это словарь
+        valid_prods = [p for p in products if isinstance(p, dict)]
+        if valid_prods:
+            with_photo = sum(1 for p in valid_prods if p.get('photoUrl') or p.get('imageUrl') or p.get('image'))
+            if with_photo / len(valid_prods) >= 0.8: scores['PROF-11.2'] = True
+            with_price = sum(1 for p in valid_prods if p.get('price'))
+            if with_price / len(valid_prods) >= 0.8: scores['PROF-11.3'] = True
+            with_desc = sum(1 for p in valid_prods if len(str(p.get('description') or '')) > 50)
+            if with_desc / len(valid_prods) >= 0.8: scores['PROF-11.4'] = True
+            
+            cat_set = set()
+            for p in valid_prods:
+                cat = p.get('category')
+                if isinstance(cat, dict): cat_set.add(cat.get('name', ''))
+                elif isinstance(cat, str): cat_set.add(cat)
+            if len(cat_set) >= 2: scores['PROF-11.5'] = True
             
     links_str = f"{data.get('links', '')} {data.get('socials', '')}".lower()
     if any(s in links_str for s in ["t.me", "tg://", "wa.me", "whatsapp"]): scores['PROF-13.1'] = True
@@ -187,11 +195,13 @@ def calculate_rep_rules(data):
     
     reviews = data.get('reviews')
     if isinstance(reviews, list) and len(reviews) > 0:
+        valid_reviews = [r for r in reviews if isinstance(r, dict)] # ЗАЩИТА
+        
         dates = []
-        for r in reviews[:20]:
+        for r in valid_reviews[:20]:
             try:
                 d_str = r.get('date') or r.get('createdAt')
-                if d_str: dates.append(datetime.fromisoformat(d_str.replace('Z', '+00:00')))
+                if d_str: dates.append(datetime.fromisoformat(str(d_str).replace('Z', '+00:00')))
             except: pass
             
         if dates:
@@ -202,7 +212,7 @@ def calculate_rep_rules(data):
             if diffs and (sum(d == 0 for d in diffs) / len(diffs)) < 0.3:
                 scores['REP-29.2'] = True
                 
-        last_20 = reviews[:20]
+        last_20 = valid_reviews[:20]
         replied, total_days, valid_times, unans_neg, ans_pos = 0, 0, 0, 0, 0
         owner_texts = []
         
@@ -212,13 +222,13 @@ def calculate_rep_rules(data):
         for rev in last_20:
             r_rate = rev.get('rating') or 0
             reply = rev.get('reply') or rev.get('ownerAnswer')
-            if reply:
+            if reply and isinstance(reply, dict):
                 replied += 1
-                if isinstance(reply, dict) and reply.get('text'): 
-                    owner_texts.append(reply.get('text').lower())
+                if reply.get('text'): 
+                    owner_texts.append(str(reply.get('text')).lower())
                 try:
-                    r_d = datetime.fromisoformat((rev.get('date') or rev.get('createdAt')).replace('Z', '+00:00'))
-                    a_d = datetime.fromisoformat((reply.get('date') or reply.get('createdAt') or reply.get('updatedAt')).replace('Z', '+00:00'))
+                    r_d = datetime.fromisoformat(str((rev.get('date') or rev.get('createdAt'))).replace('Z', '+00:00'))
+                    a_d = datetime.fromisoformat(str((reply.get('date') or reply.get('createdAt') or reply.get('updatedAt'))).replace('Z', '+00:00'))
                     if (a_d - r_d).days >= 0:
                         total_days += (a_d - r_d).days
                         valid_times += 1
@@ -254,17 +264,11 @@ def calculate_conv_rules(data):
     scores, logs = {}, []
     str_search = f"{data.get('links', '')} {data.get('features', '')} {data.get('socials', '')}".lower()
     
-    # ПАТЧ: Добавлены системы бронирования ресторанов и клиник
     booking_systems = ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'запись онлайн', 'nethouse', 'leclick', 'tomesto', 'restoclub', 'afisha', 'prodoctorov', 'docdoc', 'sberhealth']
     
-    if any(b in str_search for b in booking_systems):
-        scores['CONV-48.1'] = True
-        
+    if any(b in str_search for b in booking_systems): scores['CONV-48.1'] = True
     if "chat" in str_search or data.get('isChatEnabled'): scores['CONV-50.1'] = True
-        
-    if data.get('isChatEnabled') and (data.get('isAdvertiser') or "бот" in str_search):
-        scores['CONV-50.2'] = True
-
+    if data.get('isChatEnabled') and (data.get('isAdvertiser') or "бот" in str_search): scores['CONV-50.2'] = True
     if data.get('posts') or data.get('news') or data.get('promos'): scores['CONV-51.1'] = True
     
     action_url = str(data.get('actionUrl') or data.get('bookingUrl') or '').lower()
@@ -274,9 +278,7 @@ def calculate_conv_rules(data):
             scores['CONV-47.2'] = True
 
     cover = str(data.get('coverPhotoUrl') or data.get('coverUrl') or '').lower()
-    if cover and 'panorama' not in cover and 'streetview' not in cover:
-        scores['CONV-46.1'] = True
-
+    if cover and 'panorama' not in cover and 'streetview' not in cover: scores['CONV-46.1'] = True
     if data.get('questionsAndAnswers') or data.get('faq') or data.get('qna'): scores['CONV-52.1'] = True
         
     promos = get_safe_list(data, ['promos'])
@@ -286,16 +288,17 @@ def calculate_conv_rules(data):
     else:
         recent_promo = False
         for p in posts:
-            if any(w in str(p.get('text', '')).lower() for w in ['акция', 'скидка', 'спецпредложение', 'до конца']):
+            if isinstance(p, dict) and any(w in str(p.get('text', '')).lower() for w in ['акция', 'скидка', 'спецпредложение', 'до конца']):
                 recent_promo = True
                 break
         if recent_promo: scores['CONV-51.2'] = True
 
     products = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
     for p in products:
-        if p.get('oldPrice') or p.get('discount') or any(kw in str(p).lower() for kw in ['хит', 'новинка', 'скидка', 'акция']):
-            scores['CONV-53.1'] = True
-            break
+        if isinstance(p, dict):
+            if p.get('oldPrice') or p.get('discount') or any(kw in str(p.get('name', '')).lower() for kw in ['хит', 'новинка', 'скидка', 'акция']):
+                scores['CONV-53.1'] = True
+                break
             
     return scores, logs
 
@@ -307,10 +310,10 @@ def calculate_seo_rules(data):
         scores['SEO-18.2'] = True
         
     products = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
-    if products:
-        avg_words = sum(len(str(p.get('name', '')).split()) for p in products) / len(products)
-        if avg_words >= 2.0:
-            scores['SEO-21.1'] = True
+    valid_prods = [p for p in products if isinstance(p, dict)] # ЗАЩИТА
+    if valid_prods:
+        avg_words = sum(len(str(p.get('name', '')).split()) for p in valid_prods) / len(valid_prods)
+        if avg_words >= 2.0: scores['SEO-21.1'] = True
             
     return scores, logs
 
@@ -321,12 +324,13 @@ def calculate_act_rules(data):
     
     posts = get_safe_list(data, ['posts', 'news', 'promos'])
     for p in posts:
-        try:
-            p_date = datetime.fromisoformat((p.get('date') or p.get('publishedAt') or p.get('createdAt')).replace('Z', '+00:00'))
-            if (now - p_date).days <= 30: 
-                fresh = True
-                if p.get('imageUrl') or p.get('images') or p.get('photoUrl'): posts_with_images = True
-        except: pass
+        if isinstance(p, dict): # ЗАЩИТА
+            try:
+                p_date = datetime.fromisoformat(str(p.get('date') or p.get('publishedAt') or p.get('createdAt')).replace('Z', '+00:00'))
+                if (now - p_date).days <= 30: 
+                    fresh = True
+                    if p.get('imageUrl') or p.get('images') or p.get('photoUrl'): posts_with_images = True
+            except: pass
         
     if not fresh and (data.get('stories') or data.get('storyUrls')): fresh = True
     if fresh: scores['ACT-68.1'] = True
@@ -335,28 +339,45 @@ def calculate_act_rules(data):
         
     return scores, logs
 
-# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ: ТЕКСТЫ (Адаптировано под HoReCa) ===
+# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ: ТЕКСТЫ ===
 def calculate_ai_rules(data):
     scores, logs = {}, []
     if ai_model is None: return scores, logs, "Модель ИИ отключена."
         
     title = data.get('title', '')
     description = data.get('description', '')
-    category = data.get('categories', [{}])[0].get('name', '') if data.get('categories') else ''
-    cats_str = ", ".join([c.get('name', str(c)) for c in data.get('categories', [])])
+    
+    # ЗАЩИТА КАТЕГОРИЙ
+    category = ""
+    cats = data.get('categories')
+    if cats and isinstance(cats, list) and len(cats) > 0:
+        c1 = cats[0]
+        category = c1.get('name', '') if isinstance(c1, dict) else str(c1)
+        
+    all_categories = []
+    if cats and isinstance(cats, list):
+        for c in cats:
+            all_categories.append(c.get('name', '') if isinstance(c, dict) else str(c))
+    cats_str = ", ".join(all_categories)
     
     owner_texts, client_texts = [], []
-    for rev in data.get('reviews', [])[:15]:
-        if rev.get('text'): client_texts.append(rev.get('text'))
-        reply = rev.get('reply') or rev.get('ownerAnswer')
-        if isinstance(reply, dict) and reply.get('text'): owner_texts.append(reply.get('text'))
+    reviews = data.get('reviews')
+    if reviews and isinstance(reviews, list):
+        for rev in reviews[:15]:
+            if isinstance(rev, dict):
+                if rev.get('text'): client_texts.append(str(rev.get('text')))
+                reply = rev.get('reply') or rev.get('ownerAnswer')
+                if isinstance(reply, dict) and reply.get('text'): 
+                    owner_texts.append(str(reply.get('text')))
                 
     owner_str = " | ".join(owner_texts[:3]) if owner_texts else "Ответов нет"
     client_str = " | ".join(client_texts[:5]) if client_texts else "Отзывов нет"
-    faq_str = " | ".join([f"В: {q.get('question')} О: {q.get('answer')}" for q in get_safe_list(data, ['questionsAndAnswers', 'faq', 'qna'])[:3]]) if get_safe_list(data, ['questionsAndAnswers', 'faq', 'qna']) else "FAQ нет"
+    
+    faq_data = get_safe_list(data, ['questionsAndAnswers', 'faq', 'qna'])
+    faq_str = " | ".join([f"В: {q.get('question', '')} О: {q.get('answer', '')}" for q in faq_data[:3] if isinstance(q, dict)]) if faq_data else "FAQ нет"
     
     prods = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
-    prod_str = " | ".join([str(p.get('description')) for p in prods[:5] if p.get('description')]) if prods else "Описаний нет"
+    prod_str = " | ".join([str(p.get('description')) for p in prods[:5] if isinstance(p, dict) and p.get('description')]) if prods else "Описаний нет"
         
     prompt = f"""
     Ты Senior SEO-специалист и маркетолог.
@@ -401,8 +422,7 @@ def calculate_ai_rules(data):
     except Exception as e: return scores, logs, str(e)
     return scores, logs, None
 
-
-# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ: ЗРЕНИЕ (Агрессивный сканер) ===
+# === ИСКУССТВЕННЫЙ ИНТЕЛЛЕКТ: ЗРЕНИЕ ===
 def fetch_image_for_ai(url):
     try:
         if not url.startswith('http'): url = 'https:' + url if url.startswith('//') else 'https://' + url
@@ -420,32 +440,27 @@ def calculate_vision_rules(data):
         
     image_urls = []
     
-    # 1. Сначала ищем по стандартным ключам
     cover = str(data.get('coverPhotoUrl') or data.get('coverUrl') or '')
     if cover and 'panorama' not in cover: image_urls.append(cover)
     for p in get_safe_list(data, ['photos', 'images'])[:4]:
         u = p.get('url') if isinstance(p, dict) else str(p)
         if u and 'panorama' not in u: image_urls.append(u)
             
-    # 2. ПАТЧ: Агрессивный поиск ВСЕХ ссылок на картинки в сыром JSON, если по стандарту ничего не нашлось
     if not image_urls:
         raw_string = json.dumps(data)
         found_urls = re.findall(r'https?://[^\s<>"]+?\.jpg|https?://avatars\.mds\.yandex\.net/[^\s<>"]+', raw_string)
-        # Убираем дубликаты и панорамы
         valid_urls = list(set([u for u in found_urls if 'panorama' not in u and 'streetview' not in u]))
-        image_urls = valid_urls[:5] # Берем до 5 штук
-        if image_urls:
-            logs.append(f"ℹ️ [AI-Vision] Стандартная галерея пуста, но найдено {len(image_urls)} скрытых фото через RegEx.")
+        image_urls = valid_urls[:5]
 
     if not image_urls:
-        logs.append("⚠️ [AI-Vision] Картинки полностью отсутствуют в данных карточки. Пропуск визуального блока.")
+        logs.append("⚠️ [AI-Vision] Картинки отсутствуют. Пропуск.")
         return scores, logs, None
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         pil_images = list(filter(None, executor.map(fetch_image_for_ai, image_urls)))
         
     if not pil_images:
-        logs.append("⚠️ [AI-Vision] Не удалось скачать фото (ошибка 403/404). Пропуск.")
+        logs.append("⚠️ [AI-Vision] Не удалось скачать фото. Пропуск.")
         return scores, logs, None
         
     prompt = """
@@ -453,11 +468,11 @@ def calculate_vision_rules(data):
     Ответь строго в JSON (true/false) на 7 вопросов. Никакого Markdown.
 
     ВОПРОСЫ (ключи JSON):
-    "CONV-49.3": Есть ли на первой картинке (обложке) читаемый добавленный текст (оффер/скидка), который наложен поверх фото? (Если это просто вывеска на здании - false).
-    "CONT-37.2": Выглядят ли фото как реальные живые кадры компании, а НЕ как пластиковые стоковые фото из интернета с идеальными моделями?
-    "CONT-37.3": Фотографии хорошо освещены (не слишком темные, нормальная контрастность)?
-    "CONT-39.1": Есть ли на фото лица людей, сотрудники, гости или живая команда в процессе работы/отдыха?
-    "CONT-40.1": Есть ли на фото "бэкстейдж" (виден процесс работы, приготовление блюд, оказание услуги или производство)?
+    "CONV-49.3": Есть ли на первой картинке (обложке) добавленный текст (оффер/скидка), наложенный поверх фото? (Если просто вывеска на здании - false).
+    "CONT-37.2": Выглядят ли фото как реальные кадры, а НЕ как пластиковые стоковые фото из интернета с идеальными моделями?
+    "CONT-37.3": Фотографии хорошо освещены (не темные, нормальная контрастность)?
+    "CONT-39.1": Есть ли на фото лица людей, сотрудники, гости или живая команда?
+    "CONT-40.1": Есть ли на фото "бэкстейдж" (виден процесс работы, приготовление блюд, оказание услуги)?
     "CONT-41.1": Есть ли предметные фотографии (товар, еда, результат работы сняты крупно)?
     "CONT-41.2": Высокая ли детализация на предметных фото (фокус на деталях, качественная макро-съемка)?
     """
@@ -468,7 +483,7 @@ def calculate_vision_rules(data):
             res = json.loads(match.group(0))
             for k in res: 
                 if res[k]: scores[k] = True
-            logs.append("✅ [AI-Vision] Фотографии успешно проанализированы нейросетью.")
+            logs.append("✅ [AI-Vision] Фотографии успешно проанализированы.")
         else: logs.append("⚠️ [AI-Vision] Невалидный JSON-ответ.")
     except Exception as e: logs.append(f"⚠️ [AI-Vision] Сбой Gemini Vision: {e}")
         
@@ -510,19 +525,9 @@ except Exception as e:
 
 with st.sidebar:
     st.header("🎛 Ручная оценка")
-    st.write("Все метрики автоматизированы. Ручной ввод отключен за ненадобностью.")
+    st.write("Все метрики автоматизированы. Ручной ввод отключен.")
 
-st.title("📍 MAP100: AI-Аудитор (Версия 11.1 - Адаптация и Зрение 2.0)")
-
-stat_python = sum(1 for r in rules_data if r.get('Статус') == "Python")
-stat_manual = sum(1 for r in rules_data if r.get('Статус') == "Ручной")
-stat_stub = sum(1 for r in rules_data if r.get('Статус') not in ["Python", "Ручной"] and str(r.get('Код', '')).strip())
-
-col_s1, col_s2, col_s3 = st.columns(3)
-col_s1.metric("🟢 Готово (Python+AI)", stat_python)
-col_s2.metric("🧠 Ручной режим", stat_manual)
-col_s3.metric("🟡 В разработке (Заглушки)", stat_stub)
-st.divider()
+st.title("📍 MAP100: AI-Аудитор (Версия 11.2 - Бронебойная)")
 
 yandex_url = st.text_input("Ссылка на карточку Яндекс.Бизнеса")
 
@@ -557,18 +562,8 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 current_val = max_score if python_scores_dict.get(code) else 0.0
                 final_scores_dict[code] = current_val
                 
-                comment = ""
-                specific_log = None
-                for log in python_logs:
-                    if f"[{code}]" in log:
-                        parts = log.split("]", 1)
-                        if len(parts) > 1:
-                            specific_log = parts[1].strip()
-                            break
-                if current_val > 0:
-                    comment = f"✅ {specific_log}" if specific_log else "✅ Выполнено"
-                else:
-                    comment = "❌ Не выполнено / Данные отсутствуют"
+                comment = "❌ Не выполнено / Данные отсутствуют"
+                if current_val > 0: comment = "✅ Выполнено (Подтверждено ИИ/Алгоритмом)"
                     
                 detailed_results.append({
                     "Код": code, "Критерий": name, "Балл": current_val, 
@@ -585,17 +580,7 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
                 st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
 
             with st.expander("📊 Детализация баллов по критериям", expanded=True):
-                st.dataframe(
-                    pd.DataFrame(detailed_results), 
-                    column_config={
-                        "Код": st.column_config.TextColumn("Код", width="small"), 
-                        "Критерий": st.column_config.TextColumn("Критерий", width="medium"), 
-                        "Балл": st.column_config.NumberColumn("Балл", format="%.1f"), 
-                        "Макс": st.column_config.NumberColumn("Макс.", format="%.1f"), 
-                        "Комментарий": st.column_config.TextColumn("Комментарий (Почему так)", width="large")
-                    }, 
-                    hide_index=True, use_container_width=True
-                )
+                st.dataframe(pd.DataFrame(detailed_results), hide_index=True, use_container_width=True)
 
             with st.expander("🛠️ Системные логи (Отладка)", expanded=False):
                 for log in python_logs: st.write(log)
@@ -603,8 +588,8 @@ if st.button("🚀 Запустить аудит", type="primary", use_container
             try:
                 results_sheet = doc.worksheet("Results")
                 headers = results_sheet.row_values(1)
+                
                 if not headers: headers = ["Дата", "Ссылка", "Компания", "Общий балл"]
-                    
                 headers_changed = False
                 for c in final_scores_dict.keys():
                     if c not in headers:
