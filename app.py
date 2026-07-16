@@ -146,9 +146,13 @@ def calculate_prof_rules(data):
         c_set = set(p.get('category', {}).get('name') if isinstance(p.get('category'), dict) else p.get('category') for p in valid_prods)
         if len(c_set) >= 2: scores['PROF-11.5'] = True
             
-    l_str = f"{data.get('links', '')} {data.get('socials', '')}".lower()
-    if any(s in l_str for s in ["t.me", "wa.me", "whatsapp"]): scores['PROF-13.1'] = True
-    if any(s in l_str for s in ["vk.com", "youtube", "dzen"]): scores['PROF-13.2'] = True
+    # Агрессивный поиск соцсетей по всему JSON карточки (Патч 11.5)
+    raw_data_str = json.dumps(data).lower()
+    if any(s in raw_data_str for s in ["t.me", "wa.me", "whatsapp", "viber", "tg://"]): 
+        scores['PROF-13.1'] = True
+    if any(s in raw_data_str for s in ["vk.com", "youtube", "dzen", "instagram", "inst:"]): 
+        scores['PROF-13.2'] = True
+
     return scores, logs
 
 def calculate_cont_rules(data):
@@ -156,12 +160,18 @@ def calculate_cont_rules(data):
     pc = data.get('photoCount') or data.get('photosCount') or 0
     if pc >= 15: scores['CONT-36.1'] = True
     if pc >= 30: scores['CONT-36.2'] = True
+    
     if data.get('stories') or data.get('storyUrls'): scores['CONT-44.1'] = True
     if data.get('panoramaUrl') or data.get('panoramas') or data.get('videos'): scores['CONT-42.1'] = True
+        
     for p in get_safe_list(data, ['photos', 'images']):
-        if isinstance(p, dict) and any(kw in str(p.get('tags', '')).lower() + str(p.get('title', '')).lower() for kw in ['внутри', 'интерьер', 'interior']):
-            scores['CONT-43.1'] = True
-            break
+        if isinstance(p, dict):
+            # Расширенный словарь, включая ресторанные "залы" (Патч 11.5)
+            keywords = ['внутри', 'интерьер', 'interior', 'inside', 'indoor', 'залы', 'зал', 'hall', 'room']
+            if any(kw in str(p).lower() for kw in keywords):
+                scores['CONT-43.1'] = True
+                break
+                
     return scores, logs
 
 def calculate_rep_rules(data):
@@ -319,7 +329,7 @@ st.set_page_config(page_title="MAP100 | Нейро-Аудитор", layout="wide
 
 rules_data = get_rules_from_sheets()
 with st.sidebar: st.write("✅ База данных подключена напрямую. Управление весами в Google Sheets.")
-st.title("📍 MAP100: AI-Аудитор (Версия 11.4 - Матрица Весов)")
+st.title("📍 MAP100: AI-Аудитор (Версия 11.5 - Прямая маршрутизация)")
 
 url = st.text_input("Ссылка на Яндекс.Бизнес")
 
@@ -346,9 +356,7 @@ if st.button("🚀 Запустить аудит", type="primary"):
             results = []
             final_total_score = 0.0
             
-            # Определяем, есть ли колонка с нашей нишей в данных гугл таблицы
             target_column = niche_key if (rules_data and niche_key in rules_data[0]) else 'Балл'
-            # Для BEAUTY_MEDICAL и OTHER всегда используем базовый столбец 'Балл'
             if niche_key in ['BEAUTY_MEDICAL', 'OTHER']:
                 target_column = 'Балл'
             
@@ -357,14 +365,12 @@ if st.button("🚀 Запустить аудит", type="primary"):
                 if not code: continue
                 name = str(r.get('Критерий', '')).strip()
                 
-                # Читаем балл именно из нужного столбца!
                 try:
                     max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
                 except:
                     max_s = float(r.get('Балл', 0.0))
                 
                 if max_s == 0.0:
-                    # Метрика отключена для этой ниши
                     final_scores[code] = 0.0
                     results.append({"Код": code, "Критерий": name, "Балл": 0.0, "Макс": 0.0, "Комментарий": f"🟢 Не требуется в нише {niche_key}"})
                 else:
@@ -384,3 +390,31 @@ if st.button("🚀 Запустить аудит", type="primary"):
                 st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
 
             st.dataframe(pd.DataFrame(results), hide_index=True, use_container_width=True)
+
+            try:
+                results_sheet = doc.worksheet("Results")
+                headers = results_sheet.row_values(1)
+                
+                if not headers: headers = ["Дата", "Ссылка", "Компания", "Общий балл"]
+                headers_changed = False
+                for c in final_scores_dict.keys():
+                    if c not in headers:
+                        headers.append(c)
+                        headers_changed = True
+                        
+                if headers_changed:
+                    cell_list = results_sheet.range(1, 1, 1, len(headers))
+                    for i, val in enumerate(headers): cell_list[i].value = val
+                    results_sheet.update_cells(cell_list)
+                    
+                row_data = []
+                for h in headers:
+                    if h == "Дата": row_data.append(time.strftime("%d.%m.%Y %H:%M:%S"))
+                    elif h == "Ссылка": row_data.append(yandex_url)
+                    elif h == "Компания": row_data.append(title)
+                    elif h == "Общий балл": row_data.append(final_total_score)
+                    else: row_data.append(final_scores_dict.get(h, 0.0))
+                        
+                results_sheet.append_row(row_data)
+                st.success("✅ Результат успешно сохранен в базу!")
+            except: pass
