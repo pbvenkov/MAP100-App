@@ -52,6 +52,8 @@ def determine_niche(title, category):
     if not ai_model: return "OTHER"
     prompt = f"""
     Определи бизнес по названию "{title}" и категории "{category}".
+    ВНИМАНИЕ: Если в категории есть слова "стоматология", "клиника", "медицина", "красота", "салон" - это СТРОГО BEAUTY_MEDICAL.
+    
     Выбери ОДИН наиболее подходящий ключ из списка:
     - HORECA (Рестораны, кафе, бары, доставка еды)
     - B2B_PRODUCTION (Заводы, склады, опт, строительство, производство)
@@ -65,7 +67,7 @@ def determine_niche(title, category):
     """
     try:
         key = ai_model.generate_content(prompt).text.strip().upper()
-        valid_keys = ["HORECA", "B2B_PRODUCTION", "RETAIL", "AUTO", "SERVICES", "BEAUTY_MEDICAL", "OTHER"]
+        valid_keys = ["BEAUTY_MEDICAL", "HORECA", "B2B_PRODUCTION", "RETAIL", "AUTO", "SERVICES", "OTHER"]
         for v in valid_keys:
             if v in key: return v
         return "OTHER"
@@ -156,7 +158,6 @@ def calculate_prof_rules(data):
         c_set = set(p.get('category', {}).get('name') if isinstance(p.get('category'), dict) else p.get('category') for p in valid_prods)
         if len(c_set) >= 2: scores['PROF-11.5'] = True
             
-    # ПАТЧ: Поиск соцсетей по всему JSON
     raw_data_str = json.dumps(data).lower()
     if any(s in raw_data_str for s in ["t.me", "wa.me", "whatsapp", "viber", "tg://"]): 
         scores['PROF-13.1'] = True
@@ -174,7 +175,6 @@ def calculate_cont_rules(data):
     if data.get('stories') or data.get('storyUrls'): scores['CONT-44.1'] = True
     if data.get('panoramaUrl') or data.get('panoramas') or data.get('videos'): scores['CONT-42.1'] = True
         
-    # ПАТЧ: Расширенный словарь интерьеров
     for p in get_safe_list(data, ['photos', 'images']):
         if isinstance(p, dict):
             keywords = ['внутри', 'интерьер', 'interior', 'inside', 'indoor', 'залы', 'зал', 'hall', 'room']
@@ -241,7 +241,7 @@ def calculate_rep_rules(data):
 def calculate_conv_rules(data):
     scores, logs = {}, []
     s_str = f"{data.get('links', '')} {data.get('features', '')} {data.get('socials', '')}".lower()
-    bsys = ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'leclick', 'tomesto', 'restoclub', 'prodoctorov']
+    bsys = ['yclients', 'dikidi', 'n-go', 'bukza', 'rubitime', 'leclick', 'tomesto', 'restoclub', 'prodoctorov', 'docdoc', 'sberhealth']
     
     if any(b in s_str for b in bsys): scores['CONV-48.1'] = True
     if "chat" in s_str or data.get('isChatEnabled'): scores['CONV-50.1'] = True
@@ -296,8 +296,9 @@ def calculate_act_rules(data):
 def calculate_ai_rules(data):
     scores, logs = {}, []
     if not ai_model: return scores, logs, None
-    c_list = data.get('categories')
-    cat = c_list[0].get('name', '') if (c_list and isinstance(c_list, list) and isinstance(c_list[0], dict)) else ''
+    c_list = data.get('categories', [])
+    cat = c_list[0].get('name', '') if c_list and isinstance(c_list[0], dict) else (str(c_list[0]) if c_list else '')
+    
     pr = f"""Анализ ниши ({data.get('title')}, {cat}). Ответь JSON (true/false) на: PROF-10.6, PROF-10.3, CONV-49.1, SEO-18.3, PROF-10.4, CONV-49.2, PROF-01.2, REP-31.2, CONV-52.2, PROF-02.1, PROF-03.2, SEO-17.1, SEO-17.2, SEO-17.3, CONV-49.4, SEO-19.1, SEO-19.2, SEO-21.2. Описание: {data.get('description', '')[:500]}"""
     try:
         res = json.loads(re.search(r'\{.*\}', ai_model.generate_content(pr).text, re.DOTALL).group(0))
@@ -339,7 +340,7 @@ st.set_page_config(page_title="MAP100 | Нейро-Аудитор", layout="wide
 
 rules_data = get_rules_from_sheets()
 with st.sidebar: st.write("✅ База данных подключена напрямую. Управление весами в Google Sheets.")
-st.title("📍 MAP100: AI-Аудитор (Версия 11.6 - Финансовый прогноз)")
+st.title("📍 MAP100: AI-Аудитор (Версия 11.7 - Патч Стоматологий)")
 
 url = st.text_input("Ссылка на Яндекс.Бизнес")
 
@@ -350,7 +351,9 @@ if st.button("🚀 Запустить аудит", type="primary"):
             data = fetch_apify_data(url)
             title = data.get('title', 'Без названия')
             c_list = data.get('categories', [])
-            cat = c_list[0].get('name', '') if c_list and isinstance(c_list[0], dict) else ''
+            
+            # ПАТЧ: Универсальное извлечение категории
+            cat = c_list[0].get('name', '') if c_list and isinstance(c_list[0], dict) else (str(c_list[0]) if c_list else '')
             
             # 1. ОПРЕДЕЛЯЕМ НИШУ
             niche_key = determine_niche(title, cat)
@@ -399,18 +402,16 @@ if st.button("🚀 Запустить аудит", type="primary"):
             
             st.divider()
             
-            # ВЕРХНИЙ БЛОК: ОЦЕНКА И ДЕНЬГИ
             col1, col2, col3 = st.columns([2, 1, 1.2])
             with col1: 
                 st.subheader(f"🏢 {title}")
-                st.caption(f"🧠 Ниша бизнеса: **{niche_key}** (Используются адаптированные веса)")
+                st.caption(f"🧠 Ниша бизнеса: **{niche_key}**")
             with col2: 
                 color = "normal" if final_total_score >= 80 else ("off" if final_total_score >= 50 else "inverse")
                 st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
             with col3:
                 st.metric("Упущенная выручка (мес)", f"- {formatted_loss} ₽", delta="Недополученный трафик", delta_color="inverse")
             
-            # CTA И ПОЯСНЕНИЕ
             st.error(f"""
             💸 **Откуда эта цифра?**  
             Ваша карточка отрабатывает только на **{round(final_total_score, 1)}%** от своего потенциала. 
