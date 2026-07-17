@@ -36,7 +36,7 @@ def send_telegram_alert(message):
         except: pass
 
 # ==========================================
-# 1.5. ИИ-РОУТЕР НИШ И ЭКОНОМИКА
+# 1.5. БАЗА ДАННЫХ НИШ И РЕГЛАМЕНТОВ
 # ==========================================
 NICHE_ECONOMICS = {
     "HORECA": {"leads": 300, "check": 2500},
@@ -46,6 +46,18 @@ NICHE_ECONOMICS = {
     "SERVICES": {"leads": 100, "check": 5000},
     "BEAUTY_MEDICAL": {"leads": 150, "check": 4000},
     "OTHER": {"leads": 100, "check": 3000}
+}
+
+# Официальные ссылки на справку Яндекса для штрафов
+YANDEX_GUIDELINES = {
+    "PROF-12": "https://yandex.ru/support/business/management/verified.html",
+    "PROF-01": "https://yandex.ru/support/business/management/main-info.html",
+    "PROF-03": "https://yandex.ru/support/business/management/main-info.html",
+    "CONT-": "https://yandex.ru/support/business/management/photos.html",
+    "REP-": "https://yandex.ru/support/business/management/reviews.html",
+    "PROF-11": "https://yandex.ru/support/business/management/products.html",
+    "CONV-51": "https://yandex.ru/support/business/management/publications.html",
+    "ACT-": "https://yandex.ru/support/business/management/publications.html"
 }
 
 def determine_niche(title, category):
@@ -96,16 +108,21 @@ def get_rules_from_sheets():
 def fetch_apify_data(yandex_url):
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
     run_req = requests.post(run_url, json={"startUrls": [{"url": yandex_url}], "maxItems": 1}).json()
+    if 'error' in run_req: raise Exception(f"Ошибка Apify API: {run_req['error']}")
+        
     run_id, dataset_id = run_req['data']['id'], run_req['data']['defaultDatasetId']
     
     status, retries = "RUNNING", 0
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
-        if retries >= 30: raise Exception("Таймаут парсера.")
+        if retries >= 30: raise Exception(f"Таймаут парсера. Логи: https://console.apify.com/actors/runs/{run_id}")
         time.sleep(5)
-        status = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}").json()['data']['status']
+        status_req = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}").json()
+        status = status_req['data']['status']
         retries += 1
+        
+    if status != "SUCCEEDED": raise Exception(f"Парсер упал со статусом {status}.")
     dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}").json()
-    if not dataset: raise Exception("Парсер вернул пустой ответ.")
+    if not dataset or len(dataset) == 0: raise Exception(f"Парсер отработал, но Яндекс не отдал данные (возможно, капча или неверная ссылка).")
     return dataset[0]
 
 # ==========================================
@@ -340,7 +357,7 @@ st.set_page_config(page_title="MAP100 | Нейро-Аудитор", layout="wide
 
 rules_data = get_rules_from_sheets()
 with st.sidebar: st.write("✅ База данных подключена напрямую. Управление весами в Google Sheets.")
-st.title("📍 MAP100: AI-Аудитор (Версия 11.7 - Патч Стоматологий)")
+st.title("📍 MAP100: AI-Аудитор (Версия 11.8 - Обоснование от Яндекса)")
 
 url = st.text_input("Ссылка на Яндекс.Бизнес")
 
@@ -351,8 +368,6 @@ if st.button("🚀 Запустить аудит", type="primary"):
             data = fetch_apify_data(url)
             title = data.get('title', 'Без названия')
             c_list = data.get('categories', [])
-            
-            # ПАТЧ: Универсальное извлечение категории
             cat = c_list[0].get('name', '') if c_list and isinstance(c_list[0], dict) else (str(c_list[0]) if c_list else '')
             
             # 1. ОПРЕДЕЛЯЕМ НИШУ
@@ -381,15 +396,31 @@ if st.button("🚀 Запустить аудит", type="primary"):
                 try: max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
                 except: max_s = float(r.get('Балл', 0.0))
                 
+                # Ищем официальную ссылку Яндекса для этой метрики
+                doc_link = None
+                for key_prefix, link in YANDEX_GUIDELINES.items():
+                    if code.startswith(key_prefix):
+                        doc_link = link
+                        break
+                
                 if max_s == 0.0:
                     final_scores[code] = 0.0
-                    results.append({"Код": code, "Критерий": name, "Балл": 0.0, "Макс": 0.0, "Комментарий": f"🟢 Не требуется в нише {niche_key}"})
+                    results.append({"Код": code, "Критерий": name, "Балл": 0.0, "Макс": 0.0, "Комментарий": f"🟢 Не требуется в нише {niche_key}", "Справка": None})
                 else:
                     val = max_s if raw_scores.get(code) else 0.0
                     final_total_score += val
                     final_scores[code] = val
-                    comm = "✅ Выполнено" if val > 0 else "❌ Не выполнено"
-                    results.append({"Код": code, "Критерий": name, "Балл": val, "Макс": max_s, "Комментарий": comm})
+                    comm = "✅ Выполнено" if val > 0 else "❌ Нарушение рекомендаций алгоритма"
+                    
+                    # Передаем ссылку только если метрика завалена
+                    results.append({
+                        "Код": code, 
+                        "Критерий": name, 
+                        "Балл": val, 
+                        "Макс": max_s, 
+                        "Комментарий": comm, 
+                        "Справка": doc_link if val == 0 else None
+                    })
             
             # 4. РАСЧЕТ УПУЩЕННОЙ ВЫРУЧКИ (ЭКОНОМИКА)
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
@@ -421,7 +452,21 @@ if st.button("🚀 Запустить аудит", type="primary"):
             """)
             
             st.divider()
-            st.dataframe(pd.DataFrame(results), hide_index=True, use_container_width=True)
+            
+            # Рендер таблицы с кликабельными ссылками
+            st.dataframe(
+                pd.DataFrame(results), 
+                column_config={
+                    "Код": st.column_config.TextColumn("Код", width="small"),
+                    "Критерий": st.column_config.TextColumn("Критерий", width="medium"),
+                    "Балл": st.column_config.NumberColumn("Балл", format="%.1f"),
+                    "Макс": st.column_config.NumberColumn("Макс.", format="%.1f"),
+                    "Комментарий": st.column_config.TextColumn("Комментарий", width="large"),
+                    "Справка": st.column_config.LinkColumn("Официальная справка", display_text="Читать правила ↗")
+                },
+                hide_index=True, 
+                use_container_width=True
+            )
 
             try:
                 results_sheet = doc.worksheet("Results")
