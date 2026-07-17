@@ -58,12 +58,12 @@ def determine_niche(title, category):
     Определи бизнес по названию "{title}" и категории "{category}".
     ВНИМАНИЕ: Если в категории есть слова "стоматология", "клиника", "медицина", "красота", "салон" - это СТРОГО BEAUTY_MEDICAL.
     Выбери ОДИН наиболее подходящий ключ из списка:
-    - HORECA (Рестораны, кафе, бары, доставка еды)
-    - B2B_PRODUCTION (Заводы, склады, опт, строительство, производство)
-    - RETAIL (Магазины одежды, продуктов, ПВЗ, цветы, розница)
-    - AUTO (СТО, шиномонтаж, мойки, детейлинг)
-    - SERVICES (Клининг, юристы, фотографы, ремонт техники, выездные услуги)
-    - BEAUTY_MEDICAL (Салоны красоты, барбершопы, клиники, стоматологии, спа, фитнес)
+    - HORECA 
+    - B2B_PRODUCTION 
+    - RETAIL 
+    - AUTO 
+    - SERVICES 
+    - BEAUTY_MEDICAL 
     - OTHER 
     Верни ТОЛЬКО ОДНО СЛОВО - ключ на английском.
     """
@@ -94,9 +94,10 @@ def get_rules_from_sheets():
         r['Статус'] = str(r.get('Статус', 'Заглушка')).strip()
     return records, doc
 
-@st.cache_data(ttl=86400, show_spinner=False)
+# ВНИМАНИЕ: Декоратор @st.cache_data удален. Всегда берем свежие данные!
 def fetch_apify_data(yandex_url):
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
+    # Добавляем memoryMbytes, чтобы избежать обрывов у сложных карточек
     run_req = requests.post(run_url, json={"startUrls": [{"url": yandex_url}], "maxItems": 1}).json()
     if 'error' in run_req: raise Exception(f"Ошибка Apify API: {run_req['error']}")
         
@@ -104,7 +105,7 @@ def fetch_apify_data(yandex_url):
     
     status, retries = "RUNNING", 0
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
-        if retries >= 30: raise Exception(f"Таймаут парсера. Логи: https://console.apify.com/actors/runs/{run_id}")
+        if retries >= 35: raise Exception(f"Таймаут парсера. Логи: https://console.apify.com/actors/runs/{run_id}")
         time.sleep(5)
         status_req = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}").json()
         status = status_req['data']['status']
@@ -112,8 +113,21 @@ def fetch_apify_data(yandex_url):
         
     if status != "SUCCEEDED": raise Exception(f"Парсер упал со статусом {status}.")
     dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}").json()
-    if not dataset or len(dataset) == 0: raise Exception(f"Парсер отработал, но Яндекс не отдал данные.")
-    return dataset[0]
+    if not dataset or len(dataset) == 0: raise Exception("Парсер отработал, но Яндекс не отдал данные (защита от ботов). Повторите запрос.")
+    
+    data = dataset[0]
+    
+    # --- DATA HEALTH VALIDATOR (Таможня данных) ---
+    if not data.get('title'):
+        raise Exception("Критический сбой парсинга: Отсутствует Название компании (title). Яндекс отдал пустую страницу. Запустите аудит еще раз.")
+    
+    # Проверка на аномалию: высокий рейтинг, но 0 отзывов
+    r_count = int(data.get('reviewsCount') or data.get('ratingsCount') or data.get('reviewCount') or len(data.get('reviews') or []) or 0)
+    rating = data.get('rating') or 0.0
+    if rating > 0 and r_count == 0:
+        raise Exception(f"Критический сбой парсинга: У компании есть рейтинг ({rating}), но блок отзывов не был загружен (защита Яндекса). Запустите аудит еще раз для корректного расчета.")
+    
+    return data
 
 # ==========================================
 # 3. АЛГОРИТМЫ ОЦЕНКИ MAP100
@@ -347,19 +361,29 @@ st.set_page_config(page_title="MAP100 | Нейро-Аудитор", layout="wide
 
 rules_data, doc = get_rules_from_sheets()
 with st.sidebar: st.write("✅ База данных подключена напрямую. Управление весами в Google Sheets.")
-st.title("📍 MAP100: AI-Аудитор (Версия 12.0 - Share of Local Voice)")
+st.title("📍 MAP100: AI-Аудитор (Версия 13.0 - Data Control)")
 
 url = st.text_input("Ссылка на Яндекс.Бизнес")
 
 if st.button("🚀 Запустить аудит", type="primary"):
     if "yandex" not in url.lower(): st.error("❌ Неверная ссылка.")
     else:
-        with st.spinner("Сбор данных клиента..."):
-            data = fetch_apify_data(url)
+        with st.spinner("Сбор свежих данных клиента (без кэша)..."):
+            try:
+                data = fetch_apify_data(url)
+            except Exception as e:
+                st.error(str(e))
+                st.stop()
+                
             title = data.get('title', 'Без названия')
             c_list = data.get('categories', [])
             cat = c_list[0].get('name', '') if c_list and isinstance(c_list[0], dict) else (str(c_list[0]) if c_list else '')
-            client_reviews = data.get('reviewsCount') or data.get('ratingsCount') or data.get('reviewCount') or 0
+            
+            # Агрессивное извлечение отзывов клиента
+            def get_true_reviews(d):
+                return int(d.get('reviewsCount') or d.get('ratingsCount') or d.get('reviewCount') or len(d.get('reviews') or []) or 0)
+            
+            client_reviews = get_true_reviews(data)
             
             # --- БЛОК КОНКУРЕНТОВ (SHARE OF LOCAL VOICE) ---
             competitor_name = None
@@ -373,11 +397,11 @@ if st.button("🚀 Запустить аудит", type="primary"):
                 comp_oid = top_competitor.get('oid')
                 
         if comp_oid:
-            with st.spinner(f"Перехват данных конкурента: {competitor_name}..."):
+            with st.spinner(f"Сбор данных по конкуренту: {competitor_name}..."):
                 try:
                     comp_url = f"https://yandex.ru/maps/org/{comp_oid}"
                     comp_data = fetch_apify_data(comp_url)
-                    competitor_reviews = comp_data.get('reviewsCount') or comp_data.get('ratingsCount') or comp_data.get('reviewCount') or 0
+                    competitor_reviews = get_true_reviews(comp_data)
                 except Exception as e:
                     pass # Тихий сбой, считаем без конкурента
         
@@ -444,7 +468,6 @@ if st.button("🚀 Запустить аудит", type="primary"):
             if total_reviews > 0 and competitor_reviews > 0:
                 client_share_pct = int((client_reviews / total_reviews) * 100)
                 comp_share_pct = 100 - client_share_pct
-                # Если конкурент есть, усиливаем потери за счет перетекания трафика
                 lost_revenue = int(potential_leads * lost_percentage * avg_check * (comp_share_pct / 100.0 if comp_share_pct > 50 else 1.0))
             else:
                 lost_revenue = int(potential_leads * lost_percentage * avg_check)
@@ -462,18 +485,29 @@ if st.button("🚀 Запустить аудит", type="primary"):
             with col3:
                 st.metric("Упущенная выручка (мес)", f"- {formatted_loss} ₽", delta="Недополученный трафик", delta_color="inverse")
             
-            # ВЫВОД АНАЛИЗА КОНКУРЕНТА
+            # ВЫВОД АНАЛИЗА КОНКУРЕНТА (Сценарии: Океан или Битва)
             if competitor_name and competitor_reviews > 0:
-                st.error(f"""
-                🥊 **Анализ конкурентной среды (Share of Local Voice):**  
-                Ваш главный конкурент в локальной выдаче — **{competitor_name}** ({competitor_reviews} отзывов).  
-                В вашей паре они забирают **{comp_share_pct}%** органического трафика с Карт, оставляя вам лишь **{client_share_pct}%**. 
-                
-                💸 **Откуда цифра потерь?**  
-                Алгоритм Яндекса видит ошибки в вашей карточке (оценка {round(final_total_score, 1)}/100) и отдает горячие лиды соседям. При среднем чеке вашей ниши в {avg_check:,} ₽, вы переводите на счет конкурентов около **{formatted_loss} ₽** каждый месяц.
-                
-                🚀 **[Оставьте заявку на бесплатный разбор с экспертом](#), чтобы получить пошаговый план перехвата трафика у {competitor_name}.**
-                """)
+                if competitor_reviews < 15:
+                    st.success(f"""
+                    🌊 **Анализ ниши: Вакуум конкуренции (Голубой океан)**  
+                    Ваш главный конкурент в локальной выдаче — **{competitor_name}** — имеет всего {competitor_reviews} отзывов. 
+                    В вашей локации на Яндекс.Картах сейчас никто системно не занимается продвижением. Конкуренции практически нет!
+                    
+                    💸 Тот, кто первым доведет свою карточку до оценки 80-100 баллов, монополизирует выдачу. Сейчас из-за ошибок (оценка {round(final_total_score, 1)}/100) вы не используете этот шанс и упускаете сделки на сумму около **{formatted_loss} ₽** каждый месяц.
+                    
+                    🚀 **[Оставьте заявку на бесплатный разбор с экспертом](#), чтобы узнать, как забрать этот свободный трафик себе.**
+                    """)
+                else:
+                    st.error(f"""
+                    🥊 **Анализ конкурентной среды (Share of Local Voice):**  
+                    Ваш главный конкурент в локальной выдаче — **{competitor_name}** ({competitor_reviews} отзывов).  
+                    В вашей паре они забирают **{comp_share_pct}%** органического трафика с Карт, оставляя вам лишь **{client_share_pct}%**. 
+                    
+                    💸 **Откуда цифра потерь?**  
+                    Алгоритм Яндекса видит ошибки в вашей карточке (оценка {round(final_total_score, 1)}/100) и отдает лиды соседям. При среднем чеке в {avg_check:,} ₽, вы дарите конкурентам около **{formatted_loss} ₽** каждый месяц.
+                    
+                    🚀 **[Оставьте заявку на бесплатный разбор с экспертом](#), чтобы получить план перехвата трафика у {competitor_name}.**
+                    """)
             else:
                 st.error(f"""
                 💸 **Откуда эта цифра?**  
