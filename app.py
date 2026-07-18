@@ -94,7 +94,6 @@ def get_rules_from_sheets():
         r['Статус'] = str(r.get('Статус', 'Заглушка')).strip()
     return records, doc
 
-# ВНИМАНИЕ: Декоратор @st.cache_data удален. Всегда берем свежие данные!
 def fetch_apify_data(yandex_url):
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
     run_req = requests.post(run_url, json={"startUrls": [{"url": yandex_url}], "maxItems": 1}).json()
@@ -116,7 +115,7 @@ def fetch_apify_data(yandex_url):
     
     data = dataset[0]
     
-    # --- DATA HEALTH VALIDATOR (Таможня данных) ---
+    # --- DATA HEALTH VALIDATOR ---
     if not data.get('title'):
         raise Exception("Критический сбой парсинга: Отсутствует Название компании. Яндекс отдал пустую страницу. Запустите аудит еще раз.")
     
@@ -359,7 +358,7 @@ st.set_page_config(page_title="MAP100 | B2B CRM", layout="wide", page_icon="📈
 
 rules_data, doc = get_rules_from_sheets()
 with st.sidebar: st.write("✅ База данных подключена. Управление весами в Google Sheets.")
-st.title("📍 MAP100: AI-Аудитор (Версия 14.0 - B2B CRM Edition)")
+st.title("📍 MAP100: AI-Аудитор (Версия 14.1 - Paid Diagnostic Edition)")
 
 url = st.text_input("Ссылка на Яндекс.Бизнес")
 
@@ -489,28 +488,30 @@ if st.button("🚀 Запустить аудит (Без кэша)", type="prima
             st.divider()
             
             # --- ГЕНЕРАЦИЯ КП ---
-            st.markdown("### 🤝 Индивидуальный план сопровождения")
+            st.markdown("### 🤝 Пошаговый план возврата клиентов")
+            
+            st.success(f"""
+            **Шаг 1. Платная диагностика (Полная Дорожная Карта) — 4 880 ₽**
+            Мы выгружаем детальный 80-шаговый аудит MAP100 в PDF-формате. В нем описано: какие алгоритмы Яндекса вы нарушаете, почему карточка пессимизируется и что конкретно нужно исправить для перехвата трафика.
+            *💡 Вы можете отдать этот документ своему системному администратору или текущему маркетологу для самостоятельного внедрения.*
+
+            **Шаг 2. Упаковка профиля «Под ключ» — 28 880 ₽ (или доплата 24 000 ₽)**
+            Если ваш сисадмин не знает, что такое LSI-копирайтинг и SEO-тегирование на Картах, мы заберем всю работу на себя. За 10-14 дней мы исправим все красные ошибки, оформим витрину и выведем профиль на 95-100 баллов.
+            """)
             
             if niche_key in ["B2B_PRODUCTION", "BEAUTY_MEDICAL", "AUTO"]:
                 rec_plan = "Доминация"
-                rec_price = "59 900 ₽ / мес"
-                rec_desc = "Ультимативный тариф для ниш с высоким чеком. Полный перехват трафика, ИИ-управление репутацией и вытеснение конкурентов. Окупается с 1-2 новых клиентов."
+                rec_price = "69 900 ₽ / мес"
             elif niche_key in ["HORECA", "SERVICES"]:
                 rec_plan = "Монополия"
-                rec_price = "34 900 ₽ / мес"
-                rec_desc = "Оптимальный тариф для активного роста. Исправление всех критических ошибок, системная работа с отзывами и обход ближайших конкурентов."
+                rec_price = "39 900 ₽ / мес"
             else:
-                rec_plan = "Основа"
-                rec_price = "19 900 ₽ / мес"
-                rec_desc = "Базовое поддержание здоровья профиля. Защита текущего рейтинга от падения и регулярное обновление витрины."
+                rec_plan = "База"
+                rec_price = "24 900 ₽ / мес"
 
-            st.success(f"""
-            **Рекомендуемый тариф для вашей ниши: «{rec_plan}»**
-            
-            💰 **Стоимость:** {rec_price}
-            ⚙️ **Фокус:** {rec_desc}
-            
-            Поскольку ваша упущенная выручка составляет около **{formatted_loss} ₽** в месяц, инвестиция в этот тариф окупается многократно. Мы берем всю техническую рутину на себя, а вы получаете готовых клиентов с Яндекс.Карт.
+            st.info(f"""
+            **Шаг 3. Ежемесячная защита результата (Тариф «{rec_plan}»)**  
+            После идеальной упаковки Яндекс начнет давать вам органический трафик. Чтобы позиции не упали, когда ближайший конкурент начнет сопротивляться, мы возьмем на себя ежемесячную техническую рутину (SEO-обновления, мониторинг, ИИ-работа с отзывами) за **{rec_price}**.
             """)
             
             st.divider()
@@ -551,17 +552,16 @@ if st.button("🚀 Запустить аудит (Без кэша)", type="prima
 
             # --- ЭКСПОРТ В ВОРОНКУ (LEADS) ---
             try:
-                # Пытаемся записать в Leads. Если нет - пишем в старый Results.
                 try:
                     leads_sheet = doc.worksheet("Leads")
                 except:
                     leads_sheet = doc.worksheet("Results")
                     
                 headers = leads_sheet.row_values(1)
-                if not headers: headers = ["Дата", "Ссылка", "Компания", "Ниша", "Балл", "Упущенная выручка", "Тариф", "Статус сделки", "Менеджер"]
+                if not headers: headers = ["Дата", "Ссылка", "Компания", "Ниша", "Балл", "Упущенная выручка", "Тариф (MRR)", "Статус сделки", "Менеджер"]
                 
                 headers_changed = False
-                for c in ["Ниша", "Тариф", "Статус сделки", "Менеджер"]:
+                for c in ["Ниша", "Тариф (MRR)", "Статус сделки", "Менеджер"]:
                     if c not in headers:
                         headers.append(c)
                         headers_changed = True
@@ -579,7 +579,7 @@ if st.button("🚀 Запустить аудит (Без кэша)", type="prima
                     elif h == "Ниша": row_data.append(niche_key)
                     elif h == "Балл": row_data.append(final_total_score)
                     elif h == "Упущенная выручка": row_data.append(lost_revenue)
-                    elif h == "Тариф": row_data.append(rec_plan)
+                    elif h == "Тариф (MRR)": row_data.append(rec_plan)
                     elif h == "Статус сделки": row_data.append("Холодный")
                     elif h == "Менеджер": row_data.append("MAP100 Bot")
                     else: row_data.append(final_scores.get(h, ""))
