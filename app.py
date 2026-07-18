@@ -97,7 +97,6 @@ def get_rules_from_sheets():
 # ВНИМАНИЕ: Декоратор @st.cache_data удален. Всегда берем свежие данные!
 def fetch_apify_data(yandex_url):
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
-    # Добавляем memoryMbytes, чтобы избежать обрывов у сложных карточек
     run_req = requests.post(run_url, json={"startUrls": [{"url": yandex_url}], "maxItems": 1}).json()
     if 'error' in run_req: raise Exception(f"Ошибка Apify API: {run_req['error']}")
         
@@ -119,13 +118,12 @@ def fetch_apify_data(yandex_url):
     
     # --- DATA HEALTH VALIDATOR (Таможня данных) ---
     if not data.get('title'):
-        raise Exception("Критический сбой парсинга: Отсутствует Название компании (title). Яндекс отдал пустую страницу. Запустите аудит еще раз.")
+        raise Exception("Критический сбой парсинга: Отсутствует Название компании. Яндекс отдал пустую страницу. Запустите аудит еще раз.")
     
-    # Проверка на аномалию: высокий рейтинг, но 0 отзывов
     r_count = int(data.get('reviewsCount') or data.get('ratingsCount') or data.get('reviewCount') or len(data.get('reviews') or []) or 0)
     rating = data.get('rating') or 0.0
     if rating > 0 and r_count == 0:
-        raise Exception(f"Критический сбой парсинга: У компании есть рейтинг ({rating}), но блок отзывов не был загружен (защита Яндекса). Запустите аудит еще раз для корректного расчета.")
+        raise Exception(f"Критический сбой парсинга: У компании есть рейтинг ({rating}), но блок отзывов не загружен (баг Яндекса). Запустите аудит еще раз.")
     
     return data
 
@@ -357,15 +355,15 @@ def calculate_vision_rules(data):
 # ==========================================
 # 4. СБОРКА И ИНТЕРФЕЙС
 # ==========================================
-st.set_page_config(page_title="MAP100 | Нейро-Аудитор", layout="wide", page_icon="📈")
+st.set_page_config(page_title="MAP100 | B2B CRM", layout="wide", page_icon="📈")
 
 rules_data, doc = get_rules_from_sheets()
-with st.sidebar: st.write("✅ База данных подключена напрямую. Управление весами в Google Sheets.")
-st.title("📍 MAP100: AI-Аудитор (Версия 13.0 - Data Control)")
+with st.sidebar: st.write("✅ База данных подключена. Управление весами в Google Sheets.")
+st.title("📍 MAP100: AI-Аудитор (Версия 14.0 - B2B CRM Edition)")
 
 url = st.text_input("Ссылка на Яндекс.Бизнес")
 
-if st.button("🚀 Запустить аудит", type="primary"):
+if st.button("🚀 Запустить аудит (Без кэша)", type="primary"):
     if "yandex" not in url.lower(): st.error("❌ Неверная ссылка.")
     else:
         with st.spinner("Сбор свежих данных клиента (без кэша)..."):
@@ -379,13 +377,11 @@ if st.button("🚀 Запустить аудит", type="primary"):
             c_list = data.get('categories', [])
             cat = c_list[0].get('name', '') if c_list and isinstance(c_list[0], dict) else (str(c_list[0]) if c_list else '')
             
-            # Агрессивное извлечение отзывов клиента
             def get_true_reviews(d):
                 return int(d.get('reviewsCount') or d.get('ratingsCount') or d.get('reviewCount') or len(d.get('reviews') or []) or 0)
             
             client_reviews = get_true_reviews(data)
             
-            # --- БЛОК КОНКУРЕНТОВ (SHARE OF LOCAL VOICE) ---
             competitor_name = None
             competitor_reviews = 0
             comp_oid = None
@@ -403,19 +399,16 @@ if st.button("🚀 Запустить аудит", type="primary"):
                     comp_data = fetch_apify_data(comp_url)
                     competitor_reviews = get_true_reviews(comp_data)
                 except Exception as e:
-                    pass # Тихий сбой, считаем без конкурента
+                    pass 
         
         with st.spinner("Анализ данных, маршрутизация и расчет экономики..."):
-            # 1. ОПРЕДЕЛЯЕМ НИШУ
             niche_key = determine_niche(title, cat)
             
-            # 2. РАСЧЕТ МЕТРИК
             raw_scores = {}
             for f in [calculate_prof_rules, calculate_cont_rules, calculate_rep_rules, calculate_conv_rules, calculate_seo_rules, calculate_act_rules, calculate_ai_rules, calculate_vision_rules]:
                 sc, _, _ = f(data) if f.__name__ in ['calculate_ai_rules', 'calculate_vision_rules'] else (*f(data), None)
                 raw_scores.update(sc)
             
-            # 3. ПОДСЧЕТ ИЗ ВЕРНОГО СТОЛБЦА
             final_scores = {}
             results = []
             final_total_score = 0.0
@@ -445,17 +438,9 @@ if st.button("🚀 Запустить аудит", type="primary"):
                     val = max_s if raw_scores.get(code) else 0.0
                     final_total_score += val
                     final_scores[code] = val
-                    comm = "✅ Выполнено" if val > 0 else "❌ Нарушение рекомендаций алгоритма"
-                    results.append({
-                        "Код": code, 
-                        "Критерий": name, 
-                        "Балл": val, 
-                        "Макс": max_s, 
-                        "Комментарий": comm, 
-                        "Справка": doc_link if val == 0 else None
-                    })
+                    comm = "ОК" if val > 0 else "Нарушение"
+                    results.append({"Код": code, "Критерий": name, "Балл": val, "Макс": max_s, "Комментарий": comm, "Справка": doc_link if val == 0 else None})
             
-            # 4. РАСЧЕТ ДОЛИ РЫНКА И ДЕНЕГ
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
             potential_leads = eco["leads"]
             avg_check = eco["check"]
@@ -474,85 +459,130 @@ if st.button("🚀 Запустить аудит", type="primary"):
                 
             formatted_loss = f"{lost_revenue:,}".replace(',', ' ')
             
+            # --- ВЫВОД КРАСИВОГО B2B ОТЧЕТА ---
             st.divider()
-            col1, col2, col3 = st.columns([2, 1, 1.2])
+            
+            col1, col2 = st.columns([2, 1])
             with col1: 
                 st.subheader(f"🏢 {title}")
-                st.caption(f"🧠 Ниша: **{niche_key}** | Отзывов: {client_reviews}")
+                st.caption(f"🧠 Ниша: **{niche_key}** | 📍 Текущих отзывов: {client_reviews}")
             with col2: 
                 color = "normal" if final_total_score >= 80 else ("off" if final_total_score >= 50 else "inverse")
-                st.metric("Общий балл MAP100", f"{round(final_total_score, 1)} / 100", delta_color=color)
-            with col3:
-                st.metric("Упущенная выручка (мес)", f"- {formatted_loss} ₽", delta="Недополученный трафик", delta_color="inverse")
-            
-            # ВЫВОД АНАЛИЗА КОНКУРЕНТА (Сценарии: Океан или Битва)
+                st.metric("Общий рейтинг MAP100", f"{round(final_total_score, 1)} / 100", delta="Требует оптимизации" if final_total_score < 80 else "Отличный результат", delta_color=color)
+
+            st.markdown("### 🥊 Share of Local Voice (Доля рынка)")
             if competitor_name and competitor_reviews > 0:
-                if competitor_reviews < 15:
-                    st.success(f"""
-                    🌊 **Анализ ниши: Вакуум конкуренции (Голубой океан)**  
-                    Ваш главный конкурент в локальной выдаче — **{competitor_name}** — имеет всего {competitor_reviews} отзывов. 
-                    В вашей локации на Яндекс.Картах сейчас никто системно не занимается продвижением. Конкуренции практически нет!
-                    
-                    💸 Тот, кто первым доведет свою карточку до оценки 80-100 баллов, монополизирует выдачу. Сейчас из-за ошибок (оценка {round(final_total_score, 1)}/100) вы не используете этот шанс и упускаете сделки на сумму около **{formatted_loss} ₽** каждый месяц.
-                    
-                    🚀 **[Оставьте заявку на бесплатный разбор с экспертом](#), чтобы узнать, как забрать этот свободный трафик себе.**
-                    """)
+                if competitor_reviews < 15 and client_reviews < 15:
+                    st.success(f"**Вакуум конкуренции (Голубой океан).** Ваш главный конкурент **{competitor_name}** имеет всего {competitor_reviews} отзывов. В вашей локации никто системно не занимается продвижением. Тот, кто первым доведет карточку до 80 баллов, заберет весь трафик.")
+                elif client_share_pct >= 50:
+                    st.info(f"**Вы — лидер локальной выдачи.** Вы забираете **{client_share_pct}%** внимания. Ваш ближайший преследователь — **{competitor_name}** ({comp_share_pct}%). Укрепите профиль, чтобы не дать им шанса вас догнать.")
+                    st.progress(client_share_pct / 100.0, text=f"Ваша доля: {client_share_pct}% vs {competitor_name}: {comp_share_pct}%")
                 else:
-                    st.error(f"""
-                    🥊 **Анализ конкурентной среды (Share of Local Voice):**  
-                    Ваш главный конкурент в локальной выдаче — **{competitor_name}** ({competitor_reviews} отзывов).  
-                    В вашей паре они забирают **{comp_share_pct}%** органического трафика с Карт, оставляя вам лишь **{client_share_pct}%**. 
-                    
-                    💸 **Откуда цифра потерь?**  
-                    Алгоритм Яндекса видит ошибки в вашей карточке (оценка {round(final_total_score, 1)}/100) и отдает лиды соседям. При среднем чеке в {avg_check:,} ₽, вы дарите конкурентам около **{formatted_loss} ₽** каждый месяц.
-                    
-                    🚀 **[Оставьте заявку на бесплатный разбор с экспертом](#), чтобы получить план перехвата трафика у {competitor_name}.**
-                    """)
+                    st.error(f"**Конкурент забирает ваш трафик.** Лидер рынка **{competitor_name}** забирает **{comp_share_pct}%** внимания. Вы довольствуетесь лишь **{client_share_pct}%**.")
+                    st.progress(client_share_pct / 100.0, text=f"Ваша доля: {client_share_pct}% vs {competitor_name}: {comp_share_pct}%")
             else:
-                st.error(f"""
-                💸 **Откуда эта цифра?**  
-                Ваша карточка отрабатывает только на **{round(final_total_score, 1)}%** от своего потенциала. Вы теряете около **{int(lost_percentage*100)}%** клиентов, которые уходят к конкурентам.
-                
-                🚀 **[Оставьте заявку на бесплатный разбор с экспертом](#), чтобы получить план возврата этих денег.**
-                """)
+                st.warning("Анализ прямого конкурента в данный момент недоступен. Расчет производится по базовым бенчмаркам ниши.")
+
+            st.markdown("### 💸 Цена ошибок (Lost Revenue)")
+            st.error(f"Алгоритм Яндекса пессимизирует карточки с оценкой ниже 80 баллов. При вашей текущей оценке ({round(final_total_score, 1)}/100) и среднем чеке в {avg_check:,} ₽, вы ежемесячно недополучаете горячего трафика на сумму около **{formatted_loss} ₽**.")
             
             st.divider()
             
+            # --- ГЕНЕРАЦИЯ КП ---
+            st.markdown("### 🤝 Индивидуальный план сопровождения")
+            
+            if niche_key in ["B2B_PRODUCTION", "BEAUTY_MEDICAL", "AUTO"]:
+                rec_plan = "Доминация"
+                rec_price = "59 900 ₽ / мес"
+                rec_desc = "Ультимативный тариф для ниш с высоким чеком. Полный перехват трафика, ИИ-управление репутацией и вытеснение конкурентов. Окупается с 1-2 новых клиентов."
+            elif niche_key in ["HORECA", "SERVICES"]:
+                rec_plan = "Монополия"
+                rec_price = "34 900 ₽ / мес"
+                rec_desc = "Оптимальный тариф для активного роста. Исправление всех критических ошибок, системная работа с отзывами и обход ближайших конкурентов."
+            else:
+                rec_plan = "Основа"
+                rec_price = "19 900 ₽ / мес"
+                rec_desc = "Базовое поддержание здоровья профиля. Защита текущего рейтинга от падения и регулярное обновление витрины."
+
+            st.success(f"""
+            **Рекомендуемый тариф для вашей ниши: «{rec_plan}»**
+            
+            💰 **Стоимость:** {rec_price}
+            ⚙️ **Фокус:** {rec_desc}
+            
+            Поскольку ваша упущенная выручка составляет около **{formatted_loss} ₽** в месяц, инвестиция в этот тариф окупается многократно. Мы берем всю техническую рутину на себя, а вы получаете готовых клиентов с Яндекс.Карт.
+            """)
+            
+            st.divider()
+
+            # --- СВЕТОФОР ПРИОРИТЕТОВ ---
+            st.markdown("### 📋 Детальный аудит и Action Plan")
+            
+            for res in results:
+                if res['Балл'] == 0.0 and res['Макс'] > 0:
+                    if res['Макс'] >= 2.0:
+                        res['Приоритет'] = "🔴 КРИТИЧНО"
+                    else:
+                        res['Приоритет'] = "🟡 ЖЕЛАЕМО"
+                elif res['Балл'] > 0:
+                    res['Приоритет'] = "✅ ОК"
+                else:
+                    res['Приоритет'] = "⚪ N/A"
+
+            df_results = pd.DataFrame(results)
+            cols = ['Приоритет', 'Код', 'Критерий', 'Балл', 'Макс', 'Комментарий', 'Справка']
+            df_results = df_results[cols]
+            df_results = df_results.sort_values(by=['Приоритет', 'Макс'], ascending=[False, False])
+
             st.dataframe(
-                pd.DataFrame(results), 
+                df_results, 
                 column_config={
+                    "Приоритет": st.column_config.TextColumn("Статус", width="small"),
                     "Код": st.column_config.TextColumn("Код", width="small"),
                     "Критерий": st.column_config.TextColumn("Критерий", width="medium"),
                     "Балл": st.column_config.NumberColumn("Балл", format="%.1f"),
                     "Макс": st.column_config.NumberColumn("Макс.", format="%.1f"),
-                    "Комментарий": st.column_config.TextColumn("Комментарий", width="large"),
-                    "Справка": st.column_config.LinkColumn("Официальная справка", display_text="Читать правила ↗")
+                    "Комментарий": st.column_config.TextColumn("Детали", width="large"),
+                    "Справка": st.column_config.LinkColumn("Гайдлайн", display_text="Читать ↗")
                 },
                 hide_index=True, 
                 use_container_width=True
             )
 
+            # --- ЭКСПОРТ В ВОРОНКУ (LEADS) ---
             try:
-                results_sheet = doc.worksheet("Results")
-                headers = results_sheet.row_values(1)
-                if not headers: headers = ["Дата", "Ссылка", "Компания", "Общий балл", "Упущенная выручка"]
+                # Пытаемся записать в Leads. Если нет - пишем в старый Results.
+                try:
+                    leads_sheet = doc.worksheet("Leads")
+                except:
+                    leads_sheet = doc.worksheet("Results")
+                    
+                headers = leads_sheet.row_values(1)
+                if not headers: headers = ["Дата", "Ссылка", "Компания", "Ниша", "Балл", "Упущенная выручка", "Тариф", "Статус сделки", "Менеджер"]
+                
                 headers_changed = False
-                for c in final_scores.keys():
+                for c in ["Ниша", "Тариф", "Статус сделки", "Менеджер"]:
                     if c not in headers:
                         headers.append(c)
                         headers_changed = True
+                        
                 if headers_changed:
-                    cell_list = results_sheet.range(1, 1, 1, len(headers))
+                    cell_list = leads_sheet.range(1, 1, 1, len(headers))
                     for i, val in enumerate(headers): cell_list[i].value = val
-                    results_sheet.update_cells(cell_list)
+                    leads_sheet.update_cells(cell_list)
                     
                 row_data = []
                 for h in headers:
                     if h == "Дата": row_data.append(time.strftime("%d.%m.%Y %H:%M:%S"))
                     elif h == "Ссылка": row_data.append(url)
                     elif h == "Компания": row_data.append(title)
-                    elif h == "Общий балл": row_data.append(final_total_score)
+                    elif h == "Ниша": row_data.append(niche_key)
+                    elif h == "Балл": row_data.append(final_total_score)
                     elif h == "Упущенная выручка": row_data.append(lost_revenue)
-                    else: row_data.append(final_scores.get(h, 0.0))
-                results_sheet.append_row(row_data)
-            except: pass
+                    elif h == "Тариф": row_data.append(rec_plan)
+                    elif h == "Статус сделки": row_data.append("Холодный")
+                    elif h == "Менеджер": row_data.append("MAP100 Bot")
+                    else: row_data.append(final_scores.get(h, ""))
+                leads_sheet.append_row(row_data)
+            except Exception as e:
+                st.error(f"Не удалось сохранить в БД: {e}")
