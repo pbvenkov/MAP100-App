@@ -247,7 +247,9 @@ def calculate_rep_rules(data):
     for r in l20:
         try: rate = float(r.get('rating') or 0.0)
         except: rate = 0.0
-        rep = r.get('reply') or r.get('ownerAnswer')
+        
+        # Расширенный поиск ключа ответа владельца (защита от обновлений Apify)
+        rep = r.get('reply') or r.get('ownerAnswer') or r.get('businessResponse') or r.get('response')
         
         if isinstance(rep, dict):
             replied += 1
@@ -302,7 +304,8 @@ def calculate_dynamic_ai_rules(data, prompts_data):
         for r in reviews_data[:10]:
             if isinstance(r, dict):
                 txt = str(r.get('text') or '').strip()
-                rep = r.get('reply') or r.get('ownerAnswer')
+                # Расширенный поиск ключа ответа владельца для ИИ
+                rep = r.get('reply') or r.get('ownerAnswer') or r.get('businessResponse') or r.get('response')
                 rep_txt = str(rep.get('text') or '').strip() if isinstance(rep, dict) else ""
                 if txt: reviews_text.append(f"Отзыв: {txt} | Ответ владельца: {rep_txt if rep_txt else 'НЕТ ОТВЕТА'}")
 
@@ -506,6 +509,6 @@ if st.button("🚀 Запустить глубокий аудит", type="primar
                     "Кол-во отзывов": data.get('reviewsCount'),
                     "Сайт / Ссылка": data.get('url') or data.get('website'),
                     "График работы": data.get('workingHours'),
-                    "Первые 3 отзыва (фрагмент)": [str(r.get('text'))[:100] + "..." for r in data.get('reviews', []) if isinstance(r, dict)][:3]
+                    "Сырой отзыв целиком (ДЛЯ ПОИСКА ОТВЕТА)": data.get('reviews', [{}])[0] if data.get('reviews') else "Пусто"
                 }
                 st.json(debug_data)
