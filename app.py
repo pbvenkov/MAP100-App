@@ -27,7 +27,7 @@ try:
 except Exception as e:
     ai_model = None
 
-# Функция для отправки алертов в Telegram (С ОТЛАДКОЙ В ТЕРМИНАЛ)
+# Функция для отправки алертов в Telegram
 def send_telegram_alert(error_msg, target_url="Неизвестно"):
     tg_token = st.secrets.get("TG_BOT_TOKEN")
     tg_admin_id = st.secrets.get("TG_ADMIN_ID")
@@ -36,12 +36,9 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
         tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
         text = f"🚨 *MAP100: Критический сбой ИИ*\n\n*Аудит:* {target_url}\n*Ошибка:* {error_msg}\n\n🛑 *Действие:* Генерация отчета остановлена."
         try:
-            response = requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
-            print(f"Ответ от Telegram: {response.status_code} - {response.text}")
-        except Exception as e:
-            print(f"Ошибка сети при отправке в Telegram: {e}")
-    else:
-        print("ВНИМАНИЕ: Ключи TG_BOT_TOKEN или TG_ADMIN_ID не найдены в secrets.toml")
+            requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
+        except Exception:
+            pass
 
 # ==========================================
 # 1.5. БАЗА ДАННЫХ НИШ И РЕГЛАМЕНТОВ
@@ -248,15 +245,27 @@ def calculate_rep_rules(data):
         try: rate = float(r.get('rating') or 0.0)
         except: rate = 0.0
         
-        # Расширенный поиск ключа ответа владельца (защита от обновлений Apify)
-        rep = r.get('reply') or r.get('ownerAnswer') or r.get('businessResponse') or r.get('response')
-        
-        if isinstance(rep, dict):
+        rep_text = ""
+        a_date = None
+        is_replied = False
+
+        # Ищем ответ в новом формате (просто строка)
+        if r.get('businessComment'):
+            rep_text = str(r.get('businessComment')).strip()
+            a_date = r.get('businessCommentDate')
+            if rep_text: is_replied = True
+        else:
+            # Ищем ответ в старом формате (вложенный словарь)
+            rep = r.get('reply') or r.get('ownerAnswer') or r.get('businessResponse') or r.get('response')
+            if isinstance(rep, dict):
+                rep_text = str(rep.get('text') or '').strip()
+                a_date = rep.get('date') or rep.get('createdAt') or rep.get('updatedAt')
+                if rep_text: is_replied = True
+
+        if is_replied:
             replied += 1
-            rep_text = str(rep.get('text') or '').strip()
             if rep_text: ow_txt.append(rep_text.lower())
             r_date = r.get('date') or r.get('createdAt')
-            a_date = rep.get('date') or rep.get('createdAt') or rep.get('updatedAt')
             if r_date and a_date:
                 try:
                     rd = datetime.fromisoformat(str(r_date).replace('Z', '+00:00'))
@@ -264,9 +273,10 @@ def calculate_rep_rules(data):
                     days_diff = (ad - rd).days
                     if days_diff >= 0: td += days_diff; vt += 1
                 except: pass
+                
         if rate > 0: 
-            if rate <= 3 and not isinstance(rep, dict): unans_neg += 1
-            if rate >= 4 and isinstance(rep, dict): ans_pos += 1
+            if rate <= 3 and not is_replied: unans_neg += 1
+            if rate >= 4 and is_replied: ans_pos += 1
 
     if l20 and (replied / len(l20)) >= 0.9: scores['REP-30.1'] = True
     if vt > 0 and (td / vt) <= 3: scores['REP-30.2'] = True
@@ -304,9 +314,16 @@ def calculate_dynamic_ai_rules(data, prompts_data):
         for r in reviews_data[:10]:
             if isinstance(r, dict):
                 txt = str(r.get('text') or '').strip()
-                # Расширенный поиск ключа ответа владельца для ИИ
-                rep = r.get('reply') or r.get('ownerAnswer') or r.get('businessResponse') or r.get('response')
-                rep_txt = str(rep.get('text') or '').strip() if isinstance(rep, dict) else ""
+                
+                # Обновленный поиск ответа для ИИ
+                rep_txt = ""
+                if r.get('businessComment'):
+                    rep_txt = str(r.get('businessComment')).strip()
+                else:
+                    rep = r.get('reply') or r.get('ownerAnswer') or r.get('businessResponse') or r.get('response')
+                    if isinstance(rep, dict):
+                        rep_txt = str(rep.get('text') or '').strip()
+                        
                 if txt: reviews_text.append(f"Отзыв: {txt} | Ответ владельца: {rep_txt if rep_txt else 'НЕТ ОТВЕТА'}")
 
     context = f"Название: {title}\nОписание: {desc}\nОсобенности/Услуги: {feat_str}\n"
@@ -388,7 +405,6 @@ if st.button("🚀 Запустить глубокий аудит", type="primar
             client_reviews = int(data.get('reviewsCount') or data.get('ratingsCount') or len(data.get('reviews') or []) or 0)
             
         with st.spinner("Анализ данных, маршрутизация и расчет экономики..."):
-            # БЛОК 1: Проверка ниши с Kill-Switch и прямым выводом ошибки
             try:
                 niche_key = determine_niche(title, cat)
             except Exception as e:
@@ -396,13 +412,11 @@ if st.button("🚀 Запустить глубокий аудит", type="primar
                 st.error(f"🚨 РАСШИФРОВКА ОШИБКИ ИИ (Ниша): {e}")
                 st.stop()
             
-            # БЛОК 2: Базовый парсинг
             raw_scores = {}
             for f in [calculate_prof_rules, calculate_rep_rules]:
                 sc, _ = f(data)
                 raw_scores.update(sc)
             
-            # БЛОК 3: Продвинутый AI-аудит с Kill-Switch и прямым выводом ошибки
             try:
                 ai_sc, ai_reasons = calculate_dynamic_ai_rules(data, prompts_data)
                 raw_scores.update(ai_sc)
