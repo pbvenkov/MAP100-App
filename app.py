@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import os
 import time
 import json
 import numpy as np
@@ -303,21 +304,37 @@ def calculate_dynamic_expert_rules(data, prompts_data):
 # 3.5. ГЕНЕРАЦИЯ PDF-ОТЧЕТА PIN100
 # ==========================================
 class PIN100Report(FPDF):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # Автоматически скачиваем шрифт Roboto (Обычный и Жирный) для кириллицы
+        font_reg = "Roboto-Regular.ttf"
+        font_bold = "Roboto-Bold.ttf"
+        
+        if not os.path.exists(font_reg):
+            open(font_reg, 'wb').write(requests.get("https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Regular.ttf").content)
+        if not os.path.exists(font_bold):
+            open(font_bold, 'wb').write(requests.get("https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Bold.ttf").content)
+        
+        # Подключаем шрифты к PDF
+        self.add_font("Roboto", "", font_reg)
+        self.add_font("Roboto", "B", font_bold)
+
     def header(self):
         # Заглушка под логотип PIN100
-        self.set_font('Arial', 'B', 15)
+        self.set_font('Roboto', 'B', 15)
         self.set_text_color(160, 30, 30) # Красный PIN
         self.cell(20, 10, 'PIN', 0, 0, 'L')
         self.set_text_color(40, 40, 40)
         self.cell(40, 10, '100', 0, 0, 'L')
-        self.set_font('Arial', 'I', 8)
+        self.set_font('Roboto', '', 8)
         self.set_text_color(100)
         self.cell(0, 10, 'Экспертный аудит репутационных активов', 0, 1, 'R')
         self.ln(5)
 
     def footer(self):
         self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
+        self.set_font('Roboto', '', 8)
         self.set_text_color(128)
         self.cell(0, 10, f'Стр. {self.page_no()}', 0, 0, 'C')
 
@@ -326,11 +343,11 @@ def create_pdf_report(title, niche, score, revenue_loss, data_matrix):
     pdf.add_page()
     
     # 1. Executive Summary
-    pdf.set_font('Arial', 'B', 16)
+    pdf.set_font('Roboto', 'B', 16)
     pdf.set_text_color(40, 40, 40)
     pdf.cell(0, 15, f'Аудит компании: {title}', 0, 1, 'L')
     
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font('Roboto', '', 10)
     pdf.set_text_color(100)
     pdf.cell(0, 7, f'Нишевой сегмент: {niche}', 0, 1, 'L')
     pdf.ln(5)
@@ -341,8 +358,8 @@ def create_pdf_report(title, niche, score, revenue_loss, data_matrix):
     elif score >= 50: fill = (230, 200, 100); text = "Требует оптимизации"
     else: fill = (200, 100, 100); text = "Критический уровень риска"
     
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(80, 15, 'Индекс репутационного капитала PIN100:', 0, 0, 'L', True)
+    pdf.set_font('Roboto', 'B', 12)
+    pdf.cell(90, 15, 'Индекс репутационного капитала PIN100:', 0, 0, 'L', True)
     pdf.set_text_color(255)
     pdf.set_fill_color(*fill)
     pdf.cell(40, 15, f'{round(score, 1)} / 100', 0, 0, 'C', True)
@@ -351,20 +368,20 @@ def create_pdf_report(title, niche, score, revenue_loss, data_matrix):
     pdf.ln(10)
     
     # Потери
-    pdf.set_font('Arial', 'B', 14)
+    pdf.set_font('Roboto', 'B', 14)
     pdf.set_text_color(160, 30, 30)
     pdf.cell(0, 10, 'ФИНАНСОВЫЙ АУДИТ ПОТЕРЬ (Tracking Error)', 0, 1, 'L')
-    pdf.set_font('Arial', '', 11)
+    pdf.set_font('Roboto', '', 11)
     pdf.set_text_color(40, 40, 40)
     msg = f"При текущей экспертной оценке ({round(score, 1)}/100) вы теряете около {round(100 - score, 1)}% целевых запросов. Упущенная выручка (Lost Revenue) оценивается в горячем трафике на сумму около {revenue_loss:,} руб. ежемесячно."
     pdf.multi_cell(0, 7, msg.replace(',', ' '))
     pdf.ln(10)
     
     # 2. Матрица PIN100
-    pdf.set_font('Arial', 'B', 12)
+    pdf.set_font('Roboto', 'B', 12)
     pdf.set_text_color(40, 40, 40)
     pdf.cell(0, 10, 'МАТРИЦА ОЦЕНКИ РЕПУТАЦИОННЫХ АКТИВОВ', 0, 1, 'L')
-    pdf.set_font('Arial', 'B', 8)
+    pdf.set_font('Roboto', 'B', 8)
     
     # Заголовки таблицы
     pdf.set_fill_color(220)
@@ -373,7 +390,7 @@ def create_pdf_report(title, niche, score, revenue_loss, data_matrix):
     pdf.cell(30, 8, 'Результат', 1, 0, 'C', True)
     pdf.cell(40, 8, 'Макс', 1, 1, 'C', True)
     
-    pdf.set_font('Arial', '', 7)
+    pdf.set_font('Roboto', '', 7)
     pdf.set_text_color(80)
     
     for row in data_matrix:
@@ -381,7 +398,9 @@ def create_pdf_report(title, niche, score, revenue_loss, data_matrix):
         name = row['Критерий'][:60]
         earned = row['Балл']
         max_s = row['Макс']
-        status = "✅" if earned > 0 else "❌"
+        
+        # Замена эмодзи на текст
+        status = "ДА" if earned > 0 else "НЕТ"
         
         pdf.cell(20, 7, code, 1, 0, 'C')
         pdf.cell(100, 7, name, 1, 0, 'L')
@@ -391,11 +410,11 @@ def create_pdf_report(title, niche, score, revenue_loss, data_matrix):
     pdf.ln(15)
     
     # 3. Call to Action
-    pdf.set_font('Arial', 'I', 9)
+    pdf.set_font('Roboto', '', 9)
     pdf.set_text_color(100)
     pdf.multi_cell(0, 6, "По результатам экспертного PIN100 аудита, ваша компания недополучает значительную долю прибыли из-за отклонения от эталона рынка. Рекомендуется внедрение Roadmap-политики для оптимизации репутационного капитала. Свяжитесь с нами для обсуждения стратегии.")
     
-    return pdf.output(dest='S')
+    return bytes(pdf.output())
 
 # ==========================================
 # 4. СБОРКА И ИНТЕРФЕЙС
@@ -474,7 +493,6 @@ if st.button("🚀 Запустить экспертный аудит", type="pr
                     val = max_s if raw_scores.get(code) else 0.0
                     final_total_score += val
                     comm = "✅ Выполнено" if val > 0 else "❌ Требует внедрения"
-                    # reasons (для дебага) мы берем из экспертного модуля
                     exp_reason = exp_reasons.get(code, "Автоматическое правило")
                     
                     results.append({"Этап": roadmap, "Приоритет": priority, "Критерий": name, "Результат": comm, "Балл": val, "Макс": max_s})
