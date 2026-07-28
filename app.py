@@ -390,7 +390,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     
     pdf.set_font('Roboto', 'B', 36)
     if score >= 80: color = (40, 160, 40)
-    elif score >= 50: color = (240, 140, 0) # Оранжевый
+    elif score >= 50: color = (240, 140, 0) # Оранжево-желтый
     else: color = (180, 30, 30)
     pdf.set_text_color(*color)
     pdf.set_x(15)
@@ -657,19 +657,28 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.set_y(100)
     pdf.set_font('Roboto', 'B', 26)
     pdf.set_text_color(40, 40, 40)
-    pdf.cell(0, 15, safe_text('Готовы остановить потерю прибыли?'), 0, 1, 'C')
+    pdf.cell(0, 15, safe_text('Как перестать терять клиентов и деньги?'), 0, 1, 'C')
     pdf.ln(10)
     
     pdf.set_font('Roboto', '', 16)
     pdf.set_text_color(80, 80, 80)
-    txt_offer = safe_text("Данный аудит выявил ключевые уязвимости вашей воронки продаж. Мы предлагаем внедрение разработанной дорожной карты «под ключ», чтобы закрыть утечку конверсии и превратить профиль в генератор лидов.")
+    txt_offer = safe_text("Этот аудит показал конкретные ошибки, из-за которых ваши конкуренты получают больше заявок. Мы готовы взять реализацию всей дорожной карты на себя и сделать всё «под ключ». Наша команда закроет все пробелы и превратит ваш профиль в стабильный источник новых заказов.")
     pdf.set_x(10)
     pdf.multi_cell(190, 8, txt_offer, align='C')
     
-    pdf.ln(25)
-    pdf.set_font('Roboto', 'B', 14)
-    pdf.set_text_color(240, 100, 0) # Фирменный оранжевый
-    pdf.cell(0, 10, safe_text('Свяжитесь с нами для старта проекта и интеграции системы'), 0, 1, 'C')
+    pdf.ln(20)
+    pdf.set_font('Roboto', 'B', 16)
+    pdf.set_text_color(240, 100, 0)
+    pdf.cell(0, 10, safe_text('Обсудить проект:'), 0, 1, 'C')
+    
+    pdf.ln(5)
+    pdf.set_font('Roboto', 'B', 18)
+    pdf.set_text_color(40, 40, 40)
+    pdf.cell(0, 10, safe_text('Telegram: @paulvenkov'), 0, 1, 'C')
+    
+    pdf.set_font('Roboto', '', 16)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 10, safe_text('pin100.ru'), 0, 1, 'C')
 
     return bytes(pdf.output())
 
