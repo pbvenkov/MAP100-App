@@ -312,6 +312,7 @@ class PIN100Report(FPDF):
             if not os.path.exists(logo_path):
                 logo_path = "PIN100 big logo.png"
             
+            # Маленький премиальный бейдж в углу
             if os.path.exists(logo_path):
                 self.image(logo_path, x=175, y=10, w=22)
             else:
@@ -320,7 +321,7 @@ class PIN100Report(FPDF):
                 self.set_xy(175, 10)
                 self.cell(20, 10, 'PIN100', 0, 0, 'R')
             
-            self.set_y(25) # Задаем начальную точку для текста, чтобы он не наезжал на лого
+            self.set_y(25) # Отступ от шапки
 
     def footer(self):
         self.set_y(-15)
@@ -337,30 +338,32 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     # ---------------- СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ ----------------
     pdf.add_page()
     
+    # Очищенный титульный лист с акцентным логотипом в центре
     logo_path = "logo.png"
     if not os.path.exists(logo_path):
         logo_path = "PIN100 big logo.png"
         
     if os.path.exists(logo_path):
+        # Отцентрованный логотип адекватного размера
         pdf.image(logo_path, x=75, y=40, w=60)
-        pdf.set_y(120)
+        pdf.set_y(130)
     else:
         pdf.set_y(80)
         pdf.set_font('Roboto', 'B', 48)
         pdf.set_text_color(240, 100, 0)
         pdf.cell(0, 20, 'PIN100', 0, 1, 'C')
-        pdf.set_y(120)
+        pdf.set_y(130)
     
     pdf.set_font('Roboto', 'B', 24)
     pdf.set_text_color(40, 40, 40)
     pdf.cell(0, 12, safe_text('Экспертный аудит упущенной выручки'), 0, 1, 'C')
     pdf.cell(0, 12, safe_text('и скрытых точек потери клиентов'), 0, 1, 'C')
     
-    pdf.ln(25)
+    pdf.ln(20)
     pdf.set_font('Roboto', '', 14)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 10, f'Подготовлено для бизнеса: {title}', 0, 1, 'C')
-    pdf.cell(0, 10, f'Дата аудита: {current_date}', 0, 1, 'C')
+    pdf.set_text_color(120, 120, 120)
+    pdf.cell(0, 8, f'Подготовлено для бизнеса: {title}', 0, 1, 'C')
+    pdf.cell(0, 8, f'Дата аудита: {current_date}', 0, 1, 'C')
     
     pdf.set_y(-50)
     pdf.set_font('Roboto', 'B', 12)
@@ -375,41 +378,53 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.cell(0, 15, safe_text('Резюме для руководителя'), 0, 1, 'L')
     pdf.ln(10)
     
+    # Плашка для Индекса
+    pdf.set_fill_color(248, 248, 248)
+    pdf.rect(10, pdf.get_y(), 190, 35, 'F')
+    
+    pdf.set_y(pdf.get_y() + 5)
     pdf.set_font('Roboto', '', 14)
     pdf.set_text_color(100, 100, 100)
+    pdf.set_x(15)
     pdf.cell(0, 10, safe_text('Индекс готовности профиля:'), 0, 1, 'L')
     
     pdf.set_font('Roboto', 'B', 36)
     if score >= 80: color = (40, 160, 40)
-    elif score >= 50: color = (240, 140, 0) # Оранжево-желтый
+    elif score >= 50: color = (240, 140, 0) # Оранжевый
     else: color = (180, 30, 30)
     pdf.set_text_color(*color)
+    pdf.set_x(15)
     pdf.cell(0, 15, f'{round(score, 1)} / 100', 0, 1, 'L')
+    pdf.ln(10)
     
-    pdf.set_fill_color(240, 240, 240)
-    pdf.rect(10, pdf.get_y(), 190, 4, 'F')
-    pdf.set_fill_color(*color)
-    pdf.rect(10, pdf.get_y(), 190 * (score/100), 4, 'F')
-    pdf.ln(20)
-    
-    pdf.set_font('Roboto', '', 14)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 10, safe_text('Упущенная выручка (Lost Revenue):'), 0, 1, 'L')
-    
+    # Плашка для Потерь (Красный акцент)
     pdf.set_fill_color(255, 240, 240)
     y_pos = pdf.get_y()
-    pdf.rect(10, y_pos, 190, 24, 'F')
+    pdf.rect(10, y_pos, 190, 35, 'F')
+    
     pdf.set_y(y_pos + 5)
-    pdf.set_font('Roboto', 'B', 32)
+    pdf.set_font('Roboto', '', 14)
     pdf.set_text_color(180, 30, 30)
-    pdf.cell(0, 15, f'- {revenue_loss:,} ₽ / мес'.replace(',', ' '), 0, 1, 'C')
+    pdf.set_x(15)
+    pdf.cell(0, 10, safe_text('Упущенная выручка (Lost Revenue):'), 0, 1, 'L')
+    
+    pdf.set_font('Roboto', 'B', 36)
+    pdf.set_text_color(180, 30, 30)
+    pdf.set_x(15)
+    pdf.cell(0, 15, f'- {revenue_loss:,} ₽ / мес'.replace(',', ' '), 0, 1, 'L')
     pdf.ln(20)
     
-    pdf.set_font('Roboto', '', 13)
+    # Вывод эксперта с рамкой
+    start_y = pdf.get_y()
+    pdf.set_font('Roboto', 'I', 13)
     pdf.set_text_color(60, 60, 60)
+    pdf.set_x(16)
     summary_text = safe_text("Вывод эксперта: Отличное качество вашего продукта теряется из-за слабого присутствия в геосервисах. Из-за критических ошибок в заполнении карточки и отсутствии системной работы с отзывами вы уступаете позиции в поиске и ежемесячно отдаете горячих клиентов своим конкурентам.")
-    pdf.set_x(10)
-    pdf.multi_cell(190, 8, summary_text)
+    pdf.multi_cell(180, 8, summary_text)
+    end_y = pdf.get_y()
+    
+    pdf.set_fill_color(240, 100, 0)
+    pdf.rect(10, start_y + 1, 2, (end_y - start_y) - 2, 'F')
     
     # ---------------- СТРАНИЦА 3: ФИНАНСОВЫЙ АУДИТ ----------------
     pdf.add_page()
@@ -424,34 +439,40 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     lost_leads = int(client_leads * (dev / 100))
     ltv_loss = revenue_loss * 12
     
+    # Блок А
+    pdf.set_fill_color(248, 248, 248)
     pdf.set_font('Roboto', 'B', 14)
     pdf.set_text_color(40, 40, 40)
-    pdf.cell(190, 10, safe_text('А. Оценка капитала бренда (Бенчмарк PIN100)'), 0, 1, 'L')
+    pdf.cell(190, 12, safe_text('  А. Оценка капитала бренда (Бенчмарк PIN100)'), 0, 1, 'L', fill=True)
     pdf.set_font('Roboto', '', 12)
     pdf.set_text_color(80)
     block_a = safe_text(f"Отклонение от алгоритмического эталона составляет {dev}%. В коммерческой выдаче это приводит к падению охватов. Из каждых 10 потенциальных клиентов вашей ниши, {lost_clients} либо вообще не видят вашу компанию в топе, либо уходят к конкурентам из-за ошибок в оформлении.")
-    pdf.set_x(10)
-    pdf.multi_cell(190, 7, block_a)
+    pdf.set_x(12)
+    pdf.multi_cell(186, 7, block_a)
     pdf.ln(8)
     
+    # Блок Б
+    pdf.set_fill_color(248, 248, 248)
     pdf.set_font('Roboto', 'B', 14)
     pdf.set_text_color(40, 40, 40)
-    pdf.cell(190, 10, safe_text('Б. Ежемесячная упущенная выручка'), 0, 1, 'L')
+    pdf.cell(190, 12, safe_text('  Б. Ежемесячная упущенная выручка'), 0, 1, 'L', fill=True)
     pdf.set_font('Roboto', '', 12)
     pdf.set_text_color(80)
     block_b = safe_text(f"Органический спрос в геосервисах по вашей нише составляет ~{client_leads} горячих обращений в месяц. Из-за низкого рейтинга вы теряете около {lost_leads} потенциальных сделок. При среднем чеке в {client_check:,} ₽, ваш прямой убыток составляет {revenue_loss:,} ₽ / мес.".replace(',', ' '))
-    pdf.set_x(10)
-    pdf.multi_cell(190, 7, block_b)
+    pdf.set_x(12)
+    pdf.multi_cell(186, 7, block_b)
     pdf.ln(8)
     
+    # Блок В (Акцентный)
+    pdf.set_fill_color(255, 245, 245)
     pdf.set_font('Roboto', 'B', 14)
     pdf.set_text_color(180, 30, 30)
-    pdf.cell(190, 10, safe_text('В. Скрытые убытки (Удар ниже пояса)'), 0, 1, 'L')
+    pdf.cell(190, 12, safe_text('  В. Скрытые убытки (Удар ниже пояса)'), 0, 1, 'L', fill=True)
     pdf.set_font('Roboto', '', 12)
     pdf.set_text_color(80)
     block_c = safe_text(f"В вашей сфере средний срок жизни клиента (LTV) составляет минимум 12 месяцев. Потерянные сегодня контракты лишают бизнес будущих стабильных платежей на сумму около {ltv_loss:,} ₽ в год. Это ваши реальные деньги, которые забирают более заметные конкуренты.".replace(',', ' '))
-    pdf.set_x(10)
-    pdf.multi_cell(190, 7, block_c)
+    pdf.set_x(12)
+    pdf.multi_cell(186, 7, block_c)
     
     # ---------------- СТРАНИЦА 4: МАТРИЦА ПРОБЛЕМ (ВОРОНКА) ----------------
     pdf.add_page()
@@ -466,19 +487,19 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             "title": "Блок 1. Видимость и Охваты (Генерация трафика)",
             "groups": ['SEO и Трафик', 'Активность'],
             "desc": "Зона ответственности: Попадание карточки в топ выдачи Яндекса по целевым B2B-запросам.",
-            "rec": "Отсутствие этих настроек прячет бизнес от поисковых роботов. Яндекс пессимизирует карточку в выдаче, отдавая ваш законный бесплатный трафик конкурентам. Необходима ручная настройка SEO-параметров."
+            "rec": "Отсутствие этих настроек прячет бизнес от поисковых роботов. Яндекс пессимизирует карточку в выдаче, отдавая ваш законный бесплатный трафик конкурентам."
         },
         {
             "title": "Блок 2. Упаковка и Конверсия (Захват лида)",
             "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'],
             "desc": "Зона ответственности: Превращение «просмотров» в реальные звонки и переходы на сайт.",
-            "rec": "Без этих элементов карточка превращается в безликий справочник. Клиент не видит конкурентных преимуществ за 3 секунды и закрывает вкладку. Требуется комплексная смысловая упаковка профиля."
+            "rec": "Без этих элементов карточка превращается в безликий справочник. Клиент не видит конкурентных преимуществ за 3 секунды и уходит к конкурентам. Требуется смысловая упаковка."
         },
         {
             "title": "Блок 3. Репутационный капитал (Удержание и Доверие)",
             "groups": ['Репутация'],
             "desc": "Зона ответственности: Готовность клиента доверить вам деньги на основе мнений других.",
-            "rec": "В B2B сегменте клиенты проверяют надежность подрядчика. Отсутствие системной работы с отзывами или брошенный негатив вызывают недоверие и срывают крупные сделки."
+            "rec": "В B2B сегменте клиенты тщательно проверяют подрядчика. Отсутствие системной работы с отзывами или брошенный негатив вызывают недоверие и срывают крупные сделки."
         },
         {
             "title": "Блок 4. Скрытые алгоритмы (Техническая монополия)",
@@ -506,19 +527,31 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         pdf.set_text_color(40, 40, 40)
         pdf.cell(190, 12, safe_text(f"  {block['title']}"), 0, 1, 'L', fill=True)
         
-        pdf.set_font('Roboto', 'I', 11)
-        pdf.set_text_color(100, 100, 100)
-        pdf.set_x(10)
-        pdf.multi_cell(190, 6, safe_text(block['desc']))
+        pdf.set_font('Roboto', '', 11)
+        pdf.set_text_color(120, 120, 120)
+        pdf.set_x(12)
+        pdf.multi_cell(186, 6, safe_text(block['desc']))
         pdf.ln(4)
         
-        # Сильные стороны
+        # Сильные стороны (Две колонки)
         if passed_items:
             pdf.set_font('Roboto', 'B', 10)
             pdf.set_text_color(40, 140, 40)
-            passed_names = ", ".join([safe_text(r['Критерий']) for r in passed_items])
-            pdf.set_x(10)
-            pdf.multi_cell(190, 6, safe_text(f"✅ Успешно: {passed_names}"))
+            pdf.set_x(12)
+            pdf.cell(0, 6, safe_text("✅ Защищенные активы (Успешно):"), 0, 1, 'L')
+            
+            pdf.set_font('Roboto', '', 10)
+            pdf.set_text_color(80, 80, 80)
+            half = (len(passed_items) + 1) // 2
+            col1 = passed_items[:half]
+            col2 = passed_items[half:]
+            for i in range(len(col1)):
+                pdf.set_x(15)
+                pdf.cell(90, 5, safe_text(f"• {col1[i]['Критерий']}"), 0, 0, 'L')
+                if i < len(col2):
+                    pdf.cell(90, 5, safe_text(f"• {col2[i]['Критерий']}"), 0, 1, 'L')
+                else:
+                    pdf.ln(5)
             pdf.ln(4)
             
         # Экспертные ошибки (AI)
@@ -526,37 +559,51 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             for r in ai_fails:
                 if pdf.get_y() > 250: pdf.add_page()
                 pdf.set_font('Roboto', 'B', 11)
-                pdf.set_text_color(40, 40, 40)
-                pdf.cell(0, 7, safe_text(f"• {r['Критерий']}"), 0, 1, 'L')
+                pdf.set_text_color(180, 50, 50)
+                pdf.set_x(12)
+                pdf.cell(0, 6, safe_text(f"✘ {r['Критерий']}"), 0, 1, 'L')
                 
                 pdf.set_font('Roboto', '', 11)
-                pdf.set_text_color(180, 50, 50) # Красный акцент для ошибок
-                pdf.set_x(15)
-                pdf.multi_cell(180, 6, safe_text(f"Аналитика: {r['Обоснование']}"))
-                pdf.ln(3)
+                pdf.set_text_color(80, 80, 80)
+                pdf.set_x(17)
+                pdf.multi_cell(180, 5, safe_text(f"Аналитика: {r['Обоснование']}"))
+                pdf.ln(2)
 
-        # Сгруппированные пустые метрики
+        # Сгруппированные пустые метрики (Две колонки)
         if std_fails:
             if pdf.get_y() > 250: pdf.add_page()
             pdf.set_font('Roboto', 'B', 11)
             pdf.set_text_color(180, 50, 50)
-            pdf.set_x(10)
-            pdf.cell(0, 7, safe_text("Точки уязвимости (отсутствуют настройки):"), 0, 1, 'L')
+            pdf.set_x(12)
+            pdf.cell(0, 6, safe_text("✘ Точки уязвимости (отсутствуют настройки):"), 0, 1, 'L')
             
-            pdf.set_font('Roboto', '', 11)
-            pdf.set_text_color(60, 60, 60)
-            std_names = ", ".join([safe_text(r['Критерий']) for r in std_fails])
-            pdf.set_x(15)
-            pdf.multi_cell(180, 6, std_names)
+            pdf.set_font('Roboto', '', 10)
+            pdf.set_text_color(80, 80, 80)
+            half = (len(std_fails) + 1) // 2
+            col1 = std_fails[:half]
+            col2 = std_fails[half:]
+            for i in range(len(col1)):
+                pdf.set_x(15)
+                pdf.cell(90, 5, safe_text(f"• {col1[i]['Критерий']}"), 0, 0, 'L')
+                if i < len(col2):
+                    pdf.cell(90, 5, safe_text(f"• {col2[i]['Критерий']}"), 0, 1, 'L')
+                else:
+                    pdf.ln(5)
+            pdf.ln(2)
             
-            # Рекомендация
+            # Цитатный блок для Рекомендации
+            start_y = pdf.get_y()
             pdf.set_font('Roboto', 'I', 11)
-            pdf.set_text_color(240, 100, 0) # Фирменный оранжевый
-            pdf.set_x(15)
+            pdf.set_text_color(60, 60, 60)
+            pdf.set_x(16)
             pdf.multi_cell(180, 6, safe_text(f"Резюме эксперта: {block['rec']}"))
-            pdf.ln(5)
+            end_y = pdf.get_y()
             
-        pdf.ln(8)
+            pdf.set_fill_color(240, 100, 0) # Фирменный оранжевый
+            pdf.rect(12, start_y + 1, 1.5, (end_y - start_y) - 2, 'F')
+            pdf.ln(4)
+            
+        pdf.ln(6) # Воздух между блоками
 
     # ---------------- СТРАНИЦА 5: ДОРОЖНАЯ КАРТА ----------------
     pdf.add_page()
@@ -573,28 +620,37 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         stage_tasks = [r for r in failed_items_all if r['Этап'] == stage]
         
         if stage_tasks:
-            pdf.set_fill_color(245, 245, 245)
-            pdf.set_font('Roboto', 'B', 12)
+            start_y = pdf.get_y()
+            
+            pdf.set_font('Roboto', 'B', 13)
             pdf.set_text_color(40, 40, 40)
-            pdf.cell(190, 12, safe_text(f"  {stage}"), 0, 1, 'L', fill=True)
+            pdf.set_x(18)
+            pdf.cell(180, 8, safe_text(f"{stage}"), 0, 1, 'L')
             
             pdf.set_font('Roboto', '', 12)
             pdf.set_text_color(80, 80, 80)
             
             top_tasks = stage_tasks[:3]
             for t in top_tasks:
-                task_text = safe_text(f"— {t['Критерий']}")
-                pdf.set_x(10)
-                pdf.multi_cell(190, 7, task_text)
+                pdf.set_x(18)
+                pdf.multi_cell(180, 6, safe_text(f"• {t['Критерий']}"))
                 
             if len(stage_tasks) > 3:
                 hidden_count = len(stage_tasks) - 3
                 pdf.set_font('Roboto', 'I', 11)
                 pdf.set_text_color(160, 160, 160)
-                pdf.set_x(10)
-                pdf.cell(0, 7, safe_text(f"...и еще {hidden_count} интеграций согласно стандарту PIN100"), 0, 1, 'L')
+                pdf.set_x(18)
+                pdf.cell(0, 6, safe_text(f"...и еще {hidden_count} интеграций согласно стандарту PIN100"), 0, 1, 'L')
             
-            pdf.ln(8)
+            end_y = pdf.get_y()
+            
+            # Отрисовка таймлайна (точка и линия)
+            pdf.set_fill_color(240, 100, 0)
+            pdf.rect(11.5, start_y + 3, 2, 2, 'F') # Точка этапа
+            pdf.set_draw_color(220, 220, 220)
+            pdf.line(12.5, start_y + 7, 12.5, end_y + 2) # Линия
+            
+            pdf.ln(6)
         
     # ---------------- СТРАНИЦА 6: ОФФЕР ----------------
     pdf.add_page()
