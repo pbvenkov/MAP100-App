@@ -319,8 +319,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     # ---------------- СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ ----------------
     pdf.add_page()
     
-    # Геометрический дизайн шапки
-    pdf.set_fill_color(140, 25, 25) # Темно-красный премиум
+    pdf.set_fill_color(140, 25, 25) 
     pdf.rect(0, 0, 210, 50, 'F')
     
     pdf.set_y(15)
@@ -352,7 +351,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.cell(0, 15, safe_text('Резюме для руководителя'), 0, 1, 'L')
     pdf.ln(5)
     
-    # Статус-бар (Progress Bar)
     pdf.set_font('Roboto', '', 14)
     pdf.cell(0, 10, safe_text('Индекс готовности профиля:'), 0, 1, 'L')
     
@@ -363,19 +361,17 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.set_text_color(*color)
     pdf.cell(0, 15, f'{round(score, 1)} / 100', 0, 1, 'L')
     
-    # Рисуем полосу
     pdf.set_fill_color(230, 230, 230)
     pdf.rect(10, pdf.get_y(), 190, 6, 'F')
     pdf.set_fill_color(*color)
     pdf.rect(10, pdf.get_y(), 190 * (score/100), 6, 'F')
     pdf.ln(15)
     
-    # Финансовый блок потерь
     pdf.set_font('Roboto', '', 14)
     pdf.set_text_color(40, 40, 40)
     pdf.cell(0, 10, safe_text('Упущенная выручка (Lost Revenue):'), 0, 1, 'L')
     
-    pdf.set_fill_color(255, 235, 235) # Светло-красный фон
+    pdf.set_fill_color(255, 235, 235)
     y_pos = pdf.get_y()
     pdf.rect(10, y_pos, 190, 20, 'F')
     pdf.set_y(y_pos + 3)
@@ -402,7 +398,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     lost_leads = int(client_leads * (dev / 100))
     ltv_loss = revenue_loss * 12
     
-    # Блок А
     pdf.set_fill_color(248, 248, 248)
     pdf.set_font('Roboto', 'B', 14)
     pdf.set_text_color(40, 40, 40)
@@ -414,7 +409,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.multi_cell(190, 6, block_a, fill=True)
     pdf.ln(5)
     
-    # Блок Б
     pdf.set_font('Roboto', 'B', 14)
     pdf.set_text_color(40, 40, 40)
     pdf.cell(190, 10, safe_text(' Б. Ежемесячная упущенная выручка'), 0, 1, 'L', fill=True)
@@ -425,7 +419,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.multi_cell(190, 6, block_b, fill=True)
     pdf.ln(5)
     
-    # Блок В (Акцентный)
     pdf.set_fill_color(255, 245, 245)
     pdf.set_font('Roboto', 'B', 14)
     pdf.set_text_color(180, 30, 30)
@@ -436,52 +429,92 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.set_x(10)
     pdf.multi_cell(190, 6, block_c, fill=True)
     
-    # ---------------- СТРАНИЦА 4: МАТРИЦА ПРОБЛЕМ (СЖАТАЯ) ----------------
+    # ---------------- СТРАНИЦА 4: МАТРИЦА ПРОБЛЕМ (ВОРОНКА) ----------------
     pdf.add_page()
     pdf.set_font('Roboto', 'B', 20)
     pdf.set_text_color(40, 40, 40)
-    pdf.cell(0, 15, safe_text('Аналитика репутационных активов'), 0, 1, 'L')
+    pdf.cell(0, 15, safe_text('Аналитика воронки продаж (Поиск уязвимостей)'), 0, 1, 'L')
     pdf.ln(5)
     
-    passed_items = [r for r in results_data if r['Результат'] == "ДА"]
-    failed_items = [r for r in results_data if r['Результат'] == "НЕТ"]
-    
-    # Сильные стороны (Группировка)
-    if passed_items:
-        pdf.set_fill_color(240, 255, 240)
-        pdf.set_font('Roboto', 'B', 12)
-        pdf.set_text_color(40, 140, 40)
-        pdf.cell(190, 10, safe_text('  Защищенные активы (Сильные стороны профиля):'), 0, 1, 'L', fill=True)
-        pdf.set_font('Roboto', '', 10)
-        pdf.set_text_color(60, 60, 60)
-        passed_names = ", ".join([safe_text(r['Критерий']) for r in passed_items])
-        pdf.set_x(10)
-        pdf.multi_cell(190, 6, passed_names, fill=True)
-        pdf.ln(10)
-    
-    # Зоны риска (Только проблемы)
-    pdf.set_font('Roboto', 'B', 14)
-    pdf.set_text_color(180, 30, 30)
-    pdf.cell(0, 10, safe_text('Зоны риска и точки потери конверсии:'), 0, 1, 'L')
-    pdf.ln(2)
-    
-    for r in failed_items:
-        if pdf.get_y() > 250: pdf.add_page()
+    blocks = [
+        {
+            "title": "Блок 1. Видимость и Охваты (Генерация трафика)",
+            "groups": ['SEO и Трафик', 'Активность'],
+            "desc": "Зона ответственности: Попадание карточки в топ выдачи Яндекса по целевым B2B-запросам. Этот этап показывает, сколько бесплатного органического трафика вы собираете на картах."
+        },
+        {
+            "title": "Блок 2. Упаковка и Конверсия (Захват лида)",
+            "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'],
+            "desc": "Зона ответственности: Превращение «просмотров» в реальные звонки и переходы на сайт. Понятно ли клиенту за 3 секунды, почему нужно выбрать именно вас."
+        },
+        {
+            "title": "Блок 3. Репутационный капитал (Удержание и Доверие)",
+            "groups": ['Репутация'],
+            "desc": "Зона ответственности: Готовность клиента доверить вам деньги на основе мнений других. Влияет на LTV и снятие финальных возражений перед звонком."
+        },
+        {
+            "title": "Блок 4. Скрытые алгоритмы (Техническая монополия)",
+            "groups": ['Технологии и ИИ'],
+            "desc": "Зона ответственности: Невидимая техническая оптимизация, которую считывают роботы Яндекса. Фундамент защиты от пессимизации и монополизации выдачи."
+        }
+    ]
+
+    for block in blocks:
+        # Фильтруем метрики по группам для текущего блока
+        block_items = [r for r in results_data if r['Группа'] in block['groups']]
         
-        pdf.set_font('Roboto', 'B', 11)
-        pdf.set_text_color(180, 30, 30)
-        pdf.cell(22, 6, safe_text("[ РИСК ]"), 0, 0, 'L')
+        # Если в базе нет метрик для этого блока, пропускаем его
+        if not block_items: continue
         
+        passed_items = [r for r in block_items if r['Результат'] == "ДА"]
+        failed_items = [r for r in block_items if r['Результат'] == "НЕТ"]
+        
+        # Защита от разрыва страницы перед началом блока
+        if pdf.get_y() > 220: pdf.add_page()
+        
+        # Заголовок блока
+        pdf.set_fill_color(240, 240, 240)
+        pdf.set_font('Roboto', 'B', 14)
         pdf.set_text_color(40, 40, 40)
-        c_name = safe_text(r['Критерий'])
-        pdf.cell(0, 6, f"{c_name}", 0, 1, 'L')
+        pdf.cell(190, 10, safe_text(block['title']), 0, 1, 'L', fill=True)
         
+        # Описание блока
         pdf.set_font('Roboto', 'I', 10)
         pdf.set_text_color(100, 100, 100)
-        c_reason = safe_text(r['Обоснование'])
         pdf.set_x(10)
-        pdf.multi_cell(190, 5, safe_text(f"Экспертный вывод: {c_reason}"))
+        pdf.multi_cell(190, 5, safe_text(block['desc']))
         pdf.ln(3)
+        
+        # Успешные метрики (Сильные стороны)
+        if passed_items:
+            pdf.set_font('Roboto', 'B', 10)
+            pdf.set_text_color(40, 140, 40)
+            passed_names = ", ".join([safe_text(r['Критерий']) for r in passed_items])
+            pdf.set_x(10)
+            pdf.multi_cell(190, 5, safe_text(f"✅ Защищенные активы: {passed_names}"))
+            pdf.ln(3)
+            
+        # Проваленные метрики (Зоны риска)
+        if failed_items:
+            for r in failed_items:
+                if pdf.get_y() > 260: pdf.add_page()
+                
+                pdf.set_font('Roboto', 'B', 11)
+                pdf.set_text_color(180, 30, 30)
+                pdf.cell(22, 6, safe_text("[ РИСК ]"), 0, 0, 'L')
+                
+                pdf.set_text_color(40, 40, 40)
+                c_name = safe_text(r['Критерий'])
+                pdf.cell(0, 6, f"{c_name}", 0, 1, 'L')
+                
+                pdf.set_font('Roboto', 'I', 10)
+                pdf.set_text_color(100, 100, 100)
+                c_reason = safe_text(r['Обоснование'])
+                pdf.set_x(10)
+                pdf.multi_cell(190, 5, safe_text(f"Вывод эксперта: {c_reason}"))
+                pdf.ln(2)
+        
+        pdf.ln(5)
 
     # ---------------- СТРАНИЦА 5: ДОРОЖНАЯ КАРТА (ТОП-3) ----------------
     pdf.add_page()
@@ -490,11 +523,12 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.cell(0, 15, safe_text('Дорожная карта внедрения (Roadmap)'), 0, 1, 'L')
     pdf.ln(5)
     
+    failed_items_all = [r for r in results_data if r['Результат'] == "НЕТ"]
     stages = sorted(list(set([r['Этап'] for r in results_data])))
+    
     for stage in stages:
-        stage_tasks = [r for r in failed_items if r['Этап'] == stage]
+        stage_tasks = [r for r in failed_items_all if r['Этап'] == stage]
         
-        # Печатаем только этапы, где есть работа
         if stage_tasks:
             pdf.set_fill_color(245, 245, 245)
             pdf.set_font('Roboto', 'B', 12)
@@ -504,7 +538,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             pdf.set_font('Roboto', '', 11)
             pdf.set_text_color(80, 80, 80)
             
-            # Показываем только ТОП-3 задачи для сохранения интриги
             top_tasks = stage_tasks[:3]
             for t in top_tasks:
                 task_text = safe_text(f"- {t['Критерий']}")
@@ -530,7 +563,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     
     pdf.set_font('Roboto', '', 14)
     pdf.set_text_color(80, 80, 80)
-    txt_offer = safe_text("Данный аудит выявил ключевые точки роста вашего бизнеса. Мы предлагаем внедрение разработанной дорожной карты «под ключ», чтобы закрыть утечку конверсии и превратить ваш профиль в генератор целевых лидов.")
+    txt_offer = safe_text("Данный аудит выявил ключевые уязвимости вашей воронки продаж на картах. Мы предлагаем внедрение разработанной дорожной карты «под ключ», чтобы закрыть утечку конверсии и превратить профиль в генератор B2B лидов.")
     pdf.set_x(10)
     pdf.multi_cell(190, 7, txt_offer, align='C')
     
@@ -594,6 +627,10 @@ if st.button("🚀 Запустить экспертный аудит", type="pr
                 name = str(r.get('Критерий', '')).strip()
                 roadmap = str(r.get('Этап внедрения (Roadmap)', 'Прочее'))
                 priority = str(r.get('Приоритет', '2 - Средний'))
+                
+                # Забираем группу из таблицы
+                group = str(r.get('Группа метрик', 'Прочее')).strip()
+                
                 try: max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
                 except: max_s = float(r.get('Балл', 0.0))
                 
@@ -610,7 +647,8 @@ if st.button("🚀 Запустить экспертный аудит", type="pr
                     results.append({
                         "Этап": roadmap, "Приоритет": priority, "Код": code, 
                         "Критерий": name, "Результат": comm, "Балл": val, 
-                        "Макс": max_s, "Обоснование": reason
+                        "Макс": max_s, "Обоснование": reason,
+                        "Группа": group # Добавляем группу в массив результатов
                     })
 
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
