@@ -143,16 +143,11 @@ def fetch_apify_data(yandex_url):
     
     data = dataset[0]
     
-    # Жесткий дебаг: если нет названия, отправляем алерт и выводим структуру
     if not data.get('title'):
         debug_keys = list(data.keys())
         debug_info = json.dumps(data, ensure_ascii=False)[:1000]
-        
-        # Алерт в Телеграм (компактный)
         tg_msg = f"Критический сбой: не найден ключ 'title'.\nДоступные ключи: {str(debug_keys[:10])}..."
         send_telegram_alert(tg_msg, yandex_url)
-        
-        # Ошибка на экран пользователя (подробная)
         raise Exception(f"Сбой ключа 'title'. \nДоступные ключи: {debug_keys}\n\nСырые данные: {debug_info}")
         
     return data
@@ -436,7 +431,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             pdf.cell(0, 6, "Все задачи этапа выполнены успешно.", 0, 1, 'L')
         else:
             for t in stage_tasks:
-                pdf.multi_cell(0, 5, f"• {t['Критерий']}")
+                pdf.multi_cell(0, 5, f"- {t['Критерий']}")  # ИСПРАВЛЕНО ЗДЕСЬ (тире вместо пули)
         pdf.ln(5)
         
     # ---------------- СТРАНИЦА 6: ОФФЕР ----------------
