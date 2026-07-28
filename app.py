@@ -21,7 +21,7 @@ import base64
 # 0. НАСТРОЙКИ БРЕНДИНГА PIN100
 # ==========================================
 PROJECT_NAME = "PIN100"
-EXPERT_TITLE = "Экспертная оценка репутационных активов"
+EXPERT_TITLE = "Аудит упущенной выручки и точек потери клиентов"
 
 # ==========================================
 # 1. НАСТРОЙКИ СЕКРЕТОВ И API
@@ -329,12 +329,12 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.cell(0, 15, 'PIN100', 0, 1, 'C')
     
     pdf.set_y(90)
-    pdf.set_font('Roboto', 'B', 24)
+    pdf.set_font('Roboto', 'B', 22)
     pdf.set_text_color(40, 40, 40)
-    pdf.cell(0, 15, safe_text('Экспертный аудит'), 0, 1, 'C')
-    pdf.cell(0, 15, safe_text('репутационных активов бизнеса'), 0, 1, 'C')
+    pdf.cell(0, 10, safe_text('Экспертный аудит упущенной выручки'), 0, 1, 'C')
+    pdf.cell(0, 10, safe_text('и скрытых точек потери клиентов'), 0, 1, 'C')
     
-    pdf.ln(15)
+    pdf.ln(20)
     pdf.set_font('Roboto', '', 14)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 10, f'Подготовлено для: {title}', 0, 1, 'C')
@@ -385,8 +385,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.ln(15)
     
     pdf.set_font('Roboto', '', 12)
-    pdf.set_text_color(80, 80, 80)
-    summary_text = safe_text("Вывод экспертной системы: Качество вашего продукта в данный момент нивелируется критическими пробелами в оформлении геосервисов. Вы теряете теплую B2B аудиторию на этапе принятия решения из-за отклонения от эталонных стандартов рынка.")
+    pdf.set_text_color(60, 60, 60)
+    summary_text = safe_text("Вывод эксперта: Отличное качество вашего продукта теряется из-за слабого присутствия в геосервисах. Из-за критических ошибок в заполнении карточки и отсутствии системной работы с отзывами вы уступаете позиции в поиске и ежемесячно отдаете горячих клиентов своим конкурентам.")
     pdf.set_x(10)
     pdf.multi_cell(190, 7, summary_text)
     
@@ -409,7 +409,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.cell(190, 10, safe_text(' А. Оценка капитала бренда (Бенчмарк PIN100)'), 0, 1, 'L', fill=True)
     pdf.set_font('Roboto', '', 11)
     pdf.set_text_color(80)
-    block_a = safe_text(f"Отклонение от рыночного эталона составляет {dev}%. В высококонкурентной среде '{niche}' это означает, что из каждых 10 теплых клиентов, дошедших до вашей карточки, {lost_clients} уходят к конкурентам.")
+    block_a = safe_text(f"Отклонение от алгоритмического эталона составляет {dev}%. В коммерческой выдаче Яндекса это приводит к падению охватов. Из каждых 10 потенциальных клиентов вашей ниши, {lost_clients} либо вообще не видят вашу компанию в топе, либо уходят к конкурентам из-за ошибок в оформлении и отзывах.")
     pdf.set_x(10)
     pdf.multi_cell(190, 6, block_a, fill=True)
     pdf.ln(5)
@@ -420,7 +420,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.cell(190, 10, safe_text(' Б. Ежемесячная упущенная выручка'), 0, 1, 'L', fill=True)
     pdf.set_font('Roboto', '', 11)
     pdf.set_text_color(80)
-    block_b = safe_text(f"Органический потенциал рынка составляет ~{client_leads} целевых обращений в месяц. При текущем отклонении потери составляют {lost_leads} обращений. При вашем среднем чеке в {client_check:,} ₽, это прямой убыток в размере {revenue_loss:,} ₽ / мес.".replace(',', ' '))
+    block_b = safe_text(f"Органический спрос в геосервисах по вашей нише составляет в среднем {client_leads} горячих обращений в месяц. Из-за низкого рейтинга профиля вы теряете около {lost_leads} потенциальных сделок. При среднем чеке в {client_check:,} ₽, ваш прямой убыток составляет {revenue_loss:,} ₽ / мес.".replace(',', ' '))
     pdf.set_x(10)
     pdf.multi_cell(190, 6, block_b, fill=True)
     pdf.ln(5)
@@ -432,7 +432,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.cell(190, 10, safe_text(' В. Скрытые убытки (Удар ниже пояса)'), 0, 1, 'L', fill=True)
     pdf.set_font('Roboto', '', 11)
     pdf.set_text_color(80)
-    block_c = safe_text(f"Средний срок жизни клиента (LTV) в вашей нише составляет минимум 12 месяцев. Потерянные контракты лишают вас будущих денежных потоков на сумму около {ltv_loss:,} ₽ в год. Это капитал, который прямо сейчас забирают конкуренты.".replace(',', ' '))
+    block_c = safe_text(f"В вашей сфере средний срок жизни клиента (LTV) составляет минимум 12 месяцев. Потерянные сегодня контракты лишают бизнес будущих стабильных платежей на сумму около {ltv_loss:,} ₽ в год. Это ваши реальные деньги, которые прямо сейчас забирают более заметные в картах конкуренты.".replace(',', ' '))
     pdf.set_x(10)
     pdf.multi_cell(190, 6, block_c, fill=True)
     
@@ -469,6 +469,9 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         if pdf.get_y() > 250: pdf.add_page()
         
         pdf.set_font('Roboto', 'B', 11)
+        pdf.set_text_color(180, 30, 30)
+        pdf.cell(22, 6, safe_text("[ РИСК ]"), 0, 0, 'L')
+        
         pdf.set_text_color(40, 40, 40)
         c_name = safe_text(r['Критерий'])
         pdf.cell(0, 6, f"{c_name}", 0, 1, 'L')
@@ -599,7 +602,6 @@ if st.button("🚀 Запустить экспертный аудит", type="pr
                     final_total_score += val
                     comm = "ДА" if val > 0 else "НЕТ"
                     
-                    # Избавляемся от мусорной фразы
                     if code in exp_reasons:
                         reason = exp_reasons[code]
                     else:
