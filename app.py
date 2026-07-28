@@ -12,7 +12,7 @@ from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
-from Pillow import Image
+from PIL import Image
 from fpdf import FPDF
 import base64
 
