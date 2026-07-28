@@ -41,7 +41,7 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
     
     if tg_token and tg_admin_id:
         tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-        text = f"🚨 *{PROJECT_NAME}: Критический сбой аудита*\n\n*Аудит:* {target_url}\n*Ошибка:* {error_msg}\n\n🛑 *Действие:* Генерация отчета остановлена."
+        text = f"🚨 *{PROJECT_NAME}: Сбой системы*\n\n*Цель:* {target_url}\n*Ошибка:* {error_msg}\n\n🛑 *Действие:* Генерация остановлена."
         try:
             requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
         except Exception:
@@ -111,25 +111,50 @@ def get_database_from_sheets():
 def fetch_apify_data(yandex_url):
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
     run_req = requests.post(run_url, json={"startUrls": [{"url": yandex_url}], "maxItems": 1}).json()
-    if 'error' in run_req: raise Exception(f"Ошибка Apify API: {run_req['error']}")
+    
+    if 'error' in run_req: 
+        err_msg = f"Ошибка Apify API: {run_req['error']}"
+        send_telegram_alert(err_msg, yandex_url)
+        raise Exception(err_msg)
         
     run_id, dataset_id = run_req['data']['id'], run_req['data']['defaultDatasetId']
     
     status, retries = "RUNNING", 0
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
-        if retries >= 35: raise Exception(f"Таймаут парсера. Логи: https://console.apify.com/actors/runs/{run_id}")
+        if retries >= 35: 
+            err_msg = f"Таймаут парсера. Логи: https://console.apify.com/actors/runs/{run_id}"
+            send_telegram_alert(err_msg, yandex_url)
+            raise Exception(err_msg)
         time.sleep(5)
         status_req = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}").json()
         status = status_req['data']['status']
         retries += 1
         
-    if status != "SUCCEEDED": raise Exception(f"Парсер упал со статусом {status}.")
+    if status != "SUCCEEDED": 
+        err_msg = f"Парсер упал со статусом {status}."
+        send_telegram_alert(err_msg, yandex_url)
+        raise Exception(err_msg)
+        
     dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}").json()
-    if not dataset or len(dataset) == 0: raise Exception("Парсер отработал, но Яндекс не отдал данные. Повторите запрос.")
+    if not dataset or len(dataset) == 0: 
+        err_msg = "Парсер отработал, но Яндекс не отдал данные (вероятно капча). Повторите запрос."
+        send_telegram_alert(err_msg, yandex_url)
+        raise Exception(err_msg)
     
     data = dataset[0]
+    
+    # Жесткий дебаг: если нет названия, отправляем алерт и выводим структуру
     if not data.get('title'):
-        raise Exception("Критический сбой парсинга. Запустите аудит еще раз.")
+        debug_keys = list(data.keys())
+        debug_info = json.dumps(data, ensure_ascii=False)[:1000]
+        
+        # Алерт в Телеграм (компактный)
+        tg_msg = f"Критический сбой: не найден ключ 'title'.\nДоступные ключи: {str(debug_keys[:10])}..."
+        send_telegram_alert(tg_msg, yandex_url)
+        
+        # Ошибка на экран пользователя (подробная)
+        raise Exception(f"Сбой ключа 'title'. \nДоступные ключи: {debug_keys}\n\nСырые данные: {debug_info}")
+        
     return data
 
 # ==========================================
@@ -348,7 +373,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.cell(0, 10, 'А. Оценка капитала бренда (Бенчмарк PIN100)', 0, 1, 'L')
     pdf.set_font('Roboto', '', 11)
     pdf.set_text_color(80)
-    pdf.multi_cell(0, 6, f"Ваш текущий индекс готовности профиля: {round(score,1)} / 100. Отклонение от рыночного эталона составляет {dev}%. В условиях высококонкурентной среды {niche} это означает, что из каждых 10 теплых клиентов, дошедших до вашей карточки, {lost_clients} уходят к конкурентам с более проработанным профилем.")
+    pdf.multi_cell(0, 6, f"Ваш текущий индекс готовности профиля: {round(score,1)} / 100. Отклонение от рыночного эталона составляет {dev}%. В условиях высококонкурентной среды '{niche}' это означает, что из каждых 10 теплых клиентов, дошедших до вашей карточки, {lost_clients} уходят к конкурентам с более проработанным профилем.")
     pdf.ln(8)
     
     pdf.set_font('Roboto', 'B', 14)
@@ -364,7 +389,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.cell(0, 10, 'В. Скрытые убытки (Удар ниже пояса)', 0, 1, 'L')
     pdf.set_font('Roboto', '', 11)
     pdf.set_text_color(80)
-    pdf.multi_cell(0, 6, f"Учитывая, что в сфере B2B средний срок жизни клиента (LTV) составляет минимум 12 месяцев, потерянные в этом месяце контракты лишают вашу компанию будущих денежных потоков на сумму около {ltv_loss:,} ₽ в годовом исчислении (Годовой LTV). Это капитал, который прямо сейчас забирают ваши конкуренты.".replace(',', ' '))
+    pdf.multi_cell(0, 6, f"Учитывая, что средний срок жизни клиента (LTV) составляет минимум 12 месяцев, потерянные в этом месяце контракты лишают вашу компанию будущих денежных потоков на сумму около {ltv_loss:,} ₽ в годовом исчислении (Годовой LTV). Это капитал, который прямо сейчас забирают ваши конкуренты.".replace(',', ' '))
     
     # ---------------- СТРАНИЦА 4: МАТРИЦА ПРОБЛЕМ ----------------
     pdf.add_page()
@@ -424,7 +449,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     
     pdf.set_font('Roboto', '', 14)
     pdf.set_text_color(80, 80, 80)
-    txt_offer = "Данный аудит выявил ключевые точки роста вашего бизнеса. Мы предлагаем внедрение разработанной дорожной карты «под ключ», чтобы закрыть утечку конверсии и превратить ваш профиль в генератор целевых B2B лидов."
+    txt_offer = "Данный аудит выявил ключевые точки роста вашего бизнеса. Мы предлагаем внедрение разработанной дорожной карты «под ключ», чтобы закрыть утечку конверсии и превратить ваш профиль в генератор целевых лидов."
     pdf.multi_cell(0, 7, txt_offer, align='C')
     
     pdf.ln(20)
