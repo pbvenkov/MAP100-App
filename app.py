@@ -20,14 +20,13 @@ from PIL import Image
 APIFY_API_TOKEN = st.secrets.get("APIFY_API_TOKEN", "")
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
 
-# Инициализация ИИ (используем последнюю версию Flash)
+# Инициализация ИИ
 try:
     genai.configure(api_key=st.secrets.get("GEMINI_API_KEY", ""))
     ai_model = genai.GenerativeModel('gemini-3.6-flash') 
 except Exception as e:
     ai_model = None
 
-# Функция для отправки алертов в Telegram
 def send_telegram_alert(error_msg, target_url="Неизвестно"):
     tg_token = st.secrets.get("TG_BOT_TOKEN")
     tg_admin_id = st.secrets.get("TG_ADMIN_ID")
@@ -44,13 +43,13 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
 # 1.5. БАЗА ДАННЫХ НИШ И РЕГЛАМЕНТОВ
 # ==========================================
 NICHE_ECONOMICS = {
-    "HORECA": {"leads": 300, "check": 2500},
-    "B2B_PRODUCTION": {"leads": 20, "check": 100000},
-    "RETAIL": {"leads": 400, "check": 1500},
-    "AUTO": {"leads": 150, "check": 8000},
-    "SERVICES": {"leads": 100, "check": 5000},
-    "BEAUTY_MEDICAL": {"leads": 150, "check": 4000},
-    "OTHER": {"leads": 100, "check": 3000}
+    "HORECA": {"leads": 150, "check": 2000},
+    "B2B": {"leads": 40, "check": 30000},
+    "RETAIL": {"leads": 200, "check": 1500},
+    "AUTO": {"leads": 100, "check": 12000},
+    "SERVICES": {"leads": 60, "check": 7000},
+    "BEAUTY_MEDICAL": {"leads": 80, "check": 6000},
+    "OTHER": {"leads": 50, "check": 5000}
 }
 
 def determine_niche(title, category):
@@ -61,19 +60,19 @@ def determine_niche(title, category):
     Определи бизнес по названию "{title}" и категории "{category}".
     ВНИМАНИЕ: Если в категории есть слова "стоматология", "клиника", "медицина", "красота", "салон" - это СТРОГО BEAUTY_MEDICAL.
     Выбери ОДИН наиболее подходящий ключ из списка:
-    - HORECA 
-    - B2B_PRODUCTION 
-    - RETAIL 
-    - AUTO 
-    - SERVICES 
-    - BEAUTY_MEDICAL 
-    - OTHER 
+    - HORECA (Рестораны, кафе, бары)
+    - B2B (Обслуживание бизнеса: канцелярия, пурифайеры, доставка воды, IT-аутсорс, клининг)
+    - RETAIL (Магазины B2C)
+    - AUTO (Автосервисы, детейлинг)
+    - SERVICES (Услуги B2C, ремонт)
+    - BEAUTY_MEDICAL (Медицина, салоны)
+    - OTHER (Прочее)
     Верни ТОЛЬКО ОДНО СЛОВО - ключ на английском.
     """
     try:
         response = ai_model.generate_content(prompt)
         key = response.text.strip().upper()
-        valid_keys = ["BEAUTY_MEDICAL", "HORECA", "B2B_PRODUCTION", "RETAIL", "AUTO", "SERVICES", "OTHER"]
+        valid_keys = ["BEAUTY_MEDICAL", "HORECA", "B2B", "RETAIL", "AUTO", "SERVICES", "OTHER"]
         for v in valid_keys:
             if v in key: return v
         return "OTHER"
@@ -249,13 +248,11 @@ def calculate_rep_rules(data):
         a_date = None
         is_replied = False
 
-        # Ищем ответ в новом формате (просто строка)
         if r.get('businessComment'):
             rep_text = str(r.get('businessComment')).strip()
             a_date = r.get('businessCommentDate')
             if rep_text: is_replied = True
         else:
-            # Ищем ответ в старом формате (вложенный словарь)
             rep = r.get('reply') or r.get('ownerAnswer') or r.get('businessResponse') or r.get('response')
             if isinstance(rep, dict):
                 rep_text = str(rep.get('text') or '').strip()
@@ -314,8 +311,6 @@ def calculate_dynamic_ai_rules(data, prompts_data):
         for r in reviews_data[:10]:
             if isinstance(r, dict):
                 txt = str(r.get('text') or '').strip()
-                
-                # Обновленный поиск ответа для ИИ
                 rep_txt = ""
                 if r.get('businessComment'):
                     rep_txt = str(r.get('businessComment')).strip()
@@ -447,9 +442,18 @@ if st.button("🚀 Запустить глубокий аудит", type="primar
                     comm = "✅ Выполнено" if val > 0 else "❌ Требует внедрения"
                     results.append({"Этап": roadmap, "Приоритет": priority, "Критерий": name, "Балл": val, "Макс": max_s, "Статус": comm})
 
+            # Подключаем интерактивный калькулятор экономики в боковую панель
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
+            
+            with st.sidebar:
+                st.divider()
+                st.markdown("### 🧮 Калькулятор экономики")
+                st.caption("Подстройте показатели под реалии клиента")
+                client_leads = st.number_input("Потенциал лидов/мес", value=eco["leads"], step=10)
+                client_check = st.number_input("Средний чек (₽)", value=eco["check"], step=5000)
+
             lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
-            lost_revenue = int(eco["leads"] * lost_percentage * eco["check"])
+            lost_revenue = int(client_leads * lost_percentage * client_check)
             
             st.divider()
             col1, col2 = st.columns([2, 1])
@@ -461,7 +465,7 @@ if st.button("🚀 Запустить глубокий аудит", type="primar
                 st.metric("Общий рейтинг MAP100", f"{round(final_total_score, 1)} / 100", delta="Требует оптимизации" if final_total_score < 80 else "Отличный результат", delta_color=color)
 
             st.markdown("### 💸 Цена ошибок (Lost Revenue)")
-            st.error(f"При вашей оценке ({round(final_total_score, 1)}/100) и среднем чеке в {eco['check']:,} ₽, вы ежемесячно недополучаете горячего трафика на сумму около **{lost_revenue:,} ₽**.".replace(',', ' '))
+            st.error(f"При вашей оценке ({round(final_total_score, 1)}/100) и среднем чеке в {client_check:,} ₽, вы ежемесячно недополучаете горячего трафика на сумму около **{lost_revenue:,} ₽**.".replace(',', ' '))
             
             st.divider()
             st.markdown("### 🗺 Пошаговый план внедрения (Roadmap)")
