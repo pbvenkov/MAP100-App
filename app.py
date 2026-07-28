@@ -29,14 +29,12 @@ EXPERT_TITLE = "Экспертная оценка репутационных а�
 APIFY_API_TOKEN = st.secrets.get("APIFY_API_TOKEN", "")
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
 
-# Инициализация модуля экспертной оценки (Gemini 3.6 Flash)
 try:
     genai.configure(api_key=st.secrets.get("GEMINI_API_KEY", ""))
     expert_engine = genai.GenerativeModel('gemini-3.6-flash') 
 except Exception as e:
     expert_engine = None
 
-# Функция для отправки алертов в Telegram
 def send_telegram_alert(error_msg, target_url="Неизвестно"):
     tg_token = st.secrets.get("TG_BOT_TOKEN")
     tg_admin_id = st.secrets.get("TG_ADMIN_ID")
@@ -54,7 +52,7 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
 # ==========================================
 NICHE_ECONOMICS = {
     "HORECA": {"leads": 150, "check": 2000, "label": "HORECA"},
-    "B2B": {"leads": 40, "check": 30000, "label": "B2B / Обеспечение бизнеса"},
+    "B2B": {"leads": 40, "check": 30000, "label": "Легкий B2B / Обеспечение бизнеса"},
     "RETAIL": {"leads": 200, "check": 1500, "label": "Ритейл"},
     "AUTO": {"leads": 100, "check": 12000, "label": "Авто"},
     "SERVICES": {"leads": 60, "check": 7000, "label": "Услуги B2C"},
@@ -127,15 +125,15 @@ def fetch_apify_data(yandex_url):
         
     if status != "SUCCEEDED": raise Exception(f"Парсер упал со статусом {status}.")
     dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}").json()
-    if not dataset or len(dataset) == 0: raise Exception("Парсер отработал, но Яндекс не отдал данные (защита от ботов). Повторите запрос.")
+    if not dataset or len(dataset) == 0: raise Exception("Парсер отработал, но Яндекс не отдал данные. Повторите запрос.")
     
     data = dataset[0]
     if not data.get('title'):
-        raise Exception("Критический сбой парсинга: Отсутствует Название компании. Яндекс отдал пустую страницу. Запустите аудит еще раз.")
+        raise Exception("Критический сбой парсинга. Запустите аудит еще раз.")
     return data
 
 # ==========================================
-# 3. АЛГОРИТМЫ ОЦЕНКИ PIN100 (АУДИТ)
+# 3. АЛГОРИТМЫ ОЦЕНКИ PIN100
 # ==========================================
 def get_safe_list(data, keys):
     res = []
@@ -148,7 +146,6 @@ def calculate_prof_rules(data):
     scores = {}
     title = str(data.get('title') or '')
     description = str(data.get('description') or '')
-    
     if data.get('isVerifiedOwner'):
         for k in ['PROF-12.1', 'PROF-01.1', 'PROF-03.1', 'PROF-05.1', 'PROF-07.1']: scores[k] = True
     else:
@@ -158,57 +155,40 @@ def calculate_prof_rules(data):
         schedule = data.get('schedule') or data.get('workingHours') or []
         if isinstance(schedule, list) and len(schedule) >= 7: scores['PROF-07.1'] = True
         elif isinstance(schedule, dict) and len(schedule.keys()) >= 7: scores['PROF-07.1'] = True
-
     feat = data.get('features')
     if isinstance(feat, list):
         if len(feat) > 0: scores['PROF-08.1'] = True
         if len(feat) >= 5: scores['PROF-08.2'] = True
-    else: feat = []
-
     if len(description) > 1500: scores['PROF-09.1'] = True
-    
     url = str(data.get('url') or data.get('website') or '').lower()
     if url: scores['PROF-04.1'] = True
-            
     prods = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
     valid_prods = [p for p in prods if isinstance(p, dict)]
     if len(valid_prods) >= 10: scores['PROF-11.1'] = True
-    
     owner_links = url + " " + description + " "
     links_data = data.get('links') or data.get('socialLinks') or data.get('socials') or []
     if isinstance(links_data, list): owner_links += " ".join(str(l) for l in links_data)
     elif isinstance(links_data, dict): owner_links += " ".join(str(v) for v in links_data.values())
-    owner_links = owner_links.lower()
-
-    if any(s in owner_links for s in ["vk.com", "youtube", "dzen", "instagram", "inst:"]): scores['PROF-13.2'] = True
+    if any(s in owner_links.lower() for s in ["vk.com", "youtube", "dzen", "instagram", "inst:"]): scores['PROF-13.2'] = True
     return scores
 
 def calculate_rep_rules(data):
     scores = {}
     try: rating = float(data.get('rating') or 0.0)
     except: rating = 0.0
-        
     if rating >= 4.5: scores['REP-27.1'] = True
     if rating >= 4.8: scores['REP-27.2'] = True
-    
     try: rev_count = int(data.get('reviewsCount') or data.get('ratingsCount') or 0)
     except: rev_count = 0
     if rev_count >= 50: scores['REP-28.1'] = True
-
     reviews_raw = data.get('reviews')
     if not isinstance(reviews_raw, list): return scores
     reviews = [r for r in reviews_raw if isinstance(r, dict)]
     if not reviews: return scores
-
     ow_txt = []
-    
     for r in reviews[:20]:
-        try: rate = float(r.get('rating') or 0.0)
-        except: rate = 0.0
-        
-        rep_text = ""
         is_replied = False
-
+        rep_text = ""
         if r.get('businessComment'):
             rep_text = str(r.get('businessComment')).strip()
             if rep_text: is_replied = True
@@ -217,13 +197,10 @@ def calculate_rep_rules(data):
             if isinstance(rep, dict):
                 rep_text = str(rep.get('text') or '').strip()
                 if rep_text: is_replied = True
-
         if is_replied and rep_text: ow_txt.append(rep_text.lower())
-                
     if ow_txt:
-        stop_words = ['не были', 'не находим', 'уточните', 'нет в базе', 'какой номер']
+        stop_words = ['не были', 'не находим', 'уточните', 'нет в базе']
         if any(w in t for t in ow_txt for w in stop_words): scores['REP-33.1'] = True
-
     return scores
 
 def calculate_dynamic_expert_rules(data, prompts_data):
@@ -242,46 +219,27 @@ def calculate_dynamic_expert_rules(data, prompts_data):
         for r in reviews_data[:10]:
             if isinstance(r, dict):
                 txt = str(r.get('text') or '').strip()
-                
                 rep_txt = ""
                 if r.get('businessComment'):
                     rep_txt = str(r.get('businessComment')).strip()
                 else:
                     rep = r.get('reply') or r.get('ownerAnswer') or r.get('businessResponse') or r.get('response')
-                    if isinstance(rep, dict):
-                        rep_txt = str(rep.get('text') or '').strip()
-                        
-                if txt: reviews_text.append(f"Отзыв: {txt} | Ответ владельца: {rep_txt if rep_txt else 'ОТВЕТ ОТСУТСТВУЕТ'}")
+                    if isinstance(rep, dict): rep_txt = str(rep.get('text') or '').strip()
+                if txt: reviews_text.append(f"Отзыв: {txt} | Ответ: {rep_txt if rep_txt else 'ОТВЕТ ОТСУТСТВУЕТ'}")
 
-    context = f"Название: {title}\nОписание: {desc}\nОсобенности/Услуги: {feat_str}\n"
-    if reviews_text: context += "Последние отзывы и ответы:\n" + "\n".join(reviews_text)
+    context = f"Название: {title}\nОписание: {desc}\nОсобенности: {feat_str}\n"
+    if reviews_text: context += "Отзывы и ответы:\n" + "\n".join(reviews_text)
 
-    rules_list = []
-    for p in prompts_data:
-        code = str(p.get('Код', '')).strip()
-        prompt_text = str(p.get('Промпт для ИИ', '')).strip()
-        if code and prompt_text: rules_list.append(f'"{code}": {prompt_text}')
-
+    rules_list = [f'"{str(p.get("Код", "")).strip()}": {str(p.get("Промпт для ИИ", "")).strip()}' for p in prompts_data if str(p.get('Код', '')).strip()]
     if not rules_list: return scores, reasons
 
     batch_prompt = f"""
-Ты — ведущий эксперт по репутационному аудиту геосервисов. Проанализируй контекст карточки компании и дай экспертную оценку по всем перечисленным критериям.
-
-Контекст карточки:
+Ты — ведущий эксперт по репутационному аудиту. Оцени карточку компании по критериям.
+Контекст:
 {context}
-
-Критерии для оценки (Код: Экспертное правило):
+Критерии:
 {chr(10).join(rules_list)}
-
-ТВОЯ ЗАДАЧА:
-Верни СТРОГО один JSON-объект, где ключи — это коды критериев, а значения — объекты с полями "score" (boolean: true если выполнено, false если нет) и "reason" (строка: краткое экспертное обоснование на 1 предложение).
-Никакого лишнего текста.
-
-Пример ответа:
-{{
-  "AI-01": {{"score": true, "reason": "В описании четко зафиксировано уникальное торговое предложение (УТП) компании."}},
-  "AI-02": {{"score": false, "reason": "Представитель компании игнорирует критические отзывы клиентов."}}
-}}
+Верни СТРОГО один JSON, ключи — коды, значения — объекты {{"score": boolean, "reason": "краткое экспертное обоснование"}}.
 """
     try:
         response = expert_engine.generate_content(batch_prompt)
@@ -290,146 +248,203 @@ def calculate_dynamic_expert_rules(data, prompts_data):
             res_json = json.loads(match.group(0))
             for code, result in res_json.items():
                 if isinstance(result, dict):
-                    is_passed = result.get('score') in [1, True, "1", "true"]
-                    if is_passed: scores[code] = True
+                    if result.get('score') in [1, True, "1", "true"]: scores[code] = True
                     reasons[code] = result.get('reason', 'Нет объяснения')
-        else:
-            raise Exception("Модуль экспертной оценки вернул неверный формат.")
     except Exception as e:
-        raise Exception(f"Сбой модуля экспертной оценки (Аудит): {str(e)}")
-        
+        raise Exception(f"Сбой экспертного модуля: {str(e)}")
     return scores, reasons
 
 # ==========================================
-# 3.5. ГЕНЕРАЦИЯ PDF-ОТЧЕТА PIN100
+# 3.5. ГЕНЕРАЦИЯ PDF-ОТЧЕТА PIN100 (КОММЕРЧЕСКАЯ ВЕРСИЯ)
 # ==========================================
 class PIN100Report(FPDF):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
-        # Автоматически скачиваем шрифт Roboto (Обычный и Жирный) для кириллицы
         font_reg = "Roboto-Regular.ttf"
         font_bold = "Roboto-Bold.ttf"
+        font_italic = "Roboto-Italic.ttf"
         
         if not os.path.exists(font_reg):
             open(font_reg, 'wb').write(requests.get("https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Regular.ttf").content)
         if not os.path.exists(font_bold):
             open(font_bold, 'wb').write(requests.get("https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Bold.ttf").content)
+        if not os.path.exists(font_italic):
+            open(font_italic, 'wb').write(requests.get("https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Italic.ttf").content)
         
-        # Подключаем шрифты к PDF
         self.add_font("Roboto", "", font_reg)
         self.add_font("Roboto", "B", font_bold)
-
-    def header(self):
-        # Заглушка под логотип PIN100
-        self.set_font('Roboto', 'B', 15)
-        self.set_text_color(160, 30, 30) # Красный PIN
-        self.cell(20, 10, 'PIN', 0, 0, 'L')
-        self.set_text_color(40, 40, 40)
-        self.cell(40, 10, '100', 0, 0, 'L')
-        self.set_font('Roboto', '', 8)
-        self.set_text_color(100)
-        self.cell(0, 10, 'Экспертный аудит репутационных активов', 0, 1, 'R')
-        self.ln(5)
+        self.add_font("Roboto", "I", font_italic)
 
     def footer(self):
         self.set_y(-15)
         self.set_font('Roboto', '', 8)
-        self.set_text_color(128)
-        self.cell(0, 10, f'Стр. {self.page_no()}', 0, 0, 'C')
+        self.set_text_color(180, 180, 180)
+        self.cell(0, 10, f'PIN100 Confidential | Стр. {self.page_no()}', 0, 0, 'C')
 
-def create_pdf_report(title, niche, score, revenue_loss, data_matrix):
+def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check):
     pdf = PIN100Report()
+    
+    # ---------------- СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ ----------------
     pdf.add_page()
-    
-    # 1. Executive Summary
-    pdf.set_font('Roboto', 'B', 16)
+    pdf.set_y(100)
+    pdf.set_font('Roboto', 'B', 48)
+    pdf.set_text_color(160, 30, 30)
+    pdf.cell(0, 20, 'PIN100', 0, 1, 'C')
+    pdf.set_font('Roboto', 'B', 18)
     pdf.set_text_color(40, 40, 40)
-    pdf.cell(0, 15, f'Аудит компании: {title}', 0, 1, 'L')
+    pdf.cell(0, 10, 'Экспертный аудит репутационных активов', 0, 1, 'C')
+    pdf.cell(0, 10, 'и точек потери прибыли', 0, 1, 'C')
+    pdf.ln(20)
+    pdf.set_font('Roboto', '', 14)
+    pdf.cell(0, 10, f'Аудит подготовлен для: {title}', 0, 1, 'C')
+    pdf.set_y(-40)
+    pdf.set_font('Roboto', 'I', 12)
+    pdf.set_text_color(150, 150, 150)
+    pdf.cell(0, 10, 'Строго конфиденциально', 0, 1, 'C')
     
-    pdf.set_font('Roboto', '', 10)
-    pdf.set_text_color(100)
-    pdf.cell(0, 7, f'Нишевой сегмент: {niche}', 0, 1, 'L')
+    # ---------------- СТРАНИЦА 2: EXECUTIVE SUMMARY ----------------
+    pdf.add_page()
+    pdf.set_y(20)
+    pdf.set_font('Roboto', 'B', 24)
+    pdf.set_text_color(40, 40, 40)
+    pdf.cell(0, 15, 'Резюме для руководителя (Executive Summary)', 0, 1, 'L')
+    pdf.ln(10)
+    
+    pdf.set_font('Roboto', '', 14)
+    pdf.cell(0, 10, 'Итоговый индекс готовности профиля:', 0, 1, 'L')
+    pdf.set_font('Roboto', 'B', 40)
+    if score >= 80: pdf.set_text_color(40, 160, 40)
+    elif score >= 50: pdf.set_text_color(220, 150, 0)
+    else: pdf.set_text_color(160, 30, 30)
+    pdf.cell(0, 15, f'{round(score, 1)} / 100', 0, 1, 'L')
+    
+    pdf.ln(10)
+    pdf.set_font('Roboto', '', 14)
+    pdf.set_text_color(40, 40, 40)
+    pdf.cell(0, 10, 'Упущенная выручка (в месяц):', 0, 1, 'L')
+    pdf.set_font('Roboto', 'B', 40)
+    pdf.set_text_color(160, 30, 30)
+    pdf.cell(0, 15, f'{revenue_loss:,} ₽'.replace(',', ' '), 0, 1, 'L')
+    
+    pdf.ln(15)
+    pdf.set_font('Roboto', '', 12)
+    pdf.set_text_color(80, 80, 80)
+    summary_text = "Вывод экспертной системы: Отличное качество вашего продукта нивелируется критическими пробелами в коммуникации и оформлении геосервисов. Вы теряете значительную долю теплого трафика на этапе принятия решения из-за отклонения от эталонных стандартов рынка."
+    pdf.multi_cell(0, 7, summary_text)
+    
+    # ---------------- СТРАНИЦА 3: ПРОЗРАЧНАЯ ЭКОНОМИКА ----------------
+    pdf.add_page()
+    pdf.set_font('Roboto', 'B', 20)
+    pdf.set_text_color(40, 40, 40)
+    pdf.cell(0, 15, 'Финансовый аудит репутационных активов', 0, 1, 'L')
     pdf.ln(5)
     
-    # Индекс готовности (RAG)
-    pdf.set_fill_color(240, 240, 240)
-    if score >= 80: fill = (100, 200, 100); text = "Отличный результат"
-    elif score >= 50: fill = (230, 200, 100); text = "Требует оптимизации"
-    else: fill = (200, 100, 100); text = "Критический уровень риска"
+    dev = round(100 - score, 1)
+    lost_clients = int(round(dev / 10))
+    lost_leads = int(client_leads * (dev / 100))
+    ltv_loss = revenue_loss * 12
     
-    pdf.set_font('Roboto', 'B', 12)
-    pdf.cell(90, 15, 'Индекс репутационного капитала PIN100:', 0, 0, 'L', True)
-    pdf.set_text_color(255)
-    pdf.set_fill_color(*fill)
-    pdf.cell(40, 15, f'{round(score, 1)} / 100', 0, 0, 'C', True)
-    pdf.set_text_color(100)
-    pdf.cell(0, 15, f' ({text})', 0, 1, 'L')
-    pdf.ln(10)
+    pdf.set_font('Roboto', 'B', 14)
+    pdf.cell(0, 10, 'А. Оценка капитала бренда (Бенчмарк PIN100)', 0, 1, 'L')
+    pdf.set_font('Roboto', '', 11)
+    pdf.set_text_color(80)
+    pdf.multi_cell(0, 6, f"Ваш текущий индекс готовности профиля: {round(score,1)} / 100. Отклонение от рыночного эталона составляет {dev}%. В условиях высококонкурентной среды {niche} это означает, что из каждых 10 теплых клиентов, дошедших до вашей карточки, {lost_clients} уходят к конкурентам с более проработанным профилем.")
+    pdf.ln(8)
     
-    # Потери
+    pdf.set_font('Roboto', 'B', 14)
+    pdf.set_text_color(40, 40, 40)
+    pdf.cell(0, 10, 'Б. Расчет упущенной выручки (Ежемесячно)', 0, 1, 'L')
+    pdf.set_font('Roboto', '', 11)
+    pdf.set_text_color(80)
+    pdf.multi_cell(0, 6, f"На основе анализа емкости рынка в нише '{niche}', органический потенциал геосервисов составляет в среднем {client_leads} целевых обращений в месяц. При текущем отклонении от эталона ({dev}%), потери составляют {lost_leads} обращений. При вашем среднем чеке в {client_check:,} ₽, прямая недополученная выручка составляет {revenue_loss:,} ₽ / мес.".replace(',', ' '))
+    pdf.ln(8)
+    
     pdf.set_font('Roboto', 'B', 14)
     pdf.set_text_color(160, 30, 30)
-    pdf.cell(0, 10, 'ФИНАНСОВЫЙ АУДИТ ПОТЕРЬ (Tracking Error)', 0, 1, 'L')
+    pdf.cell(0, 10, 'В. Скрытые убытки (Удар ниже пояса)', 0, 1, 'L')
     pdf.set_font('Roboto', '', 11)
+    pdf.set_text_color(80)
+    pdf.multi_cell(0, 6, f"Учитывая, что в сфере B2B средний срок жизни клиента (LTV) составляет минимум 12 месяцев, потерянные в этом месяце контракты лишают вашу компанию будущих денежных потоков на сумму около {ltv_loss:,} ₽ в годовом исчислении (Годовой LTV). Это капитал, который прямо сейчас забирают ваши конкуренты.".replace(',', ' '))
+    
+    # ---------------- СТРАНИЦА 4: МАТРИЦА ПРОБЛЕМ ----------------
+    pdf.add_page()
+    pdf.set_font('Roboto', 'B', 20)
     pdf.set_text_color(40, 40, 40)
-    msg = f"При текущей экспертной оценке ({round(score, 1)}/100) вы теряете около {round(100 - score, 1)}% целевых запросов. Упущенная выручка (Lost Revenue) оценивается в горячем трафике на сумму около {revenue_loss:,} руб. ежемесячно."
-    pdf.multi_cell(0, 7, msg.replace(',', ' '))
+    pdf.cell(0, 15, 'Матрица проблем (Аналитика)', 0, 1, 'L')
+    pdf.ln(5)
+    
+    for r in results_data:
+        if pdf.get_y() > 260: pdf.add_page()
+        status = r['Результат']
+        color = (40, 160, 40) if status == "ДА" else (160, 30, 30)
+        mark_txt = "[ OK ]" if status == "ДА" else "[ РИСК ]"
+        
+        pdf.set_font('Roboto', 'B', 11)
+        pdf.set_text_color(*color)
+        pdf.cell(22, 6, mark_txt, 0, 0, 'L')
+        
+        pdf.set_text_color(40, 40, 40)
+        pdf.cell(0, 6, f"{r['Критерий']} ({r['Код']})", 0, 1, 'L')
+        
+        pdf.set_font('Roboto', 'I', 10)
+        pdf.set_text_color(100, 100, 100)
+        pdf.multi_cell(0, 5, f"Вывод эксперта: {r['Обоснование']}")
+        pdf.ln(3)
+
+    # ---------------- СТРАНИЦА 5: ДОРОЖНАЯ КАРТА ----------------
+    pdf.add_page()
+    pdf.set_font('Roboto', 'B', 20)
+    pdf.set_text_color(40, 40, 40)
+    pdf.cell(0, 15, 'Дорожная карта внедрения (Roadmap)', 0, 1, 'L')
+    pdf.ln(5)
+    
+    stages = sorted(list(set([r['Этап'] for r in results_data])))
+    for stage in stages:
+        pdf.set_font('Roboto', 'B', 14)
+        pdf.set_text_color(40, 40, 40)
+        pdf.cell(0, 10, stage, 0, 1, 'L')
+        
+        pdf.set_font('Roboto', '', 11)
+        pdf.set_text_color(80, 80, 80)
+        stage_tasks = [r for r in results_data if r['Этап'] == stage and r['Результат'] == "НЕТ"]
+        if not stage_tasks:
+            pdf.cell(0, 6, "Все задачи этапа выполнены успешно.", 0, 1, 'L')
+        else:
+            for t in stage_tasks:
+                pdf.multi_cell(0, 5, f"• {t['Критерий']}")
+        pdf.ln(5)
+        
+    # ---------------- СТРАНИЦА 6: ОФФЕР ----------------
+    pdf.add_page()
+    pdf.set_y(100)
+    pdf.set_font('Roboto', 'B', 24)
+    pdf.set_text_color(40, 40, 40)
+    pdf.cell(0, 15, 'Готовы остановить потерю прибыли?', 0, 1, 'C')
     pdf.ln(10)
     
-    # 2. Матрица PIN100
-    pdf.set_font('Roboto', 'B', 12)
-    pdf.set_text_color(40, 40, 40)
-    pdf.cell(0, 10, 'МАТРИЦА ОЦЕНКИ РЕПУТАЦИОННЫХ АКТИВОВ', 0, 1, 'L')
-    pdf.set_font('Roboto', 'B', 8)
+    pdf.set_font('Roboto', '', 14)
+    pdf.set_text_color(80, 80, 80)
+    txt_offer = "Данный аудит выявил ключевые точки роста вашего бизнеса. Мы предлагаем внедрение разработанной дорожной карты «под ключ», чтобы закрыть утечку конверсии и превратить ваш профиль в генератор целевых B2B лидов."
+    pdf.multi_cell(0, 7, txt_offer, align='C')
     
-    # Заголовки таблицы
-    pdf.set_fill_color(220)
-    pdf.cell(20, 8, 'Код', 1, 0, 'C', True)
-    pdf.cell(100, 8, 'Критерий', 1, 0, 'L', True)
-    pdf.cell(30, 8, 'Результат', 1, 0, 'C', True)
-    pdf.cell(40, 8, 'Макс', 1, 1, 'C', True)
-    
-    pdf.set_font('Roboto', '', 7)
-    pdf.set_text_color(80)
-    
-    for row in data_matrix:
-        code = row['Код']
-        name = row['Критерий'][:60]
-        earned = row['Балл']
-        max_s = row['Макс']
-        
-        # Замена эмодзи на текст
-        status = "ДА" if earned > 0 else "НЕТ"
-        
-        pdf.cell(20, 7, code, 1, 0, 'C')
-        pdf.cell(100, 7, name, 1, 0, 'L')
-        pdf.cell(30, 7, status, 1, 0, 'C')
-        pdf.cell(40, 7, f'{earned}/{max_s}', 1, 1, 'C')
-        
-    pdf.ln(15)
-    
-    # 3. Call to Action
-    pdf.set_font('Roboto', '', 9)
-    pdf.set_text_color(100)
-    pdf.multi_cell(0, 6, "По результатам экспертного PIN100 аудита, ваша компания недополучает значительную долю прибыли из-за отклонения от эталона рынка. Рекомендуется внедрение Roadmap-политики для оптимизации репутационного капитала. Свяжитесь с нами для обсуждения стратегии.")
-    
+    pdf.ln(20)
+    pdf.set_font('Roboto', 'B', 14)
+    pdf.set_text_color(160, 30, 30)
+    pdf.cell(0, 10, 'Свяжитесь с нами для старта проекта и интеграции системы', 0, 1, 'C')
+
     return bytes(pdf.output())
 
 # ==========================================
 # 4. СБОРКА И ИНТЕРФЕЙС
 # ==========================================
 st.set_page_config(page_title=f"{PROJECT_NAME} | Экспертный Аудит", layout="wide", page_icon="📍")
-
 rules_data, prompts_data, doc = get_database_from_sheets()
 
 with st.sidebar: 
     st.markdown(f"## 📍 {PROJECT_NAME}")
     st.write("✅ База бенчмарков подключена.")
-    st.caption("Управление весами и Roadmap осуществляется в Google Sheets.")
 
 st.title(f"📍 {PROJECT_NAME}: {EXPERT_TITLE}")
-
 url = st.text_input("Ссылка на карточку Яндекс.Бизнес")
 
 if st.button("🚀 Запустить экспертный аудит", type="primary"):
@@ -442,41 +457,28 @@ if st.button("🚀 Запустить экспертный аудит", type="pr
             except Exception as e:
                 st.error(str(e))
                 st.stop()
-                
             title = data.get('title', 'Без названия')
             c_list = data.get('categories', [])
             cat = c_list[0].get('name', '') if c_list and isinstance(c_list[0], dict) else (str(c_list[0]) if c_list else '')
             client_reviews = int(data.get('reviewsCount') or data.get('ratingsCount') or len(data.get('reviews') or []) or 0)
             
-        with st.spinner("Анализ данных, экспертная оценка и расчет экономики..."):
-            # БЛОК 1: Проверка ниши с Kill-Switch и экспертной оценкой
-            try:
-                niche_key = determine_niche_by_expert(title, cat)
+        with st.spinner("Экспертная оценка и расчет экономики..."):
+            try: niche_key = determine_niche_by_expert(title, cat)
             except Exception as e:
-                send_telegram_alert(str(e), url)
-                st.error(f"🚨 РАСШИФРОВКА ЭКСПЕРТНОГО СБОЯ (Ниша): {e}")
-                st.stop()
+                send_telegram_alert(str(e), url); st.error(e); st.stop()
             
-            # БЛОК 2: Базовый парсинг
             raw_scores = {}
             for f in [calculate_prof_rules, calculate_rep_rules]:
-                sc = f(data)
-                raw_scores.update(sc)
+                raw_scores.update(f(data))
             
-            # БЛОК 3: Продвинутый аудит экспертным модулем
             try:
                 exp_sc, exp_reasons = calculate_dynamic_expert_rules(data, prompts_data)
                 raw_scores.update(exp_sc)
             except Exception as e:
-                send_telegram_alert(str(e), url)
-                st.error(f"🚨 РАСШИФРОВКА ЭКСПЕРТНОГО СБОЯ (Аудит): {e}")
-                st.stop()
+                send_telegram_alert(str(e), url); st.error(e); st.stop()
             
             results = []
             final_total_score = 0.0
-            matrix_data = [] # Для PDF
-            
-            # PIN100 в B2B нише использует столбец 'B2B' в Google Таблице
             target_column = niche_key if (rules_data and niche_key in rules_data[0]) else 'Балл'
             
             for r in rules_data:
@@ -485,111 +487,54 @@ if st.button("🚀 Запустить экспертный аудит", type="pr
                 name = str(r.get('Критерий', '')).strip()
                 roadmap = str(r.get('Этап внедрения (Roadmap)', 'Прочее'))
                 priority = str(r.get('Приоритет', '2 - Средний'))
-                
                 try: max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
                 except: max_s = float(r.get('Балл', 0.0))
                 
                 if max_s > 0.0:
                     val = max_s if raw_scores.get(code) else 0.0
                     final_total_score += val
-                    comm = "✅ Выполнено" if val > 0 else "❌ Требует внедрения"
-                    exp_reason = exp_reasons.get(code, "Автоматическое правило")
+                    comm = "ДА" if val > 0 else "НЕТ"
                     
-                    results.append({"Этап": roadmap, "Приоритет": priority, "Критерий": name, "Результат": comm, "Балл": val, "Макс": max_s})
-                    matrix_data.append({"Код": code, "Критерий": name, "Балл": val, "Макс": max_s})
+                    if code in exp_reasons:
+                        reason = exp_reasons[code]
+                    else:
+                        reason = "Соответствует эталону." if val > 0 else "Требует ручной настройки спецификации."
+                        
+                    results.append({
+                        "Этап": roadmap, "Приоритет": priority, "Код": code, 
+                        "Критерий": name, "Результат": comm, "Балл": val, 
+                        "Макс": max_s, "Обоснование": reason
+                    })
 
-            # Подключаем интерактивный B2B калькулятор экономики
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
             niche_label = eco.get("label", "Прочее")
             
             with st.sidebar:
                 st.divider()
-                st.markdown(f"### 🧮 Калькулятор сегмента: {niche_key}")
-                st.caption("Подстройте показатели под реалии клиента")
+                st.markdown(f"### 🧮 Калькулятор: {niche_key}")
                 client_leads = st.number_input("Потенциал лидов/мес", value=eco["leads"], step=10)
                 client_check = st.number_input("Средний чек (₽)", value=eco["check"], step=5000)
 
             lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
             lost_revenue = int(client_leads * lost_percentage * client_check)
             
-            # --- ОТОБРАЖЕНИЕ PIN100 ОТЧЕТА ---
             st.divider()
             col1, col2 = st.columns([2, 1])
             with col1: 
                 st.subheader(f"🏢 {title}")
                 st.caption(f"🧠 Сегмент: **{niche_label}** | 📍 Фактических отзывов: {client_reviews}")
             with col2: 
-                if final_total_score >= 80: delta = "Отличный результат"
-                elif final_total_score >= 50: delta = "Требует оптимизации"
-                else: delta = "Критический уровень риска"
-                color = "normal" if final_total_score >= 80 else ("off" if final_total_score >= 50 else "inverse")
-                st.metric(f"Индекс готовности {PROJECT_NAME}", f"{round(final_total_score, 1)} / 100", delta=delta, delta_color=color)
+                delta = "Отличный результат" if final_total_score >= 80 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
+                st.metric(f"Индекс {PROJECT_NAME}", f"{round(final_total_score, 1)} / 100", delta=delta, delta_color="normal" if final_total_score>=80 else "inverse")
 
-            st.markdown("### 💸 Цена ошибок (Lost Revenue / Tracking Error)")
-            st.error(f"На основе бенчмарков {niche_label}, при вашей экспертной оценке ({round(final_total_score, 1)}/100) и среднем чеке в {client_check:,} ₽, вы ежемесячно недополучаете горячего трафика на сумму около **{lost_revenue:,} ₽**.".replace(',', ' '))
+            st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно.".replace(',', ' '))
             
             st.divider()
-            st.markdown("### 🗺 Пошаговый план внедрения (Roadmap)")
-            
-            df_results = pd.DataFrame(results)
-            stages = df_results['Этап'].unique()
-            stages = sorted(stages, key=lambda x: ("Этап 1" not in x, "Этап 2" not in x, "Этап 3" not in x, "Этап 4" not in x, x))
-            
-            for stage in stages:
-                stage_data = df_results[df_results['Этап'] == stage]
-                stage_earned = stage_data['Балл'].sum()
-                stage_max = stage_data['Макс'].sum()
-                stage_progress = int((stage_earned / stage_max) * 100) if stage_max > 0 else 0
-                
-                with st.expander(f"{stage} — Готовность: {stage_progress}%", expanded=(stage_progress < 100)):
-                    st.progress(stage_progress / 100)
-                    display_df = stage_data[['Приоритет', 'Критерий', 'Результат', 'Балл', 'Макс']].sort_values(by=['Приоритет'], ascending=True)
-                    st.dataframe(display_df, hide_index=True, use_container_width=True)
-
-            try:
-                leads_sheet = doc.worksheet("Leads")
-                leads_sheet.append_row([time.strftime("%d.%m.%Y %H:%M:%S"), url, title, niche_key, final_total_score, lost_revenue])
-            except Exception:
-                pass
-
-            # --- ПАНЕЛЬ РАЗРАБОТЧИКА (БЕЗ УПОМИНАНИЯ ИИ) ---
-            st.divider()
-            with st.expander("🛠 Экспертная панель (Детальная аналитика)"):
-                st.markdown("### 1. Как мыслит экспертный модуль")
-                
-                ai_debug_info = []
-                for r in rules_data:
-                    code = str(r.get('Код', '')).strip()
-                    if code in exp_reasons:
-                        name = str(r.get('Критерий', '')).strip()
-                        status = "✅ Сдал" if exp_sc.get(code) else "❌ Не сдал"
-                        ai_debug_info.append({
-                            "Критерий": name,
-                            "Результат": status,
-                            "Экспертное обоснование": exp_reasons[code]
-                        })
-                
-                if ai_debug_info:
-                    st.dataframe(pd.DataFrame(ai_debug_info), use_container_width=True, hide_index=True)
-                
-                st.markdown("### 2. Сырые фактические данные")
-                debug_data = {
-                    "Название": data.get('title'),
-                    "Рейтинг": data.get('rating'),
-                    "Кол-во отзывов": data.get('reviewsCount'),
-                    "Сайт / Ссылка": data.get('url') or data.get('website'),
-                    "График работы": data.get('workingHours'),
-                    "Сырой отзыв целиком (ДЛЯ ПОИСКА ОТВЕТА)": data.get('reviews', [{}])[0] if data.get('reviews') else "Пусто"
-                }
-                st.json(debug_data)
-            
-            # --- КНОПКА ГЕНЕРАЦИИ PDF PIN100 ---
-            st.divider()
-            pdf_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, matrix_data)
+            pdf_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check)
             st.download_button(
-                label="📄 Скачать экспертный отчет PIN100 (PDF)",
+                label="📄 Скачать коммерческий отчет PIN100 (PDF)",
                 data=pdf_bytes,
-                file_name=f"PIN100_Report_{title.replace(' ', '_')}.pdf",
+                file_name=f"PIN100_{title.replace(' ', '_')}.pdf",
                 mime="application/pdf",
-                type="secondary"
+                type="primary"
             )
