@@ -121,12 +121,43 @@ def fetch_apify_data(yandex_url):
     return dataset[0]
 
 # ==========================================
-# 3. АЛГОРИТМЫ ОЦЕНКИ PIN100 (СОКРАЩЕННО)
+# 3. АЛГОРИТМЫ ОЦЕНКИ PIN100
 # ==========================================
+def get_safe_list(data, keys):
+    res = []
+    for k in keys:
+        if isinstance(data.get(k), list): res.extend(data[k])
+        elif isinstance(data.get(k), dict): res.append(data[k])
+    return res
+
 def calculate_prof_rules(data):
     scores = {}
+    title = str(data.get('title') or '')
+    description = str(data.get('description') or '')
     if data.get('isVerifiedOwner'):
         for k in ['PROF-12.1', 'PROF-01.1', 'PROF-03.1', 'PROF-05.1', 'PROF-07.1']: scores[k] = True
+    else:
+        if len(title) > 2: scores['PROF-01.1'] = True
+        if data.get('categories'): scores['PROF-03.1'] = True
+        if data.get('phones'): scores['PROF-05.1'] = True
+        schedule = data.get('schedule') or data.get('workingHours') or []
+        if isinstance(schedule, list) and len(schedule) >= 7: scores['PROF-07.1'] = True
+        elif isinstance(schedule, dict) and len(schedule.keys()) >= 7: scores['PROF-07.1'] = True
+    feat = data.get('features')
+    if isinstance(feat, list):
+        if len(feat) > 0: scores['PROF-08.1'] = True
+        if len(feat) >= 5: scores['PROF-08.2'] = True
+    if len(description) > 1500: scores['PROF-09.1'] = True
+    url = str(data.get('url') or data.get('website') or '').lower()
+    if url: scores['PROF-04.1'] = True
+    prods = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
+    valid_prods = [p for p in prods if isinstance(p, dict)]
+    if len(valid_prods) >= 10: scores['PROF-11.1'] = True
+    owner_links = url + " " + description + " "
+    links_data = data.get('links') or data.get('socialLinks') or data.get('socials') or []
+    if isinstance(links_data, list): owner_links += " ".join(str(l) for l in links_data)
+    elif isinstance(links_data, dict): owner_links += " ".join(str(v) for v in links_data.values())
+    if any(s in owner_links.lower() for s in ["vk.com", "youtube", "dzen", "instagram", "inst:"]): scores['PROF-13.2'] = True
     return scores
 
 def calculate_rep_rules(data):
@@ -135,6 +166,29 @@ def calculate_rep_rules(data):
     except: rating = 0.0
     if rating >= 4.5: scores['REP-27.1'] = True
     if rating >= 4.8: scores['REP-27.2'] = True
+    try: rev_count = int(data.get('reviewsCount') or data.get('ratingsCount') or 0)
+    except: rev_count = 0
+    if rev_count >= 50: scores['REP-28.1'] = True
+    reviews_raw = data.get('reviews')
+    if not isinstance(reviews_raw, list): return scores
+    reviews = [r for r in reviews_raw if isinstance(r, dict)]
+    if not reviews: return scores
+    ow_txt = []
+    for r in reviews[:20]:
+        is_replied = False
+        rep_text = ""
+        if r.get('businessComment'):
+            rep_text = str(r.get('businessComment')).strip()
+            if rep_text: is_replied = True
+        else:
+            rep = r.get('reply') or r.get('ownerAnswer') or r.get('businessResponse') or r.get('response')
+            if isinstance(rep, dict):
+                rep_text = str(rep.get('text') or '').strip()
+                if rep_text: is_replied = True
+        if is_replied and rep_text: ow_txt.append(rep_text.lower())
+    if ow_txt:
+        stop_words = ['не были', 'не находим', 'уточните', 'нет в базе']
+        if any(w in t for t in ow_txt for w in stop_words): scores['REP-33.1'] = True
     return scores
 
 def calculate_dynamic_expert_rules(data, prompts_data):
@@ -221,7 +275,6 @@ def build_pdf_styles(f_map):
     styles.add(ParagraphStyle(name='PIN_BodySmall', fontName=f_map['Font-Main'], fontSize=10, leading=14, textColor=COLOR_INK_LIGHT, spaceAfter=8))
     
     # Стили для Bento-карточек
-    styles.add(ParagraphStyle(name='Bento_Title', fontName=f_map['Font-Main'], fontSize=11, textColor=COLOR_INK_MAIN))
     styles.add(ParagraphStyle(name='Bento_Value_Red', fontName=f_map['Font-Bold'], fontSize=22, textColor=COLOR_ERROR))
     styles.add(ParagraphStyle(name='Bento_Value_Green', fontName=f_map['Font-Bold'], fontSize=22, textColor=COLOR_SUCCESS))
     styles.add(ParagraphStyle(name='Bento_Value_Gold', fontName=f_map['Font-Bold'], fontSize=22, textColor=COLOR_GOLD))
@@ -230,8 +283,17 @@ def build_pdf_styles(f_map):
 
 def create_bento_box(title, value, value_style, col_width):
     """Создает таблицу-карточку в стиле Bento"""
+    # Создаем чистый стиль для заголовка карточки (без Bold)
+    base_font = value_style.fontName.replace('-Bold', '').replace('Bold', '')
+    title_style = ParagraphStyle(
+        name='Bento_Title_Dynamic', 
+        fontName=base_font, 
+        fontSize=11, 
+        textColor=COLOR_INK_MAIN
+    )
+    
     data = [
-        [Paragraph(title, value_style.parent.name == 'Bento_Title' and value_style or ParagraphStyle('bt', parent=value_style, textColor=COLOR_INK_MAIN, fontSize=11, fontName=value_style.fontName.replace('-Bold', '')))],
+        [Paragraph(title, title_style)],
         [Spacer(1, 5*mm)],
         [Paragraph(value, value_style)]
     ]
