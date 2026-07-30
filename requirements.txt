@@ -5,5 +5,4 @@ pandas
 gspread
 google-auth
 pillow
-fpdf2
-reportlab
+weasyprint
