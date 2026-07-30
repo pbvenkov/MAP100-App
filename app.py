@@ -31,6 +31,15 @@ try:
 except Exception as e:
     expert_engine = None
 
+def send_telegram_alert(error_msg, target_url="Неизвестно"):
+    tg_token = st.secrets.get("TG_BOT_TOKEN")
+    tg_admin_id = st.secrets.get("TG_ADMIN_ID")
+    if tg_token and tg_admin_id:
+        tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+        text = f"🚨 *{PROJECT_NAME}: Сбой системы*\n\n*Цель:* {target_url}\n*Ошибка:* {error_msg}\n\n🛑 *Действие:* Записано в лог ошибок."
+        try: requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
+        except Exception: pass
+
 # ==========================================
 # 1.5. БАЗА ДАННЫХ НИШ И БЕНЧМАРКОВ
 # ==========================================
@@ -84,21 +93,40 @@ def fetch_apify_data(yandex_url):
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
     run_req = requests.post(run_url, json={"startUrls": [{"url": yandex_url}], "maxItems": 1}).json()
     if 'error' in run_req: 
-        raise Exception(f"Ошибка Apify API: {run_req['error']}")
+        err_msg = f"Ошибка Apify API: {run_req['error']}"
+        send_telegram_alert(err_msg, yandex_url)
+        raise Exception(err_msg)
         
     run_id, dataset_id = run_req['data']['id'], run_req['data']['defaultDatasetId']
     status, retries = "RUNNING", 0
     
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
-        if retries >= 35: raise Exception(f"Таймаут парсера.")
+        if retries >= 35: 
+            err_msg = "Таймаут парсера Apify (Яндекс слишком долго отвечает)."
+            send_telegram_alert(err_msg, yandex_url)
+            raise Exception(err_msg)
         time.sleep(5)
         status = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}").json()['data']['status']
         retries += 1
         
-    if status != "SUCCEEDED": raise Exception(f"Парсер упал со статусом {status}.")
+    if status != "SUCCEEDED": 
+        err_msg = f"Парсер упал со статусом {status}."
+        send_telegram_alert(err_msg, yandex_url)
+        raise Exception(err_msg)
+        
     dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}").json()
-    if not dataset: raise Exception("Яндекс не отдал данные (капча).")
-    return dataset[0]
+    if not dataset: 
+        err_msg = "Яндекс отдал пустой результат (сработала капча или блокировка парсера)."
+        send_telegram_alert(err_msg, yandex_url)
+        raise Exception(err_msg)
+        
+    data = dataset[0]
+    if not data.get('title') or len(str(data.get('title'))) < 2:
+        err_msg = "Яндекс вернул пустую заглушку вместо реальной карточки бизнеса. Вероятно, включилась защита от ботов."
+        send_telegram_alert(err_msg, yandex_url)
+        raise Exception(err_msg)
+        
+    return data
 
 # ==========================================
 # 3. АЛГОРИТМЫ ОЦЕНКИ PIN100
@@ -171,7 +199,7 @@ def calculate_rep_rules(data):
         if any(w in t for t in ow_txt for w in stop_words): scores['REP-33.1'] = True
     return scores
 
-def calculate_dynamic_expert_rules(data, prompts_data):
+def calculate_dynamic_expert_rules(data, prompts_data, target_url):
     scores, reasons = {}, {}
     if not expert_engine or not prompts_data: return scores, reasons
     title = str(data.get('title') or '')
@@ -188,7 +216,12 @@ def calculate_dynamic_expert_rules(data, prompts_data):
             for code, result in res_json.items():
                 if result.get('score') in [1, True, "1", "true"]: scores[code] = True
                 reasons[code] = result.get('reason', '')
-    except Exception: pass
+        else:
+            raise ValueError("Ответ ИИ не содержит валидного JSON.")
+    except Exception as e:
+        err_msg = f"Сбой обработки Gemini (AI): {str(e)}"
+        send_telegram_alert(err_msg, target_url)
+        st.warning(f"🤖 **ИИ временно недоступен:** {err_msg}. Сложные метрики не были оценены.")
     return scores, reasons
 
 # ==========================================
@@ -204,7 +237,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     ltv_loss = revenue_loss * 12
     rev_str = f"- {revenue_loss:,}".replace(',', ' ') + " ₽ / мес"
 
-    # CSS + Базовый шаблон
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -216,38 +248,18 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             @page {{
                 size: A4;
                 margin: 25mm;
-                @bottom-left {{
-                    content: "PIN100 Analytics | Строго конфиденциально";
-                    font-family: 'Inter', sans-serif;
-                    font-size: 8pt;
-                    color: #94A3B8;
-                }}
-                @bottom-right {{
-                    content: "Стр. " counter(page);
-                    font-family: 'Inter', sans-serif;
-                    font-size: 8pt;
-                    color: #94A3B8;
-                }}
+                @bottom-left {{ content: "PIN100 Analytics | Строго конфиденциально"; font-family: 'Inter', sans-serif; font-size: 8pt; color: #94A3B8; }}
+                @bottom-right {{ content: "Стр. " counter(page); font-family: 'Inter', sans-serif; font-size: 8pt; color: #94A3B8; }}
             }}
-            body {{
-                font-family: 'Inter', sans-serif;
-                color: #334155;
-                font-size: 11pt;
-                line-height: 1.5;
-            }}
+            body {{ font-family: 'Inter', sans-serif; color: #334155; font-size: 11pt; line-height: 1.5; }}
             h1, h2, .block-title {{ font-family: 'Playfair Display', serif; color: #0A1128; }}
             h1 {{ font-size: 32pt; margin-bottom: 10px; margin-top: 150px; line-height: 1.2;}}
             h2 {{ font-size: 24pt; margin-bottom: 20px; border-bottom: 2px solid #C5A880; padding-bottom: 10px; }}
             .gold-line {{ width: 80mm; height: 2px; background-color: #C5A880; margin-bottom: 20px; }}
-            .bento-box {{
-                background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 20px; margin-bottom: 20px;
-            }}
+            .bento-box {{ background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 20px; margin-bottom: 20px; }}
             .bento-title {{ font-size: 11pt; margin-bottom: 5px; color: #334155; }}
             .bento-value {{ font-size: 24pt; font-weight: 700; }}
-            .text-success {{ color: #16A34A; }}
-            .text-error {{ color: #DC2626; }}
-            .text-gold {{ color: #C5A880; }}
-            .text-navy {{ color: #0A1128; }}
+            .text-success {{ color: #16A34A; }} .text-error {{ color: #DC2626; }} .text-gold {{ color: #C5A880; }} .text-navy {{ color: #0A1128; }}
             .page-break {{ page-break-before: always; }}
             .block-title {{ font-size: 16pt; margin-bottom: 5px; font-weight: 700; }}
             .block-line {{ width: 50mm; height: 1px; background-color: #C5A880; margin-bottom: 15px; }}
@@ -260,51 +272,30 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     <body>
     """
 
-    # СТРАНИЦА 1: Титульник
     doc_title = 'Экспресс-аудит<br>упущенной выручки' if report_type == "LITE" else 'Экспертный аудит<br>упущенной выручки'
     html += f"""
         <div style="font-size: 20pt; font-weight: bold; font-family: 'Playfair Display', serif; color: #0A1128;">PIN100</div>
-        <h1>{doc_title}</h1>
-        <div class="gold-line"></div>
+        <h1>{doc_title}</h1><div class="gold-line"></div>
         <p style="font-size: 12pt;">Подготовлено для бизнеса: <b>{title}</b><br>Дата аудита: <b>{current_date}</b></p>
         <div class="page-break"></div>
-    """
-
-    # СТРАНИЦА 2: Summary
-    html += f"""
+        
         <h2>Резюме для руководителя</h2>
-        <div class="bento-box">
-            <div class="bento-title">Индекс готовности профиля:</div>
-            <div class="bento-value {score_class}">{round(score, 1)} / 100</div>
-        </div>
-        <div class="bento-box">
-            <div class="bento-title">Упущенная выручка (Lost Revenue):</div>
-            <div class="bento-value text-error">{rev_str}</div>
-        </div>
+        <div class="bento-box"><div class="bento-title">Индекс готовности профиля:</div><div class="bento-value {score_class}">{round(score, 1)} / 100</div></div>
+        <div class="bento-box"><div class="bento-title">Упущенная выручка (Lost Revenue):</div><div class="bento-value text-error">{rev_str}</div></div>
         <p><b>Вывод эксперта:</b> Отличное качество вашего продукта теряется из-за слабого присутствия в геосервисах. Из-за критических ошибок в заполнении карточки и отсутствии системной работы с отзывами вы уступаете позиции в поиске и ежемесячно отдаете горячих клиентов своим конкурентам.</p>
         <div class="page-break"></div>
+        
+        <h2>Декомпозиция потерь</h2>
     """
-
-    # СТРАНИЦА 3: Финансы
-    html += "<h2>Декомпозиция потерь</h2>"
     blocks_fin = [
         ("А. Оценка капитала бренда (Бенчмарк PIN100)", f"Отклонение от алгоритмического эталона составляет {dev}%. В коммерческой выдаче это приводит к падению охватов. Из каждых 10 потенциальных клиентов вашей ниши, {lost_clients} либо вообще не видят вашу компанию в топе, либо уходят к конкурентам из-за ошибок в оформлении."),
         ("Б. Ежемесячная упущенная выручка", f"Органический спрос в геосервисах по вашей нише составляет {client_leads} горячих обращений в месяц. Из-за низкого рейтинга вы теряете около {lost_leads} потенциальных сделок. При среднем чеке в {client_check:,} ₽, ваш прямой убыток составляет {revenue_loss:,} ₽ в месяц.".replace(',', ' ')),
         ("В. Скрытые убытки (Удар ниже пояса)", f"В вашей сфере средний срок жизни клиента (LTV) составляет минимум 12 месяцев. Потерянные сегодня контракты лишают бизнес будущих стабильных платежей на сумму около {ltv_loss:,} ₽ в год. Это ваши реальные деньги, которые забирают более заметные конкуренты.".replace(',', ' '))
     ]
     for bt, text in blocks_fin:
-        html += f"""
-            <div class="avoid-break">
-                <div class="block-title">{bt}</div>
-                <div class="block-line"></div>
-                <p>{text}</p>
-                <br>
-            </div>
-        """
-    html += '<div class="page-break"></div>'
-
-    # СТРАНИЦА 4: Матрица
-    html += "<h2>Аналитика воронки продаж</h2>"
+        html += f"""<div class="avoid-break"><div class="block-title">{bt}</div><div class="block-line"></div><p>{text}</p><br></div>"""
+    
+    html += '<div class="page-break"></div><h2>Аналитика воронки продаж</h2>'
     blocks = [
         {"title": "Блок 1. Видимость и Охваты", "groups": ['SEO и Трафик', 'Активность'], "desc": "Зона ответственности: Попадание карточки в топ выдачи Яндекса по целевым B2B-запросам."},
         {"title": "Блок 2. Упаковка и Конверсия", "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'], "desc": "Зона ответственности: Превращение «просмотров» в реальные звонки и переходы на сайт."},
@@ -317,26 +308,18 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         passed = [r for r in block_items if r['Результат'] == "ДА"]
         failed = [r for r in block_items if r['Результат'] == "НЕТ"]
 
-        html += f"""
-            <div class="avoid-break" style="margin-bottom: 20px;">
-                <div class="block-title">{block['title']}</div>
-                <div class="block-line"></div>
-                <p>{block['desc']}</p>
-        """
+        html += f"""<div class="avoid-break" style="margin-bottom: 20px;"><div class="block-title">{block['title']}</div><div class="block-line"></div><p>{block['desc']}</p>"""
         if report_type == "LITE":
             html += f"""<div class="tag-success">В НОРМЕ: {len(passed)} ПАРАМЕТРОВ</div>"""
-            if failed:
-                html += f"""<div class="tag-error">КРИТИЧЕСКИХ ОШИБОК: {len(failed)}</div>"""
+            if failed: html += f"""<div class="tag-error">КРИТИЧЕСКИХ ОШИБОК: {len(failed)}</div>"""
             html += """<div class="small-text">Детализация скрыта в экспресс-версии. Отсутствие данных настроек приводит к пессимизации профиля алгоритмами Яндекса.</div>"""
         else:
             if failed:
                 html += """<div class="tag-error">ОБНАРУЖЕННЫЕ УЯЗВИМОСТИ:</div><ul style="margin-top: 5px; margin-bottom: 0;">"""
-                for item in failed:
-                    html += f"<li>{item['Критерий']}</li>"
+                for item in failed: html += f"<li>{item['Критерий']}</li>"
                 html += "</ul>"
         html += "</div>"
 
-    # Оффер для LITE
     if report_type == "LITE":
         html += f"""
             <div class="page-break"></div>
@@ -344,10 +327,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             <div class="gold-line"></div>
             <p>В экспресс-версии мы показали сумму ваших потерь. Детализация каждой ошибки, экспертная аналитика и пошаговая Дорожная карта доступны в полной PRO-версии отчета.</p>
             <br>
-            <div class="bento-box avoid-break">
-                <div class="bento-title">Стоимость PRO-аудита:</div>
-                <div class="bento-value text-navy">4 880 ₽</div>
-            </div>
+            <div class="bento-box avoid-break"><div class="bento-title">Стоимость PRO-аудита:</div><div class="bento-value text-navy">4 880 ₽</div></div>
             <p>Свяжитесь с нами для получения полной версии:<br><b>Telegram: @paulvenkov | pin100.ru</b></p>
         """
 
@@ -372,10 +352,12 @@ if st.button("🚀 Запустить генерацию отчетов", type="
         st.error("❌ Неверная ссылка.")
     else:
         with st.spinner("Сбор свежих фактических данных..."):
-            try: data = fetch_apify_data(url)
+            try: 
+                data = fetch_apify_data(url)
             except Exception as e:
-                st.error(str(e))
+                st.error(f"⚠️ {str(e)}")
                 st.stop()
+                
             title = data.get('title', 'Без названия')
             c_list = data.get('categories', [])
             cat = c_list[0].get('name', '') if c_list and isinstance(c_list[0], dict) else (str(c_list[0]) if c_list else '')
@@ -387,10 +369,10 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             
             raw_scores = {}
             for f in [calculate_prof_rules, calculate_rep_rules]: raw_scores.update(f(data))
-            try:
-                exp_sc, exp_reasons = calculate_dynamic_expert_rules(data, prompts_data)
-                raw_scores.update(exp_sc)
-            except: pass
+            
+            # Обновленный вызов ИИ с обработкой ошибок
+            exp_sc, exp_reasons = calculate_dynamic_expert_rules(data, prompts_data, url)
+            raw_scores.update(exp_sc)
             
             results = []
             final_total_score = 0.0
@@ -408,7 +390,7 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                     val = max_s if raw_scores.get(code) else 0.0
                     final_total_score += val
                     comm = "ДА" if val > 0 else "НЕТ"
-                    reason = exp_reasons.get(code, "Соответствует эталону." if val > 0 else "DEFAULT_MISSING")
+                    reason = exp_reasons.get(code, "Метрика не была оценена из-за сбоя ИИ." if not exp_reasons else "Соответствует эталону." if val > 0 else "Требует доработки.")
                     results.append({"Код": code, "Критерий": name, "Результат": comm, "Обоснование": reason, "Группа": group})
 
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
@@ -445,3 +427,26 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                 st.download_button(label="📄 Скачать Экспресс-аудит (LITE)", data=pdf_lite_bytes, file_name=f"PIN100_LITE_{title.replace(' ', '_')}.pdf", mime="application/pdf")
             with col_pro:
                 st.download_button(label="💎 Скачать PRO-аудит", data=pdf_pro_bytes, file_name=f"PIN100_PRO_{title.replace(' ', '_')}.pdf", mime="application/pdf", type="primary")
+
+            # --- ЭКРАННЫЙ АУДИТ ---
+            st.markdown("---")
+            st.markdown("### 🔎 Просмотр полного аудита")
+            
+            # Группируем результаты для вывода
+            grouped_results = {}
+            for r in results:
+                g = r['Группа']
+                if g not in grouped_results: grouped_results[g] = []
+                grouped_results[g].append(r)
+                
+            # Выводим группы в виде аккордеонов
+            for g_name, items in grouped_results.items():
+                passed_count = sum(1 for x in items if x['Результат'] == 'ДА')
+                total_count = len(items)
+                
+                with st.expander(f"📁 {g_name} ({passed_count} из {total_count} в норме)"):
+                    for item in items:
+                        if item['Результат'] == 'ДА':
+                            st.success(f"**✅ {item['Критерий']}**\n\n{item['Обоснование']}")
+                        else:
+                            st.error(f"**❌ {item['Критерий']}**\n\n{item['Обоснование']}")
