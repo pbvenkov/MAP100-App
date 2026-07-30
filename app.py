@@ -6,23 +6,12 @@ import json
 import numpy as np
 import pandas as pd
 import re
-import urllib.request
 from datetime import datetime, timezone
 import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 from concurrent.futures import ThreadPoolExecutor
-from io import BytesIO
-import base64
-
-# --- Импорты ReportLab ---
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, PageBreak
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+from weasyprint import HTML
 
 # ==========================================
 # 0. НАСТРОЙКИ БРЕНДИНГА PIN100
@@ -41,15 +30,6 @@ try:
     expert_engine = genai.GenerativeModel('gemini-1.5-pro') 
 except Exception as e:
     expert_engine = None
-
-def send_telegram_alert(error_msg, target_url="Неизвестно"):
-    tg_token = st.secrets.get("TG_BOT_TOKEN")
-    tg_admin_id = st.secrets.get("TG_ADMIN_ID")
-    if tg_token and tg_admin_id:
-        tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-        text = f"🚨 *{PROJECT_NAME}: Сбой системы*\n\n*Цель:* {target_url}\n*Ошибка:* {error_msg}\n\n🛑 *Действие:* Генерация остановлена."
-        try: requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
-        except Exception: pass
 
 # ==========================================
 # 1.5. БАЗА ДАННЫХ НИШ И БЕНЧМАРКОВ
@@ -212,241 +192,167 @@ def calculate_dynamic_expert_rules(data, prompts_data):
     return scores, reasons
 
 # ==========================================
-# 3.5. REPORTLAB: ГЕНЕРАЦИЯ PDF (ENTERPRISE)
+# 3.5. WEASYPRINT: ГЕНЕРАЦИЯ PDF (HTML->PDF)
 # ==========================================
-
-# 1. Корпоративные цвета
-COLOR_NAVY = colors.HexColor("#0A1128")
-COLOR_INK_MAIN = colors.HexColor("#334155")
-COLOR_INK_LIGHT = colors.HexColor("#94A3B8")
-COLOR_GOLD = colors.HexColor("#C5A880")
-COLOR_SURFACE = colors.HexColor("#F8FAFC")
-COLOR_BORDER = colors.HexColor("#E2E8F0")
-COLOR_SUCCESS = colors.HexColor("#16A34A")
-COLOR_ERROR = colors.HexColor("#DC2626")
-
-def download_and_register_fonts():
-    """Безопасная загрузка и регистрация шрифтов TTF"""
-    fonts_to_load = {
-        "Inter-Regular.ttf": "https://cdn.jsdelivr.net/gh/rsms/inter@3.19/docs/font-files/Inter-Regular.ttf",
-        "Inter-Bold.ttf": "https://cdn.jsdelivr.net/gh/rsms/inter@3.19/docs/font-files/Inter-Bold.ttf",
-        "PlayfairDisplay-Bold.ttf": "https://cdn.jsdelivr.net/gh/googlefonts/Playfair@main/fonts/ttf/PlayfairDisplay-Bold.ttf"
-    }
-    
-    for font_name, url in fonts_to_load.items():
-        is_valid = False
-        if os.path.exists(font_name) and os.path.getsize(font_name) > 50000:
-            with open(font_name, 'rb') as f:
-                if f.read(4) in (b'\x00\x01\x00\x00', b'OTTO', b'true'): is_valid = True
-        
-        if not is_valid:
-            try:
-                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    with open(font_name, 'wb') as f:
-                        f.write(response.read())
-            except Exception: pass
-
-    # Регистрируем в ReportLab. Если падает — используем системный fallback (Helvetica)
-    fonts_map = {'Font-Main': 'Helvetica', 'Font-Bold': 'Helvetica-Bold', 'Font-Title': 'Helvetica-Bold'}
-    try:
-        pdfmetrics.registerFont(TTFont('Inter', 'Inter-Regular.ttf'))
-        fonts_map['Font-Main'] = 'Inter'
-    except Exception: pass
-    try:
-        pdfmetrics.registerFont(TTFont('Inter-Bold', 'Inter-Bold.ttf'))
-        fonts_map['Font-Bold'] = 'Inter-Bold'
-    except Exception: pass
-    try:
-        pdfmetrics.registerFont(TTFont('Playfair-Bold', 'PlayfairDisplay-Bold.ttf'))
-        fonts_map['Font-Title'] = 'Playfair-Bold'
-    except Exception: pass
-    
-    return fonts_map
-
-def build_pdf_styles(f_map):
-    """Создание CSS-подобных стилей для ReportLab"""
-    styles = getSampleStyleSheet()
-    
-    styles.add(ParagraphStyle(name='PIN_Title', fontName=f_map['Font-Title'], fontSize=32, leading=38, textColor=COLOR_NAVY, spaceAfter=20))
-    styles.add(ParagraphStyle(name='PIN_H1', fontName=f_map['Font-Title'], fontSize=24, leading=30, textColor=COLOR_NAVY, spaceAfter=15))
-    styles.add(ParagraphStyle(name='PIN_H2', fontName=f_map['Font-Title'], fontSize=16, leading=22, textColor=COLOR_NAVY, spaceAfter=10))
-    styles.add(ParagraphStyle(name='PIN_Body', fontName=f_map['Font-Main'], fontSize=11, leading=16, textColor=COLOR_INK_MAIN, spaceAfter=10))
-    styles.add(ParagraphStyle(name='PIN_BodySmall', fontName=f_map['Font-Main'], fontSize=10, leading=14, textColor=COLOR_INK_LIGHT, spaceAfter=8))
-    
-    # Стили для Bento-карточек
-    styles.add(ParagraphStyle(name='Bento_Value_Red', fontName=f_map['Font-Bold'], fontSize=22, textColor=COLOR_ERROR))
-    styles.add(ParagraphStyle(name='Bento_Value_Green', fontName=f_map['Font-Bold'], fontSize=22, textColor=COLOR_SUCCESS))
-    styles.add(ParagraphStyle(name='Bento_Value_Gold', fontName=f_map['Font-Bold'], fontSize=22, textColor=COLOR_GOLD))
-    
-    return styles
-
-def create_bento_box(title, value, value_style, col_width):
-    """Создает таблицу-карточку в стиле Bento"""
-    # Создаем чистый стиль для заголовка карточки (без Bold)
-    base_font = value_style.fontName.replace('-Bold', '').replace('Bold', '')
-    title_style = ParagraphStyle(
-        name='Bento_Title_Dynamic', 
-        fontName=base_font, 
-        fontSize=11, 
-        textColor=COLOR_INK_MAIN
-    )
-    
-    data = [
-        [Paragraph(title, title_style)],
-        [Spacer(1, 5*mm)],
-        [Paragraph(value, value_style)]
-    ]
-    t = Table(data, colWidths=[col_width])
-    t.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), COLOR_SURFACE),
-        ('BOX', (0,0), (-1,-1), 0.5, COLOR_BORDER),
-        ('TOPPADDING', (0,0), (-1,-1), 15),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 15),
-        ('LEFTPADDING', (0,0), (-1,-1), 15),
-        ('RIGHTPADDING', (0,0), (-1,-1), 15),
-    ]))
-    return t
-
-def draw_separator(width):
-    """Горизонтальная золотая линия"""
-    t = Table([['']], colWidths=[width], rowHeights=[2*mm])
-    t.setStyle(TableStyle([('LINEABOVE', (0,0), (-1,-1), 1.5, COLOR_GOLD)]))
-    return t
-
-def draw_footer(canvas, doc, f_map):
-    """Колонтитулы на каждой странице"""
-    canvas.saveState()
-    canvas.setFont(f_map['Font-Main'], 8)
-    canvas.setFillColor(COLOR_INK_LIGHT)
-    canvas.drawString(25*mm, 15*mm, "PIN100 Analytics | Строго конфиденциально")
-    canvas.drawRightString(210*mm - 25*mm, 15*mm, f"Стр. {doc.page}")
-    canvas.restoreState()
-
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, report_type="PRO"):
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=25*mm, leftMargin=25*mm, topMargin=25*mm, bottomMargin=25*mm)
-    story = []
-    
-    f_map = download_and_register_fonts()
-    styles = build_pdf_styles(f_map)
-    content_w = doc.width
-
-    # --- СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ ---
-    logo_path = "logo.png" if os.path.exists("logo.png") else ("PIN100 big logo.png" if os.path.exists("PIN100 big logo.png") else None)
-    if logo_path:
-        story.append(RLImage(logo_path, width=30*mm, height=30*mm, hAlign='LEFT'))
-    else:
-        story.append(Paragraph("PIN100", styles['PIN_H1']))
-        
-    story.append(Spacer(1, 40*mm))
-    doc_title = 'Экспресс-аудит<br/>упущенной выручки' if report_type == "LITE" else 'Экспертный аудит<br/>упущенной выручки'
-    story.append(Paragraph(doc_title, styles['PIN_Title']))
-    story.append(draw_separator(60*mm))
-    story.append(Spacer(1, 10*mm))
-    
     current_date = datetime.now().strftime("%d.%m.%Y")
-    story.append(Paragraph(f"Подготовлено для бизнеса: <b>{title}</b>", styles['PIN_Body']))
-    story.append(Paragraph(f"Дата аудита: <b>{current_date}</b>", styles['PIN_Body']))
-    story.append(PageBreak())
     
-    # --- СТРАНИЦА 2: EXECUTIVE SUMMARY ---
-    story.append(Paragraph("Резюме для руководителя", styles['PIN_H1']))
-    story.append(draw_separator(content_w))
-    story.append(Spacer(1, 10*mm))
-    
-    score_style = styles['Bento_Value_Green'] if score >= 80 else (styles['Bento_Value_Gold'] if score >= 50 else styles['Bento_Value_Red'])
-    story.append(create_bento_box('Индекс готовности профиля:', f'{round(score, 1)} / 100', score_style, content_w))
-    story.append(Spacer(1, 5*mm))
-    
-    rev_str = f"- {revenue_loss:,}".replace(',', ' ') + " ₽ / мес"
-    story.append(create_bento_box('Упущенная выручка (Lost Revenue):', rev_str, styles['Bento_Value_Red'], content_w))
-    story.append(Spacer(1, 10*mm))
-    
-    story.append(Paragraph("<b>Вывод эксперта:</b> Отличное качество вашего продукта теряется из-за слабого присутствия в геосервисах. Из-за критических ошибок в заполнении карточки и отсутствии системной работы с отзывами вы уступаете позиции в поиске и ежемесячно отдаете горячих клиентов своим конкурентам.", styles['PIN_Body']))
-    story.append(PageBreak())
-
-    # --- СТРАНИЦА 3: ФИНАНСОВЫЙ АУДИТ ---
-    story.append(Paragraph("Декомпозиция потерь", styles['PIN_H1']))
-    story.append(draw_separator(content_w))
-    story.append(Spacer(1, 10*mm))
-    
+    score_class = "text-success" if score >= 80 else ("text-gold" if score >= 50 else "text-error")
     dev = round(100 - score, 1)
     lost_clients = int(round(dev / 10))
     lost_leads = int(client_leads * (dev / 100))
     ltv_loss = revenue_loss * 12
-    
+    rev_str = f"- {revenue_loss:,}".replace(',', ' ') + " ₽ / мес"
+
+    # CSS + Базовый шаблон
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Playfair+Display:wght@700&display=swap');
+            
+            @page {{
+                size: A4;
+                margin: 25mm;
+                @bottom-left {{
+                    content: "PIN100 Analytics | Строго конфиденциально";
+                    font-family: 'Inter', sans-serif;
+                    font-size: 8pt;
+                    color: #94A3B8;
+                }}
+                @bottom-right {{
+                    content: "Стр. " counter(page);
+                    font-family: 'Inter', sans-serif;
+                    font-size: 8pt;
+                    color: #94A3B8;
+                }}
+            }}
+            body {{
+                font-family: 'Inter', sans-serif;
+                color: #334155;
+                font-size: 11pt;
+                line-height: 1.5;
+            }}
+            h1, h2, .block-title {{ font-family: 'Playfair Display', serif; color: #0A1128; }}
+            h1 {{ font-size: 32pt; margin-bottom: 10px; margin-top: 150px; line-height: 1.2;}}
+            h2 {{ font-size: 24pt; margin-bottom: 20px; border-bottom: 2px solid #C5A880; padding-bottom: 10px; }}
+            .gold-line {{ width: 80mm; height: 2px; background-color: #C5A880; margin-bottom: 20px; }}
+            .bento-box {{
+                background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 20px; margin-bottom: 20px;
+            }}
+            .bento-title {{ font-size: 11pt; margin-bottom: 5px; color: #334155; }}
+            .bento-value {{ font-size: 24pt; font-weight: 700; }}
+            .text-success {{ color: #16A34A; }}
+            .text-error {{ color: #DC2626; }}
+            .text-gold {{ color: #C5A880; }}
+            .text-navy {{ color: #0A1128; }}
+            .page-break {{ page-break-before: always; }}
+            .block-title {{ font-size: 16pt; margin-bottom: 5px; font-weight: 700; }}
+            .block-line {{ width: 50mm; height: 1px; background-color: #C5A880; margin-bottom: 15px; }}
+            .tag-success {{ color: #16A34A; font-weight: 700; font-size: 10pt; }}
+            .tag-error {{ color: #DC2626; font-weight: 700; font-size: 10pt; }}
+            .small-text {{ color: #94A3B8; font-size: 10pt; margin-top: 5px; }}
+            .avoid-break {{ page-break-inside: avoid; }}
+        </style>
+    </head>
+    <body>
+    """
+
+    # СТРАНИЦА 1: Титульник
+    doc_title = 'Экспресс-аудит<br>упущенной выручки' if report_type == "LITE" else 'Экспертный аудит<br>упущенной выручки'
+    html += f"""
+        <div style="font-size: 20pt; font-weight: bold; font-family: 'Playfair Display', serif; color: #0A1128;">PIN100</div>
+        <h1>{doc_title}</h1>
+        <div class="gold-line"></div>
+        <p style="font-size: 12pt;">Подготовлено для бизнеса: <b>{title}</b><br>Дата аудита: <b>{current_date}</b></p>
+        <div class="page-break"></div>
+    """
+
+    # СТРАНИЦА 2: Summary
+    html += f"""
+        <h2>Резюме для руководителя</h2>
+        <div class="bento-box">
+            <div class="bento-title">Индекс готовности профиля:</div>
+            <div class="bento-value {score_class}">{round(score, 1)} / 100</div>
+        </div>
+        <div class="bento-box">
+            <div class="bento-title">Упущенная выручка (Lost Revenue):</div>
+            <div class="bento-value text-error">{rev_str}</div>
+        </div>
+        <p><b>Вывод эксперта:</b> Отличное качество вашего продукта теряется из-за слабого присутствия в геосервисах. Из-за критических ошибок в заполнении карточки и отсутствии системной работы с отзывами вы уступаете позиции в поиске и ежемесячно отдаете горячих клиентов своим конкурентам.</p>
+        <div class="page-break"></div>
+    """
+
+    # СТРАНИЦА 3: Финансы
+    html += "<h2>Декомпозиция потерь</h2>"
     blocks_fin = [
         ("А. Оценка капитала бренда (Бенчмарк PIN100)", f"Отклонение от алгоритмического эталона составляет {dev}%. В коммерческой выдаче это приводит к падению охватов. Из каждых 10 потенциальных клиентов вашей ниши, {lost_clients} либо вообще не видят вашу компанию в топе, либо уходят к конкурентам из-за ошибок в оформлении."),
         ("Б. Ежемесячная упущенная выручка", f"Органический спрос в геосервисах по вашей нише составляет {client_leads} горячих обращений в месяц. Из-за низкого рейтинга вы теряете около {lost_leads} потенциальных сделок. При среднем чеке в {client_check:,} ₽, ваш прямой убыток составляет {revenue_loss:,} ₽ в месяц.".replace(',', ' ')),
         ("В. Скрытые убытки (Удар ниже пояса)", f"В вашей сфере средний срок жизни клиента (LTV) составляет минимум 12 месяцев. Потерянные сегодня контракты лишают бизнес будущих стабильных платежей на сумму около {ltv_loss:,} ₽ в год. Это ваши реальные деньги, которые забирают более заметные конкуренты.".replace(',', ' '))
     ]
-    
-    for block_title, text in blocks_fin:
-        story.append(Paragraph(block_title, styles['PIN_H2']))
-        story.append(draw_separator(40*mm))
-        story.append(Spacer(1, 4*mm))
-        story.append(Paragraph(text, styles['PIN_Body']))
-        story.append(Spacer(1, 8*mm))
-    
-    story.append(PageBreak())
-    
-    # --- СТРАНИЦА 4: МАТРИЦА ПРОБЛЕМ ---
-    story.append(Paragraph("Аналитика воронки продаж", styles['PIN_H1']))
-    story.append(draw_separator(content_w))
-    story.append(Spacer(1, 8*mm))
-    
+    for bt, text in blocks_fin:
+        html += f"""
+            <div class="avoid-break">
+                <div class="block-title">{bt}</div>
+                <div class="block-line"></div>
+                <p>{text}</p>
+                <br>
+            </div>
+        """
+    html += '<div class="page-break"></div>'
+
+    # СТРАНИЦА 4: Матрица
+    html += "<h2>Аналитика воронки продаж</h2>"
     blocks = [
         {"title": "Блок 1. Видимость и Охваты", "groups": ['SEO и Трафик', 'Активность'], "desc": "Зона ответственности: Попадание карточки в топ выдачи Яндекса по целевым B2B-запросам."},
         {"title": "Блок 2. Упаковка и Конверсия", "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'], "desc": "Зона ответственности: Превращение «просмотров» в реальные звонки и переходы на сайт."},
         {"title": "Блок 3. Репутационный капитал", "groups": ['Репутация'], "desc": "Зона ответственности: Готовность клиента доверить вам деньги на основе мнений других."},
         {"title": "Блок 4. Скрытые алгоритмы", "groups": ['Технологии и ИИ'], "desc": "Зона ответственности: Невидимая техническая оптимизация, которую считывают роботы Яндекса."}
     ]
-
     for block in blocks:
         block_items = [r for r in results_data if r['Группа'] in block['groups']]
         if not block_items: continue
-        
         passed = [r for r in block_items if r['Результат'] == "ДА"]
         failed = [r for r in block_items if r['Результат'] == "НЕТ"]
-        
-        story.append(Paragraph(block['title'], styles['PIN_H2']))
-        story.append(draw_separator(40*mm))
-        story.append(Spacer(1, 3*mm))
-        story.append(Paragraph(block['desc'], styles['PIN_Body']))
-        
+
+        html += f"""
+            <div class="avoid-break" style="margin-bottom: 20px;">
+                <div class="block-title">{block['title']}</div>
+                <div class="block-line"></div>
+                <p>{block['desc']}</p>
+        """
         if report_type == "LITE":
-            story.append(Paragraph(f"<font color='{COLOR_SUCCESS.hexval()}'><b>В НОРМЕ: {len(passed)} ПАРАМЕТРОВ</b></font>", styles['PIN_Body']))
+            html += f"""<div class="tag-success">В НОРМЕ: {len(passed)} ПАРАМЕТРОВ</div>"""
             if failed:
-                story.append(Paragraph(f"<font color='{COLOR_ERROR.hexval()}'><b>КРИТИЧЕСКИХ ОШИБОК: {len(failed)}</b></font>", styles['PIN_Body']))
-            story.append(Paragraph("Детализация скрыта в экспресс-версии. Отсутствие данных настроек приводит к пессимизации профиля алгоритмами Яндекса.", styles['PIN_BodySmall']))
-            story.append(Spacer(1, 5*mm))
+                html += f"""<div class="tag-error">КРИТИЧЕСКИХ ОШИБОК: {len(failed)}</div>"""
+            html += """<div class="small-text">Детализация скрыта в экспресс-версии. Отсутствие данных настроек приводит к пессимизации профиля алгоритмами Яндекса.</div>"""
         else:
             if failed:
-                story.append(Paragraph(f"<font color='{COLOR_ERROR.hexval()}'><b>ОБНАРУЖЕННЫЕ УЯЗВИМОСТИ:</b></font>", styles['PIN_Body']))
+                html += """<div class="tag-error">ОБНАРУЖЕННЫЕ УЯЗВИМОСТИ:</div><ul style="margin-top: 5px; margin-bottom: 0;">"""
                 for item in failed:
-                    story.append(Paragraph(f"• {item['Критерий']}", styles['PIN_Body']))
-            story.append(Spacer(1, 5*mm))
-            
-    # --- ОФФЕР ДЛЯ LITE ВЕРСИИ ---
-    if report_type == "LITE":
-        story.append(PageBreak())
-        story.append(Spacer(1, 30*mm))
-        story.append(Paragraph("Хотите получить<br/>полный разбор?", styles['PIN_Title']))
-        story.append(draw_separator(60*mm))
-        story.append(Spacer(1, 10*mm))
-        
-        story.append(Paragraph("В экспресс-версии мы показали сумму ваших потерь. Детализация каждой ошибки, экспертная аналитика и пошаговая Дорожная карта доступны в полной PRO-версии отчета.", styles['PIN_Body']))
-        story.append(Spacer(1, 10*mm))
-        
-        story.append(create_bento_box('Стоимость PRO-аудита:', '4 880 ₽', styles['PIN_H1'], content_w))
-        story.append(Spacer(1, 10*mm))
-        
-        story.append(Paragraph("Свяжитесь с нами для получения полной версии:", styles['PIN_Body']))
-        story.append(Paragraph("<b>Telegram: @paulvenkov | pin100.ru</b>", styles['PIN_H2']))
+                    html += f"<li>{item['Критерий']}</li>"
+                html += "</ul>"
+        html += "</div>"
 
-    doc.build(story, onFirstPage=lambda c, d: draw_footer(c, d, f_map), onLaterPages=lambda c, d: draw_footer(c, d, f_map))
-    return buffer.getvalue()
+    # Оффер для LITE
+    if report_type == "LITE":
+        html += f"""
+            <div class="page-break"></div>
+            <h1 style="margin-top: 100px;">Хотите получить<br>полный разбор?</h1>
+            <div class="gold-line"></div>
+            <p>В экспресс-версии мы показали сумму ваших потерь. Детализация каждой ошибки, экспертная аналитика и пошаговая Дорожная карта доступны в полной PRO-версии отчета.</p>
+            <br>
+            <div class="bento-box avoid-break">
+                <div class="bento-title">Стоимость PRO-аудита:</div>
+                <div class="bento-value text-navy">4 880 ₽</div>
+            </div>
+            <p>Свяжитесь с нами для получения полной версии:<br><b>Telegram: @paulvenkov | pin100.ru</b></p>
+        """
+
+    html += "</body></html>"
+    return HTML(string=html).write_pdf()
 
 # ==========================================
 # 4. СБОРКА И ИНТЕРФЕЙС
