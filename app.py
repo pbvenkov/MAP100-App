@@ -6,6 +6,7 @@ import json
 import numpy as np
 import pandas as pd
 import re
+import urllib.request
 import itertools
 from datetime import datetime, timezone
 import gspread
@@ -142,7 +143,6 @@ def fetch_apify_data(yandex_url):
         raise Exception(err_msg)
     
     data = dataset[0]
-    
     if not data.get('title'):
         raise Exception(f"Сбой ключа 'title'.")
         
@@ -275,39 +275,31 @@ def safe_text(text):
 class PIN100Report(FPDF):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Устанавливаем премиальные поля 25мм со всех сторон
         self.set_margins(left=25, top=25, right=25)
         self.set_auto_page_break(auto=True, margin=25)
         
-        # 1. Надежные прямые ссылки на Google Fonts
+        # Надежные прямые ссылки RAW
         fonts = {
-            "Inter-Regular.ttf": "https://github.com/google/fonts/raw/main/ofl/inter/static/Inter-Regular.ttf",
-            "Inter-Bold.ttf": "https://github.com/google/fonts/raw/main/ofl/inter/static/Inter-Bold.ttf",
-            "PlayfairDisplay-Bold.ttf": "https://github.com/google/fonts/raw/main/ofl/playfairdisplay/static/PlayfairDisplay-Bold.ttf"
+            "Inter-Regular.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/static/Inter-Regular.ttf",
+            "Inter-Bold.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/static/Inter-Bold.ttf",
+            "PlayfairDisplay-Bold.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/playfairdisplay/static/PlayfairDisplay-Bold.ttf"
         }
         
-        # 2. Умное скачивание (перезакачает, если файл битый или меньше 20кб)
+        # Скачивание с имитацией браузера (User-Agent)
         for font_name, url in fonts.items():
-            if not os.path.exists(font_name) or os.path.getsize(font_name) < 20000:
+            # Если файла нет или он весит меньше 50Кб (битый HTML), скачиваем заново
+            if not os.path.exists(font_name) or os.path.getsize(font_name) < 50000:
                 try:
-                    r = requests.get(url, allow_redirects=True)
-                    with open(font_name, 'wb') as f:
-                        f.write(r.content)
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+                    with urllib.request.urlopen(req, timeout=15) as response, open(font_name, 'wb') as f:
+                        f.write(response.read())
                 except Exception as e:
-                    print(f"Ошибка загрузки шрифта {font_name}: {e}")
+                    print(f"Ошибка загрузки {font_name}: {e}")
 
-        # 3. Изолированная регистрация каждого шрифта (если упадет один, другие выживут)
-        try:
-            self.add_font("Inter", "", "Inter-Regular.ttf")
-        except Exception: pass
-            
-        try:
-            self.add_font("Inter", "B", "Inter-Bold.ttf")
-        except Exception: pass
-            
-        try:
-            self.add_font("Playfair", "B", "PlayfairDisplay-Bold.ttf")
-        except Exception: pass
+        # Строгая регистрация шрифтов (без Arial!)
+        self.add_font("Inter", "", "Inter-Regular.ttf")
+        self.add_font("Inter", "B", "Inter-Bold.ttf")
+        self.add_font("Playfair", "B", "PlayfairDisplay-Bold.ttf")
             
         # Корпоративные цвета
         self.color_navy = (10, 17, 40)
@@ -328,14 +320,12 @@ class PIN100Report(FPDF):
         self.cell(60, 10, f'Стр. {self.page_no()}', 0, 0, 'R')
 
 def draw_bento_box(pdf, title, value, value_color, is_red_value=False):
-    # Рисуем Bento-карточку
     pdf.set_fill_color(*pdf.color_surface)
     pdf.set_draw_color(*pdf.color_border)
     pdf.set_line_width(0.3)
     start_y = pdf.get_y()
     pdf.rect(25, start_y, pdf.content_w, 28, 'DF')
     
-    # Текст внутри карточки
     pdf.set_y(start_y + 5)
     pdf.set_x(30)
     pdf.set_font('Inter', '', 11)
@@ -356,7 +346,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     # ---------------- СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ ----------------
     pdf.add_page()
     
-    # Логотип (Верхний левый угол)
     logo_path = "logo.png"
     if not os.path.exists(logo_path):
         logo_path = "PIN100 big logo.png"
@@ -364,44 +353,31 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     if os.path.exists(logo_path):
         pdf.image(logo_path, x=25, y=25, w=30)
     else:
-        try:
-            pdf.set_font('Playfair', 'B', 20)
-        except:
-            pdf.set_font('Arial', 'B', 20)
+        pdf.set_font('Playfair', 'B', 20)
         pdf.set_text_color(*pdf.color_navy)
         pdf.set_xy(25, 25)
         pdf.cell(30, 10, 'PIN100', 0, 0, 'L')
         
     pdf.set_y(90)
-    try:
-        pdf.set_font('Playfair', 'B', 32)
-    except:
-        pdf.set_font('Arial', 'B', 32)
+    pdf.set_font('Playfair', 'B', 32)
     pdf.set_text_color(*pdf.color_navy)
     
     doc_title = 'Экспресс-аудит\nупущенной выручки' if report_type == "LITE" else 'Экспертный аудит\nупущенной выручки'
     pdf.multi_cell(pdf.content_w, 14, safe_text(doc_title), align='L')
     
-    # Золотая разделительная линия
     pdf.set_draw_color(*pdf.color_gold)
     pdf.set_line_width(0.6)
     pdf.line(25, pdf.get_y() + 5, 85, pdf.get_y() + 5)
     
     pdf.ln(15)
-    try:
-        pdf.set_font('Inter', '', 12)
-    except:
-        pdf.set_font('Arial', '', 12)
+    pdf.set_font('Inter', '', 12)
     pdf.set_text_color(*pdf.color_ink_main)
     pdf.cell(0, 8, f'Подготовлено для бизнеса: {title}', 0, 1, 'L')
     pdf.cell(0, 8, f'Дата аудита: {current_date}', 0, 1, 'L')
     
     # ---------------- СТРАНИЦА 2: EXECUTIVE SUMMARY ----------------
     pdf.add_page()
-    try:
-        pdf.set_font('Playfair', 'B', 24)
-    except:
-        pdf.set_font('Arial', 'B', 24)
+    pdf.set_font('Playfair', 'B', 24)
     pdf.set_text_color(*pdf.color_navy)
     pdf.cell(0, 12, safe_text('Резюме для руководителя'), 0, 1, 'L')
     
@@ -410,29 +386,21 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     pdf.line(25, pdf.get_y() + 2, 25 + pdf.content_w, pdf.get_y() + 2)
     pdf.ln(10)
     
-    # Bento-карточки
     score_color = pdf.color_success if score >= 80 else (pdf.color_gold if score >= 50 else pdf.color_error)
     draw_bento_box(pdf, 'Индекс готовности профиля:', f'{round(score, 1)} / 100', score_color)
     
-    # Форматируем деньги корректно (с пробелами и без $)
     rev_str = f"- {revenue_loss:,}".replace(',', ' ') + " ₽ / мес"
     draw_bento_box(pdf, 'Упущенная выручка (Lost Revenue):', rev_str, pdf.color_error, is_red_value=True)
     
     pdf.ln(5)
-    try:
-        pdf.set_font('Inter', '', 11)
-    except:
-        pdf.set_font('Arial', '', 11)
+    pdf.set_font('Inter', '', 11)
     pdf.set_text_color(*pdf.color_ink_main)
     summary_text = safe_text("Вывод эксперта: Отличное качество вашего продукта теряется из-за слабого присутствия в геосервисах. Из-за критических ошибок в заполнении карточки и отсутствии системной работы с отзывами вы уступаете позиции в поиске и ежемесячно отдаете горячих клиентов своим конкурентам.")
     pdf.multi_cell(pdf.content_w, 7, summary_text, align='L')
     
     # ---------------- СТРАНИЦА 3: ФИНАНСОВЫЙ АУДИТ ----------------
     pdf.add_page()
-    try:
-        pdf.set_font('Playfair', 'B', 24)
-    except:
-        pdf.set_font('Arial', 'B', 24)
+    pdf.set_font('Playfair', 'B', 24)
     pdf.set_text_color(*pdf.color_navy)
     pdf.cell(0, 12, safe_text('Декомпозиция потерь'), 0, 1, 'L')
     
@@ -452,33 +420,24 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         ("В. Скрытые убытки (Удар ниже пояса)", f"В вашей сфере средний срок жизни клиента (LTV) составляет минимум 12 месяцев. Потерянные сегодня контракты лишают бизнес будущих стабильных платежей на сумму около {ltv_loss:,} ₽ в год. Это ваши реальные деньги, которые забирают более заметные конкуренты.".replace(',', ' '))
     ]
     
-    for title, text in blocks_fin:
-        try:
-            pdf.set_font('Playfair', 'B', 16)
-        except:
-            pdf.set_font('Arial', 'B', 16)
+    for block_title, text in blocks_fin:
+        pdf.set_font('Playfair', 'B', 16)
         pdf.set_text_color(*pdf.color_navy)
-        pdf.cell(pdf.content_w, 10, safe_text(title), 0, 1, 'L')
+        pdf.cell(pdf.content_w, 10, safe_text(block_title), 0, 1, 'L')
         
         pdf.set_draw_color(*pdf.color_gold)
         pdf.set_line_width(0.3)
         pdf.line(25, pdf.get_y(), 65, pdf.get_y())
         pdf.ln(4)
         
-        try:
-            pdf.set_font('Inter', '', 11)
-        except:
-            pdf.set_font('Arial', '', 11)
+        pdf.set_font('Inter', '', 11)
         pdf.set_text_color(*pdf.color_ink_main)
         pdf.multi_cell(pdf.content_w, 7, safe_text(text), align='L')
         pdf.ln(8)
     
     # ---------------- СТРАНИЦА 4: МАТРИЦА ПРОБЛЕМ ----------------
     pdf.add_page()
-    try:
-        pdf.set_font('Playfair', 'B', 24)
-    except:
-        pdf.set_font('Arial', 'B', 24)
+    pdf.set_font('Playfair', 'B', 24)
     pdf.set_text_color(*pdf.color_navy)
     pdf.cell(0, 12, safe_text('Аналитика воронки продаж'), 0, 1, 'L')
     
@@ -502,10 +461,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         
         if pdf.get_y() > 220: pdf.add_page()
         
-        try:
-            pdf.set_font('Playfair', 'B', 16)
-        except:
-            pdf.set_font('Arial', 'B', 16)
+        pdf.set_font('Playfair', 'B', 16)
         pdf.set_text_color(*pdf.color_navy)
         pdf.cell(pdf.content_w, 10, safe_text(block['title']), 0, 1, 'L')
         
@@ -514,52 +470,32 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         pdf.line(25, pdf.get_y(), 65, pdf.get_y())
         pdf.ln(3)
         
-        try:
-            pdf.set_font('Inter', '', 11)
-        except:
-            pdf.set_font('Arial', '', 11)
+        pdf.set_font('Inter', '', 11)
         pdf.set_text_color(*pdf.color_ink_main)
         pdf.multi_cell(pdf.content_w, 6, safe_text(block['desc']), align='L')
         pdf.ln(3)
         
         if report_type == "LITE":
-            # Статусные теги для LITE
-            try:
-                pdf.set_font('Inter', 'B', 10)
-            except:
-                pdf.set_font('Arial', 'B', 10)
+            pdf.set_font('Inter', 'B', 10)
             pdf.set_text_color(*pdf.color_success)
             pdf.cell(0, 6, safe_text(f"В НОРМЕ: {len(passed_items)} ПАРАМЕТРОВ"), 0, 1, 'L')
 
             if failed_items:
-                try:
-                    pdf.set_font('Inter', 'B', 10)
-                except:
-                    pdf.set_font('Arial', 'B', 10)
+                pdf.set_font('Inter', 'B', 10)
                 pdf.set_text_color(*pdf.color_error)
                 pdf.cell(0, 6, safe_text(f"КРИТИЧЕСКИХ ОШИБОК: {len(failed_items)}"), 0, 1, 'L')
 
-            try:
-                pdf.set_font('Inter', '', 10)
-            except:
-                pdf.set_font('Arial', '', 10)
+            pdf.set_font('Inter', '', 10)
             pdf.set_text_color(*pdf.color_ink_light)
             pdf.multi_cell(pdf.content_w, 6, safe_text("Детализация скрыта в экспресс-версии. Отсутствие данных настроек приводит к пессимизации профиля алгоритмами Яндекса."), align='L')
             pdf.ln(6)
             continue
             
-        # Логика для PRO (Остается аналогичной, но с новыми шрифтами)
         if failed_items:
-            try:
-                pdf.set_font('Inter', 'B', 10)
-            except:
-                pdf.set_font('Arial', 'B', 10)
+            pdf.set_font('Inter', 'B', 10)
             pdf.set_text_color(*pdf.color_error)
             pdf.cell(0, 6, safe_text("ОБНАРУЖЕННЫЕ УЯЗВИМОСТИ:"), 0, 1, 'L')
-            try:
-                pdf.set_font('Inter', '', 10)
-            except:
-                pdf.set_font('Arial', '', 10)
+            pdf.set_font('Inter', '', 10)
             pdf.set_text_color(*pdf.color_ink_main)
             for item in failed_items:
                 pdf.multi_cell(pdf.content_w, 5, safe_text(f"• {item['Критерий']}"))
@@ -569,10 +505,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     if report_type == "LITE":
         pdf.add_page()
         pdf.set_y(80)
-        try:
-            pdf.set_font('Playfair', 'B', 28)
-        except:
-            pdf.set_font('Arial', 'B', 28)
+        pdf.set_font('Playfair', 'B', 28)
         pdf.set_text_color(*pdf.color_navy)
         pdf.multi_cell(pdf.content_w, 12, safe_text('Хотите получить\nполный разбор?'), align='L')
         
@@ -581,10 +514,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         pdf.line(25, pdf.get_y() + 5, 85, pdf.get_y() + 5)
         pdf.ln(15)
         
-        try:
-            pdf.set_font('Inter', '', 12)
-        except:
-            pdf.set_font('Arial', '', 12)
+        pdf.set_font('Inter', '', 12)
         pdf.set_text_color(*pdf.color_ink_main)
         txt_offer = safe_text("В экспресс-версии мы показали сумму ваших потерь. Детализация каждой ошибки, экспертная аналитика и пошаговая Дорожная карта доступны в полной PRO-версии отчета.")
         pdf.multi_cell(pdf.content_w, 7, txt_offer, align='L')
@@ -593,15 +523,9 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         draw_bento_box(pdf, 'Стоимость PRO-аудита:', '4 880 ₽', pdf.color_navy)
         
         pdf.ln(10)
-        try:
-            pdf.set_font('Inter', '', 12)
-        except:
-            pdf.set_font('Arial', '', 12)
+        pdf.set_font('Inter', '', 12)
         pdf.cell(0, 8, safe_text('Свяжитесь с нами для получения полной версии:'), 0, 1, 'L')
-        try:
-            pdf.set_font('Inter', 'B', 14)
-        except:
-            pdf.set_font('Arial', 'B', 14)
+        pdf.set_font('Inter', 'B', 14)
         pdf.set_text_color(*pdf.color_navy)
         pdf.cell(0, 8, safe_text('Telegram: @paulvenkov | pin100.ru'), 0, 1, 'L')
 
