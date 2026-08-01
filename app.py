@@ -359,9 +359,18 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         """
         
         if report_type == "LITE":
-            html += f"""<div class="tag-success" style="margin-bottom: 5px;">В НОРМЕ: {len(passed)} ПАРАМЕТРОВ</div>"""
-            if failed: html += f"""<div class="tag-error">КРИТИЧЕСКИХ ОШИБОК: {len(failed)}</div>"""
-            html += """<div class="small-text">Детализация скрыта в экспресс-версии. Отсутствие данных настроек приводит к пессимизации профиля алгоритмами Яндекса.</div>"""
+            html += f"""<div class="tag-success" style="margin-bottom: 10px;">В НОРМЕ: {len(passed)} ПАРАМЕТРОВ</div>"""
+            if failed:
+                html += f"""<div class="tag-error" style="margin-bottom: 10px;">КРИТИЧЕСКИХ ОШИБОК: {len(failed)}</div>"""
+                html += """<div style="font-size: 10.5pt; font-weight: bold; margin-bottom: 5px; color: #0A1128;">Топ-3 ошибки, сжигающие конверсию:</div>"""
+                html += """<ul style="margin-top: 0; margin-bottom: 15px; font-size: 10.5pt; color: #334155;">"""
+                for item in failed[:3]:
+                    # Вставляем реальное обоснование от ИИ или базовое
+                    reason_text = item['Обоснование'] if item['Обоснование'] != "Требует доработки." else "Алгоритмы фиксируют незаполненный атрибут, что снижает выдачу."
+                    html += f"<li style='margin-bottom: 6px;'><b>{item['Критерий']}</b>: {reason_text}</li>"
+                html += "</ul>"
+                if len(failed) > 3:
+                    html += f"""<div class="small-text" style="font-style: italic;">* Плюс еще {len(failed) - 3} скрытых уязвимостей в этом блоке, пессимизирующих профиль в выдаче Яндекса.</div>"""
         else:
             if passed:
                 html += """<div class="tag-success" style="margin-bottom: 5px;">УЖЕ НАСТРОЕНО ВЕРНО:</div><ul style="margin-top: 0; margin-bottom: 15px; color: #16A34A;">"""
@@ -378,12 +387,40 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     if report_type == "LITE":
         html += f"""
             <div class="page-break"></div>
-            <h1 style="margin-top: 100px;">Хотите получить<br>полный разбор?</h1>
+            <h1 style="margin-top: 50px;">Почему вам нужен<br>PRO-аудит?</h1>
             <div class="gold-line"></div>
-            <p>В экспресс-версии мы показали сумму ваших потерь. Детализация каждой ошибки, экспертная аналитика и пошаговая Дорожная карта доступны в полной PRO-версии отчета.</p>
-            <br>
-            <div class="bento-box avoid-break"><div class="bento-title">Стоимость PRO-аудита:</div><div class="bento-value text-navy">4 880 ₽</div></div>
-            <p>Свяжитесь с нами для получения полной версии:<br><b>Telegram: @paulvenkov | pin100.ru</b></p>
+            
+            <p style="font-size: 11pt; margin-bottom: 20px;">
+                В экспресс-версии мы подсветили лишь верхушку айсберга и показали реальную цифру ваших потерь. PRO-аудит — это инструмент тотального контроля и ваш пошаговый план по захвату топа в геосервисах.
+            </p>
+            
+            <div style="background-color: #F8FAFC; border-left: 4px solid #C5A880; padding: 15px; margin-bottom: 25px;">
+                <b>Независимый контроль подрядчиков:</b> Узнайте реальное положение дел без «розовых очков» маркетинговых агентств. Отчет покажет, за что вы платите деньги и где подрядчики недорабатывают.
+            </div>
+
+            <h3 style="color: #0A1128; font-family: 'Playfair Display', serif; font-size: 16pt;">Что внутри PRO-версии:</h3>
+            <ul style="margin-bottom: 25px; line-height: 1.6;">
+                <li><b>Полная декомпозиция:</b> Разбор, значение и объяснение всех 79 параметров ранжирования Яндекса для вашей карточки.</li>
+                <li><b>Дорожная карта:</b> Пошаговый план исправления ошибок по дням (от критических и срочных до косметических).</li>
+                <li><b>Скрытые лайфхаки:</b> Практические фишки алгоритмов, которые знают только топ-5% бизнесов в топе выдачи.</li>
+            </ul>
+            
+            <div class="bento-box avoid-break">
+                <div class="bento-title">Инвестиция в рост:</div>
+                <div class="bento-value text-navy">4 880 ₽</div>
+                <p style="font-size: 10pt; color: #16A34A; margin-top: 10px; font-weight: bold;">
+                    🎁 Бонус: Если вы решите делегировать работу профессионалам и закажете заполнение карточки у нашей команды, мы полностью вычтем стоимость этого аудита из чека.
+                </p>
+            </div>
+            
+            <p style="font-size: 10.5pt; color: #475569; font-style: italic; margin-bottom: 20px;">
+                * Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж от наших менеджеров. Вы обращаетесь к нам, только если сами надумаете.
+            </p>
+            
+            <div style="border-top: 1px solid #E2E8F0; padding-top: 20px;">
+                <p style="font-size: 11pt;">Запросить полную версию без обязательств:</p>
+                <p style="font-size: 14pt; color: #0A1128;"><b>Telegram: @paulvenkov | pin100.ru</b></p>
+            </div>
         """
 
     html += "</body></html>"
@@ -447,7 +484,6 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                     comm = "ДА" if val > 0 else "НЕТ"
                     reason = exp_reasons.get(code, "Метрика не была оценена из-за сбоя ИИ." if not exp_reasons else "Соответствует эталону." if val > 0 else "Требует доработки.")
                     
-                    # Добавлены Earned и Max для подсчета в отчете
                     results.append({
                         "Код": code, 
                         "Критерий": name, 
@@ -506,8 +542,10 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             for g_name, items in grouped_results.items():
                 passed_count = sum(1 for x in items if x['Результат'] == 'ДА')
                 total_count = len(items)
+                earned_score = sum(r.get('Earned', 0.0) for r in items)
+                max_score = sum(r.get('Max', 0.0) for r in items)
                 
-                with st.expander(f"📁 {g_name} ({passed_count} из {total_count} в норме)"):
+                with st.expander(f"📁 {g_name} ({passed_count} из {total_count} в норме) | {round(earned_score, 1)} / {round(max_score, 1)} баллов"):
                     for item in items:
                         if item['Результат'] == 'ДА':
                             st.success(f"**✅ {item['Критерий']}**\n\n{item['Обоснование']}")
