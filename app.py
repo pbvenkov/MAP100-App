@@ -12,6 +12,7 @@ from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 from concurrent.futures import ThreadPoolExecutor
 from weasyprint import HTML
+import base64
 
 # ==========================================
 # 0. НАСТРОЙКИ БРЕНДИНГА PIN100
@@ -27,7 +28,6 @@ APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper"
 
 try:
     genai.configure(api_key=st.secrets.get("GEMINI_API_KEY", ""))
-    # ИСПРАВЛЕНО: ТОЛЬКО gemini-3.5-flash-lite
     expert_engine = genai.GenerativeModel('gemini-3.5-flash-lite') 
 except Exception as e:
     expert_engine = None
@@ -238,6 +238,15 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     ltv_loss = revenue_loss * 12
     rev_str = f"- {revenue_loss:,}".replace(',', ' ') + " ₽ / мес"
 
+    # Обработка логотипа для водяного знака
+    logo_b64 = ""
+    logo_path = "logo.png" if os.path.exists("logo.png") else ("PIN100 big logo.png" if os.path.exists("PIN100 big logo.png") else None)
+    if logo_path:
+        try:
+            with open(logo_path, "rb") as img_file:
+                logo_b64 = base64.b64encode(img_file.read()).decode('utf-8')
+        except: pass
+
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -264,14 +273,26 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             .page-break {{ page-break-before: always; }}
             .block-title {{ font-size: 16pt; margin-bottom: 5px; font-weight: 700; }}
             .block-line {{ width: 50mm; height: 1px; background-color: #C5A880; margin-bottom: 15px; }}
-            .tag-success {{ color: #16A34A; font-weight: 700; font-size: 10pt; }}
-            .tag-error {{ color: #DC2626; font-weight: 700; font-size: 10pt; }}
+            .tag-success {{ font-weight: 700; font-size: 10.5pt; color: #16A34A; }}
+            .tag-error {{ font-weight: 700; font-size: 10.5pt; color: #DC2626; }}
             .small-text {{ color: #94A3B8; font-size: 10pt; margin-top: 5px; }}
             .avoid-break {{ page-break-inside: avoid; }}
+            .watermark {{
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: 120mm;
+                opacity: 0.05;
+                z-index: -1000;
+            }}
         </style>
     </head>
     <body>
     """
+
+    if logo_b64:
+        html += f'<img src="data:image/png;base64,{logo_b64}" class="watermark">'
 
     doc_title = 'Экспресс-аудит<br>упущенной выручки' if report_type == "LITE" else 'Экспертный аудит<br>упущенной выручки'
     html += f"""
@@ -290,35 +311,68 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     """
     blocks_fin = [
         ("А. Оценка капитала бренда (Бенчмарк PIN100)", f"Отклонение от алгоритмического эталона составляет {dev}%. В коммерческой выдаче это приводит к падению охватов. Из каждых 10 потенциальных клиентов вашей ниши, {lost_clients} либо вообще не видят вашу компанию в топе, либо уходят к конкурентам из-за ошибок в оформлении."),
-        ("Б. ЕЕжемесячная упущенная выручка", f"Органический спрос в геосервисах по вашей нише составляет {client_leads} горячих обращений в месяц. Из-за низкого рейтинга вы теряете около {lost_leads} потенциальных сделок. При среднем чеке в {client_check:,} ₽, ваш прямой убыток составляет {revenue_loss:,} ₽ в месяц.".replace(',', ' ')),
-        ("В. Скрытые убытки (Удар ниже пояса)", f"В вашей сфере средний срок жизни клиента (LTV) составляет минимум 12 месяцев. Потерянные сегодня контракты лишают бизнес будущих стабильных платежей на сумму около {ltv_loss:,} ₽ в год. Это ваши реальные деньги, которые забирают более заметные конкуренты.".replace(',', ' '))
+        ("Б. Ежемесячная упущенная выручка", f"Органический спрос в геосервисах по вашей нише составляет {client_leads} горячих обращений в месяц. Из-за низкого рейтинга вы теряете около {lost_leads} потенциальных сделок. При среднем чеке в {client_check:,} ₽, ваш прямой убыток составляет {revenue_loss:,} ₽ в месяц.".replace(',', ' ')),
+        ("В. Скрытые убытки", f"В вашей сфере средний срок жизни клиента (LTV) составляет минимум 12 месяцев. Потерянные сегодня контракты лишают бизнес будущих стабильных платежей на сумму около {ltv_loss:,} ₽ в год. Это ваши реальные деньги, которые забирают более заметные конкуренты.".replace(',', ' '))
     ]
     for bt, text in blocks_fin:
         html += f"""<div class="avoid-break"><div class="block-title">{bt}</div><div class="block-line"></div><p>{text}</p><br></div>"""
     
     html += '<div class="page-break"></div><h2>Аналитика воронки продаж</h2>'
     blocks = [
-        {"title": "Блок 1. Видимость и Охваты", "groups": ['SEO и Трафик', 'Активность'], "desc": "Зона ответственности: Попадание карточки в топ выдачи Яндекса по целевым B2B-запросам."},
-        {"title": "Блок 2. Упаковка и Конверсия", "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'], "desc": "Зона ответственности: Превращение «просмотров» в реальные звонки и переходы на сайт."},
-        {"title": "Блок 3. Репутационный капитал", "groups": ['Репутация'], "desc": "Зона ответственности: Готовность клиента доверить вам деньги на основе мнений других."},
-        {"title": "Блок 4. Скрытые алгоритмы", "groups": ['Технологии и ИИ'], "desc": "Зона ответственности: Невидимая техническая оптимизация, которую считывают роботы Яндекса."}
+        {
+            "title": "Блок 1. Видимость и Охваты", 
+            "groups": ['SEO и Трафик', 'Активность'], 
+            "desc": "Этот блок отвечает за то, как часто вас находят потенциальные клиенты в поиске Яндекса. Правильная настройка позволяет алгоритмам показывать вашу карточку выше конкурентов по целевым запросам. Если эти параметры не заполнены, вы теряете бесплатный органический трафик, и клиенты уходят к тем, кто выше в выдаче."
+        },
+        {
+            "title": "Блок 2. Упаковка и Конверсия", 
+            "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'], 
+            "desc": "Здесь мы оцениваем, насколько карточка привлекательна для клиента. Качественный визуал, полные цены и удобные кнопки превращают обычный просмотр в реальный звонок или переход на сайт. Без этих элементов профиль выглядит заброшенным, и клиент уходит искать более понятные предложения."
+        },
+        {
+            "title": "Блок 3. Репутационный капитал", 
+            "groups": ['Репутация'], 
+            "desc": "Репутация — это уровень доверия. Клиенты всегда читают отзывы перед покупкой, особенно в В2В и при высоких чеках. Системная работа с обратной связью (даже негативной) повышает лояльность. Отсутствие ответов или низкий рейтинг заставляют клиента сомневаться в вашей надежности."
+        },
+        {
+            "title": "Блок 4. Скрытые алгоритмы", 
+            "groups": ['Технологии и ИИ'], 
+            "desc": "Это невидимая для обычного пользователя, но критически важная для роботов Яндекса часть профиля. Разметка данных и координаты помогают нейросетям Яндекса лучше понимать ваш бизнес. Игнорирование этих настроек снижает доверие самих алгоритмов к вашей карточке."
+        }
     ]
+    
     for block in blocks:
         block_items = [r for r in results_data if r['Группа'] in block['groups']]
         if not block_items: continue
+        
         passed = [r for r in block_items if r['Результат'] == "ДА"]
         failed = [r for r in block_items if r['Результат'] == "НЕТ"]
+        
+        earned_score = sum(r.get('Earned', 0.0) for r in block_items)
+        max_score = sum(r.get('Max', 0.0) for r in block_items)
 
-        html += f"""<div class="avoid-break" style="margin-bottom: 20px;"><div class="block-title">{block['title']}</div><div class="block-line"></div><p>{block['desc']}</p>"""
+        html += f"""
+        <div class="avoid-break" style="margin-bottom: 25px;">
+            <div class="block-title">{block['title']} ({round(earned_score, 1)} / {round(max_score, 1)} баллов)</div>
+            <div class="block-line"></div>
+            <p style="margin-bottom: 15px; font-size: 10.5pt; color: #475569;"><i>{block['desc']}</i></p>
+        """
+        
         if report_type == "LITE":
-            html += f"""<div class="tag-success">В НОРМЕ: {len(passed)} ПАРАМЕТРОВ</div>"""
+            html += f"""<div class="tag-success" style="margin-bottom: 5px;">В НОРМЕ: {len(passed)} ПАРАМЕТРОВ</div>"""
             if failed: html += f"""<div class="tag-error">КРИТИЧЕСКИХ ОШИБОК: {len(failed)}</div>"""
             html += """<div class="small-text">Детализация скрыта в экспресс-версии. Отсутствие данных настроек приводит к пессимизации профиля алгоритмами Яндекса.</div>"""
         else:
+            if passed:
+                html += """<div class="tag-success" style="margin-bottom: 5px;">УЖЕ НАСТРОЕНО ВЕРНО:</div><ul style="margin-top: 0; margin-bottom: 15px; color: #16A34A;">"""
+                for item in passed: html += f"<li>{item['Критерий']}</li>"
+                html += "</ul>"
+                
             if failed:
-                html += """<div class="tag-error">ОБНАРУЖЕННЫЕ УЯЗВИМОСТИ:</div><ul style="margin-top: 5px; margin-bottom: 0;">"""
+                html += """<div class="tag-error" style="margin-bottom: 5px;">ОБНАРУЖЕННЫЕ УЯЗВИМОСТИ:</div><ul style="margin-top: 0; margin-bottom: 0; color: #DC2626;">"""
                 for item in failed: html += f"<li>{item['Критерий']}</li>"
                 html += "</ul>"
+                
         html += "</div>"
 
     if report_type == "LITE":
@@ -371,7 +425,6 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             raw_scores = {}
             for f in [calculate_prof_rules, calculate_rep_rules]: raw_scores.update(f(data))
             
-            # Обновленный вызов ИИ с обработкой ошибок
             exp_sc, exp_reasons = calculate_dynamic_expert_rules(data, prompts_data, url)
             raw_scores.update(exp_sc)
             
@@ -384,6 +437,7 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                 if not code: continue
                 name = str(r.get('Критерий', '')).strip()
                 group = str(r.get('Группа метрик', 'Прочее')).strip()
+                
                 try: max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
                 except: max_s = float(r.get('Балл', 0.0))
                 
@@ -392,7 +446,17 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                     final_total_score += val
                     comm = "ДА" if val > 0 else "НЕТ"
                     reason = exp_reasons.get(code, "Метрика не была оценена из-за сбоя ИИ." if not exp_reasons else "Соответствует эталону." if val > 0 else "Требует доработки.")
-                    results.append({"Код": code, "Критерий": name, "Результат": comm, "Обоснование": reason, "Группа": group})
+                    
+                    # Добавлены Earned и Max для подсчета в отчете
+                    results.append({
+                        "Код": code, 
+                        "Критерий": name, 
+                        "Результат": comm, 
+                        "Обоснование": reason, 
+                        "Группа": group,
+                        "Earned": val,
+                        "Max": max_s
+                    })
 
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
             niche_label = eco.get("label", "Прочее")
@@ -433,14 +497,12 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             st.markdown("---")
             st.markdown("### 🔎 Просмотр полного аудита")
             
-            # Группируем результаты для вывода
             grouped_results = {}
             for r in results:
                 g = r['Группа']
                 if g not in grouped_results: grouped_results[g] = []
                 grouped_results[g].append(r)
                 
-            # Выводим группы в виде аккордеонов
             for g_name, items in grouped_results.items():
                 passed_count = sum(1 for x in items if x['Результат'] == 'ДА')
                 total_count = len(items)
