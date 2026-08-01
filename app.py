@@ -279,11 +279,10 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             .avoid-break {{ page-break-inside: avoid; }}
             .watermark {{
                 position: fixed;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                width: 120mm;
-                opacity: 0.05;
+                top: 0;
+                right: 0;
+                width: 40mm;
+                opacity: 0.02;
                 z-index: -1000;
             }}
         </style>
@@ -341,7 +340,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         }
     ]
     
-    # Динамические обоснования, если ИИ не справился
     fallback_impact = {
         'SEO и Трафик': 'пессимизирует карточку в поисковой выдаче по целевым запросам',
         'Конверсия': 'режет конверсию из случайного просмотра в целевой звонок',
