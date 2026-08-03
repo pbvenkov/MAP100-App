@@ -86,9 +86,16 @@ def init_google_sheets():
 
 def get_database_from_sheets():
     doc = init_google_sheets()
-    # ИСПРАВЛЕНИЕ: Удалено value_render_option='UNFORMATTED_VALUE', чтобы избежать бага с датами.
-    rules = doc.worksheet("Rules").get_all_records()
-    prompts = doc.worksheet("Prompts").get_all_records()
+    
+    # ИСПРАВЛЕНИЕ: Читаем сырые значения, обходя баг gspread с удалением запятых
+    raw_rules = doc.worksheet("Rules").get_all_values()
+    headers_rules = raw_rules[0]
+    rules = [dict(zip(headers_rules, row)) for row in raw_rules[1:] if any(row)]
+    
+    raw_prompts = doc.worksheet("Prompts").get_all_values()
+    headers_prompts = raw_prompts[0]
+    prompts = [dict(zip(headers_prompts, row)) for row in raw_prompts[1:] if any(row)]
+    
     return rules, prompts, doc
 
 def fetch_apify_data(yandex_url):
@@ -217,7 +224,6 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
         if match:
             res_json = json.loads(match.group(0))
             for code, result in res_json.items():
-                # Принимаем true или слова "true", "1", 1
                 if str(result).lower() in ["1", "true"]: scores[code] = True
         else:
             raise ValueError("Ответ ИИ не содержит валидного JSON.")
@@ -495,7 +501,6 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             raw_scores = {}
             for f in [calculate_prof_rules, calculate_rep_rules]: raw_scores.update(f(data))
             
-            # ИИ теперь только возвращает баллы (True/False)
             exp_sc = calculate_dynamic_expert_rules(data, prompts_data, url)
             raw_scores.update(exp_sc)
             
@@ -509,13 +514,12 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                 name = str(r.get('Критерий', '')).strip()
                 group = str(r.get('Группа метрик', 'Прочее')).strip()
                 
-                # Парсинг новых колонок из Таблицы
                 reason_success = str(r.get('Обоснование_УСПЕХА', '')).strip() or f"Отлично! Параметр «{name}» настроен верно и усиливает ваш профиль."
                 reason_error = str(r.get('Обоснование_ОШИБКИ', '')).strip() or f"Отсутствие параметра «{name}» пессимизирует карточку и лишает вас органического трафика."
                 try: stage_val = int(r.get('Этап_Внедрения', 3))
                 except: stage_val = 3
                 
-                # Безопасная конверсия баллов в float
+                # ИСПРАВЛЕНИЕ: Чтение баллов с сырых строк
                 try: max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
                 except: max_s = float(r.get('Балл', 0.0))
                 
@@ -523,7 +527,6 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                     val = max_s if raw_scores.get(code) else 0.0
                     final_total_score += val
                     
-                    # Присваиваем нужный текст из Google Sheets в зависимости от успеха
                     if val > 0:
                         comm = "ДА"
                         final_reason = reason_success
