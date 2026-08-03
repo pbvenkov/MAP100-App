@@ -87,7 +87,7 @@ def init_google_sheets():
 def get_database_from_sheets():
     doc = init_google_sheets()
     
-    # ИСПРАВЛЕНИЕ: Читаем сырые значения, обходя баг gspread с удалением запятых
+    # Забираем сырые значения (защита от локалей и багов gspread)
     raw_rules = doc.worksheet("Rules").get_all_values()
     headers_rules = raw_rules[0]
     rules = [dict(zip(headers_rules, row)) for row in raw_rules[1:] if any(row)]
@@ -209,7 +209,6 @@ def calculate_rep_rules(data):
     return scores
 
 def calculate_dynamic_expert_rules(data, prompts_data, target_url):
-    """Облегченный ИИ: проверяет только факты, не пишет тексты"""
     scores = {}
     if not expert_engine or not prompts_data: return scores
     title = str(data.get('title') or '')
@@ -246,7 +245,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     ltv_loss = revenue_loss * 12
     rev_str = f"- {revenue_loss:,}".replace(',', ' ') + " ₽ / мес"
 
-    # Обработка логотипа для водяного знака
+    # Водяной знак
     logo_b64 = ""
     logo_path = "logo.png" if os.path.exists("logo.png") else ("PIN100 big logo.png" if os.path.exists("PIN100 big logo.png") else None)
     if logo_path:
@@ -281,18 +280,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             .page-break {{ page-break-before: always; }}
             .block-title {{ font-size: 16pt; margin-bottom: 5px; font-weight: 700; }}
             .block-line {{ width: 50mm; height: 1px; background-color: #C5A880; margin-bottom: 15px; }}
-            .tag-success {{ font-weight: 700; font-size: 10.5pt; color: #16A34A; }}
-            .tag-error {{ font-weight: 700; font-size: 10.5pt; color: #DC2626; }}
-            .small-text {{ color: #94A3B8; font-size: 10pt; margin-top: 5px; }}
             .avoid-break {{ page-break-inside: avoid; }}
-            .watermark {{
-                position: fixed;
-                top: 0;
-                right: 0;
-                width: 40mm;
-                opacity: 0.02;
-                z-index: -1000;
-            }}
+            .watermark {{ position: fixed; top: 0; right: 0; width: 40mm; opacity: 0.02; z-index: -1000; }}
         </style>
     </head>
     <body>
@@ -325,26 +314,28 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         html += f"""<div class="avoid-break"><div class="block-title">{bt}</div><div class="block-line"></div><p>{text}</p><br></div>"""
     
     html += '<div class="page-break"></div><h2>Аналитика воронки продаж</h2>'
+    html += '<p style="margin-bottom: 25px;">Ниже представлена оцифровка вашего профиля по ключевым этапам конверсии.</p>'
+    
     blocks = [
         {
             "title": "Блок 1. Видимость и Охваты", 
             "groups": ['SEO и Трафик', 'Активность'], 
-            "desc": "Этот блок отвечает за то, как часто вас находят потенциальные клиенты в поиске Яндекса. Правильная настройка позволяет алгоритмам показывать вашу карточку выше конкурентов по целевым запросам. Если эти параметры не заполнены, вы теряете бесплатный органический трафик, и клиенты уходят к тем, кто выше в выдаче."
+            "desc": "Этот блок отвечает за то, как часто вас находят потенциальные клиенты в поиске Яндекса. Правильная настройка позволяет алгоритмам показывать вашу карточку выше конкурентов по целевым запросам."
         },
         {
             "title": "Блок 2. Упаковка и Конверсия", 
             "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'], 
-            "desc": "Здесь мы оцениваем, насколько карточка привлекательна для клиента. Качественный визуал, полные цены и удобные кнопки превращают обычный просмотр в реальный звонок или переход на сайт. Без этих элементов профиль выглядит заброшенным, и клиент уходит искать более понятные предложения."
+            "desc": "Здесь мы оцениваем, насколько карточка привлекательна для клиента. Качественный визуал, полные цены и удобные кнопки превращают обычный просмотр в реальный звонок или переход на сайт."
         },
         {
             "title": "Блок 3. Репутационный капитал", 
             "groups": ['Репутация'], 
-            "desc": "Репутация — это уровень доверия. Клиенты всегда читают отзывы перед покупкой, особенно в В2В и при высоких чеках. Системная работа с обратной связью (даже негативной) повышает лояльность. Отсутствие ответов или низкий рейтинг заставляют клиента сомневаться в вашей надежности."
+            "desc": "Клиенты всегда читают отзывы перед покупкой, особенно при высоких чеках. Системная работа с обратной связью (даже негативной) повышает лояльность и траст профиля."
         },
         {
             "title": "Блок 4. Скрытые алгоритмы", 
             "groups": ['Технологии и ИИ'], 
-            "desc": "Это невидимая для обычного пользователя, но критически важная для роботов Яндекса часть профиля. Разметка данных и координаты помогают нейросетям Яндекса лучше понимать ваш бизнес. Игнорирование этих настроек снижает доверие самих алгоритмов к вашей карточке."
+            "desc": "Это невидимая для пользователя, но критически важная для роботов Яндекса часть. Разметка данных помогает нейросетям лучше понимать бизнес."
         }
     ]
 
@@ -352,42 +343,26 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         block_items = [r for r in results_data if r['Группа'] in block['groups']]
         if not block_items: continue
         
-        passed = [r for r in block_items if r['Результат'] == "ДА"]
-        failed = [r for r in block_items if r['Результат'] == "НЕТ"]
-        
         earned_score = sum(r.get('Earned', 0.0) for r in block_items)
         max_score = sum(r.get('Max', 0.0) for r in block_items)
+        percentage = (earned_score / max_score * 100) if max_score > 0 else 100
+        bar_color = "#16A34A" if percentage >= 80 else ("#C5A880" if percentage >= 50 else "#DC2626")
 
+        # Новая мощная визуализация без лишних списков
         html += f"""
-        <div class="avoid-break" style="margin-bottom: 25px;">
-            <div class="block-title">{block['title']} ({round(earned_score, 1)} / {round(max_score, 1)} баллов)</div>
-            <div class="block-line"></div>
-            <p style="margin-bottom: 15px; font-size: 10.5pt; color: #475569;"><i>{block['desc']}</i></p>
+        <div class="avoid-break" style="margin-bottom: 25px; padding: 20px; border: 1px solid #E2E8F0; border-radius: 8px; background: #F8FAFC;">
+            <table style="width: 100%; border: none; margin-bottom: 10px;">
+                <tr>
+                    <td style="text-align: left; padding: 0;"><span style="font-size: 14pt; font-weight: bold; font-family: 'Playfair Display', serif; color: #0A1128;">{block['title']}</span></td>
+                    <td style="text-align: right; padding: 0;"><span style="font-size: 14pt; font-weight: bold; color: {bar_color};">{round(earned_score, 1)} / {round(max_score, 1)}</span></td>
+                </tr>
+            </table>
+            <div style="background: #E2E8F0; width: 100%; height: 8px; border-radius: 4px; margin-bottom: 15px;">
+                <div style="background: {bar_color}; width: {percentage}%; height: 8px; border-radius: 4px;"></div>
+            </div>
+            <p style="margin-bottom: 0; font-size: 10.5pt; color: #475569;"><i>{block['desc']}</i></p>
+        </div>
         """
-        
-        if report_type == "LITE":
-            html += f"""<div class="tag-success" style="margin-bottom: 10px;">В НОРМЕ: {len(passed)} ПАРАМЕТРОВ</div>"""
-            if failed:
-                html += f"""<div class="tag-error" style="margin-bottom: 10px;">КРИТИЧЕСКИХ ОШИБОК: {len(failed)}</div>"""
-                html += """<div style="font-size: 10.5pt; font-weight: bold; margin-bottom: 5px; color: #0A1128;">Топ-3 ошибки, сжигающие конверсию:</div>"""
-                html += """<ul style="margin-top: 0; margin-bottom: 15px; font-size: 10.5pt; color: #334155;">"""
-                for item in failed[:3]:
-                    html += f"<li style='margin-bottom: 6px;'><b>{item['Критерий']}</b>: {item['Обоснование']}</li>"
-                html += "</ul>"
-                if len(failed) > 3:
-                    html += f"""<div class="small-text" style="font-style: italic;">* Плюс еще {len(failed) - 3} скрытых уязвимостей в этом блоке, пессимизирующих профиль в выдаче Яндекса.</div>"""
-        else:
-            if passed:
-                html += """<div class="tag-success" style="margin-bottom: 5px;">УЖЕ НАСТРОЕНО ВЕРНО:</div><ul style="margin-top: 0; margin-bottom: 15px; color: #16A34A;">"""
-                for item in passed: html += f"<li>{item['Критерий']}</li>"
-                html += "</ul>"
-                
-            if failed:
-                html += """<div class="tag-error" style="margin-bottom: 5px;">ОБНАРУЖЕННЫЕ УЯЗВИМОСТИ:</div><ul style="margin-top: 0; margin-bottom: 0; color: #DC2626;">"""
-                for item in failed: html += f"<li>{item['Критерий']}</li>"
-                html += "</ul>"
-                
-        html += "</div>"
 
     # --- ДОРОЖНАЯ КАРТА (ТОЛЬКО ДЛЯ PRO) ---
     if report_type == "PRO":
@@ -410,17 +385,71 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             stage_items = [i for i in failed_items if i.get('Этап', 3) == stage_num]
             if stage_items:
                 html += f"""
-                <div class="bento-box avoid-break" style="border-left: 4px solid {stage_info['color']}; margin-bottom: 25px;">
-                    <div style="font-size: 14pt; font-weight: bold; color: #0A1128; margin-bottom: 5px;">{stage_info['title']}</div>
-                    <div class="small-text" style="margin-bottom: 15px;">{stage_info['desc']}</div>
-                    <ul style="margin: 0; padding-left: 20px; font-size: 10.5pt; color: #334155;">
+                <div class="avoid-break" style="margin-bottom: 35px;">
+                    <h2 style="color: {stage_info['color']}; border-bottom-color: {stage_info['color']}; font-size: 20pt;">{stage_info['title']}</h2>
+                    <p style="font-size: 11pt; margin-bottom: 20px;"><i>{stage_info['desc']}</i></p>
                 """
+                
+                # Умная группировка внутри этапа по Группам Метрик
+                groups_in_stage = {}
                 for item in stage_items:
-                    html += f"<li style='margin-bottom: 10px;'><b>{item['Критерий']}</b><br><span style='color: #475569;'>{item['Обоснование']}</span></li>"
-                html += "</ul></div>"
+                    g = item['Группа']
+                    if g not in groups_in_stage: groups_in_stage[g] = []
+                    groups_in_stage[g].append(item)
+                    
+                for g_name, items in groups_in_stage.items():
+                    html += f"""
+                    <div style="margin-bottom: 25px;">
+                        <div style="font-weight: bold; font-size: 12pt; color: #0A1128; margin-bottom: 15px; padding-left: 10px; border-left: 3px solid {stage_info['color']};">{g_name}</div>
+                    """
+                    for item in items:
+                        html += f"""
+                        <div style="margin-bottom: 15px; padding-left: 15px;">
+                            <span style="font-weight: bold; color: #334155;">• {item['Критерий']}</span><br>
+                            <span style="color: #475569; font-size: 10.5pt;">{item['Обоснование']}</span>
+                        </div>
+                        """
+                    html += "</div>"
+                    
+                html += "</div>"
                 
         if not failed_items:
             html += "<p style='color: #16A34A; font-weight: bold;'>Ваш профиль идеален! Все этапы дорожной карты выполнены.</p>"
+
+        # НОВЫЙ БЛОК CLOSING (Закрытие на сделку)
+        html += """
+        <div class="page-break"></div>
+        <h1 style="margin-top: 50px;">Что делать дальше?</h1>
+        <div class="gold-line"></div>
+        <p style="font-size: 11pt; margin-bottom: 30px;">Вы получили подробный Экшн-план по захвату органического трафика. У вас есть два пути реализации:</p>
+
+        <table style="width: 100%; border-collapse: separate; border-spacing: 15px 0; margin-left: -15px; margin-bottom: 40px;">
+            <tr>
+                <td style="width: 50%; padding: 25px; background: #F8FAFC; border: 1px solid #E2E8F0; border-top: 4px solid #94A3B8; vertical-align: top;">
+                    <h3 style="margin-top: 0; color: #334155; font-family: 'Inter', sans-serif;">Путь 1: Самостоятельно</h3>
+                    <ul style="padding-left: 20px; font-size: 10.5pt; color: #475569; line-height: 1.6; margin-bottom: 0;">
+                        <li>Передать этот документ вашему маркетологу или ассистенту.</li>
+                        <li>Потратить 30-45 дней на погружение в алгоритмы геосервисов.</li>
+                        <li>Взять на себя риски прохождения модерации Яндекса.</li>
+                    </ul>
+                </td>
+                <td style="width: 50%; padding: 25px; background: #FFFBF5; border: 1px solid #F3E8D6; border-top: 4px solid #C5A880; vertical-align: top;">
+                    <h3 style="margin-top: 0; color: #0A1128; font-family: 'Inter', sans-serif;">Путь 2: Сделаем за вас</h3>
+                    <ul style="padding-left: 20px; font-size: 10.5pt; color: #0A1128; line-height: 1.6; margin-bottom: 0;">
+                        <li>Наша команда экспертов берет на себя <b>100% рутины</b>.</li>
+                        <li>Внедрение всей Дорожной карты за <b>5-7 дней</b> без вашего участия.</li>
+                        <li>Гарантия прохождения модерации и защита от теневых банов.</li>
+                    </ul>
+                </td>
+            </tr>
+        </table>
+
+        <div class="avoid-break" style="background: #0A1128; color: white; text-align: center; padding: 40px 20px; border-radius: 8px;">
+            <div style="font-size: 18pt; font-family: 'Playfair Display', serif; margin-bottom: 15px; color: #C5A880;">Готовы делегировать и получать горячие лиды?</div>
+            <p style="font-size: 11.5pt; color: #cbd5e1; margin-bottom: 25px;">Свяжитесь с нами для бесплатной консультации и оценки сроков внедрения.</p>
+            <div style="font-size: 16pt; font-weight: bold; color: white; letter-spacing: 0.5px;">Telegram: @paulvenkov | pin100.ru</div>
+        </div>
+        """
 
     # --- ОФФЕР (ТОЛЬКО ДЛЯ LITE) ---
     if report_type == "LITE":
@@ -519,7 +548,6 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                 try: stage_val = int(r.get('Этап_Внедрения', 3))
                 except: stage_val = 3
                 
-                # ИСПРАВЛЕНИЕ: Чтение баллов с сырых строк
                 try: max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
                 except: max_s = float(r.get('Балл', 0.0))
                 
