@@ -86,7 +86,8 @@ def init_google_sheets():
 
 def get_database_from_sheets():
     doc = init_google_sheets()
-    rules = doc.worksheet("Rules").get_all_records(value_render_option='UNFORMATTED_VALUE')
+    # ИСПРАВЛЕНИЕ: Удалено value_render_option='UNFORMATTED_VALUE', чтобы избежать бага с датами.
+    rules = doc.worksheet("Rules").get_all_records()
     prompts = doc.worksheet("Prompts").get_all_records()
     return rules, prompts, doc
 
@@ -216,6 +217,7 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
         if match:
             res_json = json.loads(match.group(0))
             for code, result in res_json.items():
+                # Принимаем true или слова "true", "1", 1
                 if str(result).lower() in ["1", "true"]: scores[code] = True
         else:
             raise ValueError("Ответ ИИ не содержит валидного JSON.")
@@ -513,6 +515,7 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                 try: stage_val = int(r.get('Этап_Внедрения', 3))
                 except: stage_val = 3
                 
+                # Безопасная конверсия баллов в float
                 try: max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
                 except: max_s = float(r.get('Балл', 0.0))
                 
