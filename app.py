@@ -201,29 +201,29 @@ def calculate_rep_rules(data):
     return scores
 
 def calculate_dynamic_expert_rules(data, prompts_data, target_url):
-    scores, reasons = {}, {}
-    if not expert_engine or not prompts_data: return scores, reasons
+    """Облегченный ИИ: проверяет только факты, не пишет тексты"""
+    scores = {}
+    if not expert_engine or not prompts_data: return scores
     title = str(data.get('title') or '')
     desc = str(data.get('description') or '')[:1000]
     rules_list = [f'"{p.get("Код", "").strip()}": {p.get("Промпт для ИИ", "").strip()}' for p in prompts_data if p.get('Код', '').strip()]
-    if not rules_list: return scores, reasons
+    if not rules_list: return scores
 
-    batch_prompt = f"Контекст: {title}\n{desc}\nКритерии: {chr(10).join(rules_list)}\nВерни JSON с ключами-кодами и {{'score': bool, 'reason': 'текст'}}. ОБЯЗАТЕЛЬНО заполни поле reason: напиши 1 короткое предложение, почему эта метрика критична для конверсии."
+    batch_prompt = f"Контекст: {title}\n{desc}\nКритерии: {chr(10).join(rules_list)}\nВерни строго JSON формата {{'CODE': true/false}}. Без пояснений."
     try:
         response = expert_engine.generate_content(batch_prompt)
         match = re.search(r'\{.*\}', response.text, re.DOTALL)
         if match:
             res_json = json.loads(match.group(0))
             for code, result in res_json.items():
-                if result.get('score') in [1, True, "1", "true"]: scores[code] = True
-                reasons[code] = result.get('reason', '')
+                if str(result).lower() in ["1", "true"]: scores[code] = True
         else:
             raise ValueError("Ответ ИИ не содержит валидного JSON.")
     except Exception as e:
         err_msg = f"Сбой обработки Gemini (AI): {str(e)}"
         send_telegram_alert(err_msg, target_url)
         st.warning(f"🤖 **ИИ временно недоступен:** {err_msg}. Сложные метрики не были оценены.")
-    return scores, reasons
+    return scores
 
 # ==========================================
 # 3.5. WEASYPRINT: ГЕНЕРАЦИЯ PDF (HTML->PDF)
@@ -339,15 +339,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             "desc": "Это невидимая для обычного пользователя, но критически важная для роботов Яндекса часть профиля. Разметка данных и координаты помогают нейросетям Яндекса лучше понимать ваш бизнес. Игнорирование этих настроек снижает доверие самих алгоритмов к вашей карточке."
         }
     ]
-    
-    fallback_impact = {
-        'SEO и Трафик': 'пессимизирует карточку в поисковой выдаче по целевым запросам',
-        'Конверсия': 'режет конверсию из случайного просмотра в целевой звонок',
-        'Базовое заполнение': 'снижает доверие алгоритмов и визуальную привлекательность профиля',
-        'Контент и Визуал': 'не дает клиенту прогреться и принять решение о покупке',
-        'Репутация': 'формирует барьер недоверия и заставляет клиента сомневаться',
-        'Технологии и ИИ': 'мешает нейросетям Яндекса правильно индексировать ваш бизнес'
-    }
 
     for block in blocks:
         block_items = [r for r in results_data if r['Группа'] in block['groups']]
@@ -373,9 +364,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
                 html += """<div style="font-size: 10.5pt; font-weight: bold; margin-bottom: 5px; color: #0A1128;">Топ-3 ошибки, сжигающие конверсию:</div>"""
                 html += """<ul style="margin-top: 0; margin-bottom: 15px; font-size: 10.5pt; color: #334155;">"""
                 for item in failed[:3]:
-                    impact = fallback_impact.get(item['Группа'], 'лишает вас органического трафика')
-                    reason_text = item['Обоснование'] if item['Обоснование'] not in ["Требует доработки.", "Метрика не была оценена из-за сбоя ИИ."] else f"Отсутствие настройки «{item['Критерий']}» напрямую {impact}."
-                    html += f"<li style='margin-bottom: 6px;'><b>{item['Критерий']}</b>: {reason_text}</li>"
+                    html += f"<li style='margin-bottom: 6px;'><b>{item['Критерий']}</b>: {item['Обоснование']}</li>"
                 html += "</ul>"
                 if len(failed) > 3:
                     html += f"""<div class="small-text" style="font-style: italic;">* Плюс еще {len(failed) - 3} скрытых уязвимостей в этом блоке, пессимизирующих профиль в выдаче Яндекса.</div>"""
@@ -392,6 +381,40 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
                 
         html += "</div>"
 
+    # --- ДОРОЖНАЯ КАРТА (ТОЛЬКО ДЛЯ PRO) ---
+    if report_type == "PRO":
+        html += """
+        <div class="page-break"></div>
+        <h1 style="margin-top: 20px;">Пошаговая дорожная карта</h1>
+        <div class="gold-line"></div>
+        <p style="font-size: 11pt; margin-bottom: 25px;">Мы собрали все выявленные уязвимости и распределили их по приоритету. Следуйте этому Экшн-плану, чтобы за 30 дней забрать максимум органического трафика в вашей нише.</p>
+        """
+        
+        stages = {
+            1: {"title": "Этап 1: Быстрые победы (Дни 1-3)", "desc": "Срочные исправления. Эти ошибки сжигают вашу конверсию прямо сейчас.", "color": "#DC2626"},
+            2: {"title": "Этап 2: Упаковка смыслов (Дни 4-14)", "desc": "Базовое заполнение. Сделайте профиль понятным и привлекательным для клиента.", "color": "#C5A880"},
+            3: {"title": "Этап 3: Масштабирование (Дни 15-30)", "desc": "Работа с репутацией и скрытыми алгоритмами Яндекса для захвата топа.", "color": "#16A34A"}
+        }
+        
+        failed_items = [i for i in results_data if i['Результат'] == 'НЕТ']
+        
+        for stage_num, stage_info in stages.items():
+            stage_items = [i for i in failed_items if i.get('Этап', 3) == stage_num]
+            if stage_items:
+                html += f"""
+                <div class="bento-box avoid-break" style="border-left: 4px solid {stage_info['color']}; margin-bottom: 25px;">
+                    <div style="font-size: 14pt; font-weight: bold; color: #0A1128; margin-bottom: 5px;">{stage_info['title']}</div>
+                    <div class="small-text" style="margin-bottom: 15px;">{stage_info['desc']}</div>
+                    <ul style="margin: 0; padding-left: 20px; font-size: 10.5pt; color: #334155;">
+                """
+                for item in stage_items:
+                    html += f"<li style='margin-bottom: 10px;'><b>{item['Критерий']}</b><br><span style='color: #475569;'>{item['Обоснование']}</span></li>"
+                html += "</ul></div>"
+                
+        if not failed_items:
+            html += "<p style='color: #16A34A; font-weight: bold;'>Ваш профиль идеален! Все этапы дорожной карты выполнены.</p>"
+
+    # --- ОФФЕР (ТОЛЬКО ДЛЯ LITE) ---
     if report_type == "LITE":
         html += f"""
             <div class="page-break"></div>
@@ -409,7 +432,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             <h3 style="color: #0A1128; font-family: 'Playfair Display', serif; font-size: 16pt;">Что внутри PRO-версии:</h3>
             <ul style="margin-bottom: 25px; line-height: 1.6;">
                 <li><b>Полная декомпозиция:</b> Разбор, значение и объяснение всех 79 параметров ранжирования Яндекса для вашей карточки.</li>
-                <li><b>Дорожная карта:</b> Пошаговый план исправления ошибок по дням (от критических и срочных до косметических).</li>
+                <li><b>Дорожная карта:</b> Пошаговый Экшн-план исправления ошибок по дням (от критических и срочных до долгосрочных).</li>
                 <li><b>Скрытые лайфхаки:</b> Практические фишки алгоритмов, которые знают только топ-5% бизнесов в топе выдачи.</li>
             </ul>
             
@@ -470,7 +493,8 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             raw_scores = {}
             for f in [calculate_prof_rules, calculate_rep_rules]: raw_scores.update(f(data))
             
-            exp_sc, exp_reasons = calculate_dynamic_expert_rules(data, prompts_data, url)
+            # ИИ теперь только возвращает баллы (True/False)
+            exp_sc = calculate_dynamic_expert_rules(data, prompts_data, url)
             raw_scores.update(exp_sc)
             
             results = []
@@ -483,21 +507,34 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                 name = str(r.get('Критерий', '')).strip()
                 group = str(r.get('Группа метрик', 'Прочее')).strip()
                 
+                # Парсинг новых колонок из Таблицы
+                reason_success = str(r.get('Обоснование_УСПЕХА', '')).strip() or f"Отлично! Параметр «{name}» настроен верно и усиливает ваш профиль."
+                reason_error = str(r.get('Обоснование_ОШИБКИ', '')).strip() or f"Отсутствие параметра «{name}» пессимизирует карточку и лишает вас органического трафика."
+                try: stage_val = int(r.get('Этап_Внедрения', 3))
+                except: stage_val = 3
+                
                 try: max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
                 except: max_s = float(r.get('Балл', 0.0))
                 
                 if max_s > 0.0:
                     val = max_s if raw_scores.get(code) else 0.0
                     final_total_score += val
-                    comm = "ДА" if val > 0 else "НЕТ"
-                    reason = exp_reasons.get(code, "Метрика не была оценена из-за сбоя ИИ." if not exp_reasons else "Соответствует эталону." if val > 0 else "Требует доработки.")
                     
+                    # Присваиваем нужный текст из Google Sheets в зависимости от успеха
+                    if val > 0:
+                        comm = "ДА"
+                        final_reason = reason_success
+                    else:
+                        comm = "НЕТ"
+                        final_reason = reason_error
+                        
                     results.append({
                         "Код": code, 
                         "Критерий": name, 
                         "Результат": comm, 
-                        "Обоснование": reason, 
+                        "Обоснование": final_reason, 
                         "Группа": group,
+                        "Этап": stage_val,
                         "Earned": val,
                         "Max": max_s
                     })
@@ -558,14 +595,4 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                         if item['Результат'] == 'ДА':
                             st.success(f"**✅ {item['Критерий']}**\n\n{item['Обоснование']}")
                         else:
-                            fallback_impact = {
-                                'SEO и Трафик': 'пессимизирует карточку в поисковой выдаче по целевым запросам',
-                                'Конверсия': 'режет конверсию из случайного просмотра в целевой звонок',
-                                'Базовое заполнение': 'снижает доверие алгоритмов и визуальную привлекательность профиля',
-                                'Контент и Визуал': 'не дает клиенту прогреться и принять решение о покупке',
-                                'Репутация': 'формирует барьер недоверия и заставляет клиента сомневаться',
-                                'Технологии и ИИ': 'мешает нейросетям Яндекса правильно индексировать ваш бизнес'
-                            }
-                            impact = fallback_impact.get(item['Группа'], 'лишает вас органического трафика')
-                            reason_text = item['Обоснование'] if item['Обоснование'] not in ["Требует доработки.", "Метрика не была оценена из-за сбоя ИИ."] else f"Отсутствие настройки «{item['Критерий']}» напрямую {impact}."
-                            st.error(f"**❌ {item['Критерий']}**\n\n{reason_text}")
+                            st.error(f"**❌ {item['Критерий']}**\n\n{item['Обоснование']}")
