@@ -87,7 +87,7 @@ def init_google_sheets():
 def get_database_from_sheets():
     doc = init_google_sheets()
     
-    # Забираем сырые значения (защита от локалей и багов gspread)
+    # Читаем сырые значения для защиты от багов форматирования gspread
     raw_rules = doc.worksheet("Rules").get_all_values()
     headers_rules = raw_rules[0]
     rules = [dict(zip(headers_rules, row)) for row in raw_rules[1:] if any(row)]
@@ -209,14 +209,43 @@ def calculate_rep_rules(data):
     return scores
 
 def calculate_dynamic_expert_rules(data, prompts_data, target_url):
+    """Облегченный ИИ: проверяет факты на основе контекста карточки (Отзывы, Товары, Описание)"""
     scores = {}
     if not expert_engine or not prompts_data: return scores
+    
     title = str(data.get('title') or '')
     desc = str(data.get('description') or '')[:1000]
+    
+    # 1. Извлекаем отзывы (берем 10 штук для ИИ)
+    reviews_raw = data.get('reviews') or []
+    reviews_text = ""
+    for r in reviews_raw[:10]:
+        if isinstance(r, dict):
+            u_text = r.get('text', '')
+            o_reply = r.get('businessComment') or r.get('reply', {}).get('text') if isinstance(r.get('reply'), dict) else ''
+            reviews_text += f"Отзыв: {u_text}\nОтвет владельца: {o_reply}\n---\n"
+            
+    # 2. Извлекаем услуги/товары
+    prods = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
+    prods_text = ", ".join([str(p.get('name')) for p in prods if isinstance(p, dict)][:20])
+
     rules_list = [f'"{p.get("Код", "").strip()}": {p.get("Промпт для ИИ", "").strip()}' for p in prompts_data if p.get('Код', '').strip()]
     if not rules_list: return scores
 
-    batch_prompt = f"Контекст: {title}\n{desc}\nКритерии: {chr(10).join(rules_list)}\nВерни строго JSON формата {{'CODE': true/false}}. Без пояснений."
+    batch_prompt = f"""
+Контекст о бизнесе:
+Название: {title}
+Описание: {desc}
+Товары/Услуги: {prods_text}
+
+Последние отзывы и ответы:
+{reviews_text[:2000]} 
+
+Критерии для оценки:
+{chr(10).join(rules_list)}
+
+Верни строго JSON формата {{'CODE': true/false}}. Без пояснений.
+"""
     try:
         response = expert_engine.generate_content(batch_prompt)
         match = re.search(r'\{.*\}', response.text, re.DOTALL)
@@ -245,7 +274,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     ltv_loss = revenue_loss * 12
     rev_str = f"- {revenue_loss:,}".replace(',', ' ') + " ₽ / мес"
 
-    # Водяной знак
     logo_b64 = ""
     logo_path = "logo.png" if os.path.exists("logo.png") else ("PIN100 big logo.png" if os.path.exists("PIN100 big logo.png") else None)
     if logo_path:
@@ -348,7 +376,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         percentage = (earned_score / max_score * 100) if max_score > 0 else 100
         bar_color = "#16A34A" if percentage >= 80 else ("#C5A880" if percentage >= 50 else "#DC2626")
 
-        # Новая мощная визуализация без лишних списков
         html += f"""
         <div class="avoid-break" style="margin-bottom: 25px; padding: 20px; border: 1px solid #E2E8F0; border-radius: 8px; background: #F8FAFC;">
             <table style="width: 100%; border: none; margin-bottom: 10px;">
@@ -390,7 +417,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
                     <p style="font-size: 11pt; margin-bottom: 20px;"><i>{stage_info['desc']}</i></p>
                 """
                 
-                # Умная группировка внутри этапа по Группам Метрик
                 groups_in_stage = {}
                 for item in stage_items:
                     g = item['Группа']
@@ -416,7 +442,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         if not failed_items:
             html += "<p style='color: #16A34A; font-weight: bold;'>Ваш профиль идеален! Все этапы дорожной карты выполнены.</p>"
 
-        # НОВЫЙ БЛОК CLOSING (Закрытие на сделку)
+        # CLOSING OFFER
         html += """
         <div class="page-break"></div>
         <h1 style="margin-top: 50px;">Что делать дальше?</h1>
@@ -596,6 +622,10 @@ if st.button("🚀 Запустить генерацию отчетов", type="
 
             st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно.".replace(',', ' '))
             
+            # РЕЖИМ РАЗРАБОТЧИКА (Визуальный контроль парсера)
+            with st.expander("🛠 Режим разработчика: Сырой JSON от Яндекса (Проверка на галлюцинации)"):
+                st.json(data)
+
             st.divider()
             st.markdown("### 📥 Выгрузка отчетов")
             
