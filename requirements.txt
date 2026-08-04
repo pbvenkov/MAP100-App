@@ -5,4 +5,4 @@ pandas
 gspread
 google-auth
 pillow
-weasyprint
+typst
