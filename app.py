@@ -522,7 +522,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
                         html += f"""<div class="roadmap-item avoid-break"><div class="roadmap-title">{item['Критерий']}</div><div class="roadmap-desc">{item['Обоснование']}</div></div>"""
                     html += "</div>"
                 html += "</div>"
-        if not failed_items: html += "<div class="bento-box avoid-break" style="border-left: 4px solid #16A34A;"><p style='color: #16A34A; font-weight: bold; font-size: 14pt; margin: 0;'>Ваш профиль идеален! Все этапы дорожной карты выполнены.</p></div>"
+        if not failed_items: html += "<div class='bento-box avoid-break' style='border-left: 4px solid #16A34A;'><p style='color: #16A34A; font-weight: bold; font-size: 14pt; margin: 0;'>Ваш профиль идеален! Все этапы дорожной карты выполнены.</p></div>"
 
         # CLOSING OFFER
         html += """
