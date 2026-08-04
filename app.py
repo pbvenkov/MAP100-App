@@ -6,7 +6,7 @@ import json
 import numpy as np
 import pandas as pd
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
@@ -28,7 +28,6 @@ APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper"
 
 try:
     genai.configure(api_key=st.secrets.get("GEMINI_API_KEY", ""))
-    # Жестко фиксируем температуру, чтобы ИИ перестал "креативить" и баллы не прыгали
     generation_config = {"temperature": 0.0, "top_p": 0.1, "top_k": 1}
     expert_engine = genai.GenerativeModel('gemini-3.5-flash-lite', generation_config=generation_config) 
 except Exception as e:
@@ -88,8 +87,6 @@ def init_google_sheets():
 
 def get_database_from_sheets():
     doc = init_google_sheets()
-    
-    # Читаем сырые значения (защита от локалей)
     raw_rules = doc.worksheet("Rules").get_all_values()
     headers_rules = raw_rules[0]
     rules = [dict(zip(headers_rules, row)) for row in raw_rules[1:] if any(row)]
@@ -149,8 +146,18 @@ def get_safe_list(data, keys):
         elif isinstance(data.get(k), dict): res.append(data[k])
     return res
 
+def parse_yandex_date(date_val):
+    if not date_val: return None
+    try:
+        if isinstance(date_val, (int, float)) or (isinstance(date_val, str) and str(date_val).isdigit()):
+            return datetime.fromtimestamp(int(date_val)/1000, tz=timezone.utc)
+        return datetime.fromisoformat(str(date_val).replace('Z', '+00:00'))
+    except:
+        return None
+
 def calculate_hard_facts(data):
     scores = {}
+    now = datetime.now(timezone.utc)
     title = str(data.get('title') or '')
     desc = str(data.get('description') or '')
     
@@ -195,10 +202,8 @@ def calculate_hard_facts(data):
     
     # КАТАЛОГ ТОВАРОВ (PROF-11.1 - 11.5)
     prods = []
-    if isinstance(data.get('menu'), dict):
-        prods.extend(data['menu'].get('items', []))
-    if isinstance(data.get('productCatalog'), list):
-        prods.extend(data['productCatalog'])
+    if isinstance(data.get('menu'), dict): prods.extend(data['menu'].get('items', []))
+    if isinstance(data.get('productCatalog'), list): prods.extend(data['productCatalog'])
         
     valid_prods = [p for p in prods if isinstance(p, dict)]
     if valid_prods:
@@ -207,7 +212,7 @@ def calculate_hard_facts(data):
         photos_count = sum(1 for p in valid_prods if p.get('photoUrl') or p.get('photo'))
         if photos_count / len(valid_prods) >= 0.8: scores['PROF-11.2'] = True
         
-        prices_count = sum(1 for p in valid_prods if p.get('price'))
+        prices_count = sum(1 for p in valid_prods if any(char.isdigit() for char in str(p.get('price') or '')))
         if prices_count / len(valid_prods) >= 0.8: scores['PROF-11.3'] = True
         
         desc_count = sum(1 for p in valid_prods if len(str(p.get('description') or '')) > 50)
@@ -222,8 +227,19 @@ def calculate_hard_facts(data):
     
     # ВИЗУАЛ И АКТИВНОСТЬ
     if data.get('videoCount', 0) > 0 or data.get('videos') or data.get('mobileVideos'): scores['CONT-42.1'] = True
-    if data.get('posts') or data.get('mobilePosts'): scores['CONV-51.1'] = True
     
+    photo_count = int(data.get('photoCount') or len(data.get('photos') or []) or 0)
+    if photo_count >= 15: scores['CONT-36.1'] = True
+    if photo_count >= 30: scores['CONT-36.2'] = True
+    
+    posts = data.get('mobilePosts') or data.get('posts') or []
+    if posts: scores['CONV-51.1'] = True
+    for p in posts:
+        pd_date = parse_yandex_date(p.get('publicationTime') or p.get('date'))
+        if pd_date and (now - pd_date).days <= 30:
+            scores['ACT-68.1'] = True
+            break
+            
     # РЕПУТАЦИЯ (Отзывы, Охват, Негатив)
     rating = float(data.get('rating') or 0.0)
     if rating >= 4.5: scores['REP-27.1'] = True
@@ -232,46 +248,75 @@ def calculate_hard_facts(data):
     rev_count = int(data.get('reviewsCount') or data.get('ratingsCount') or data.get('reviewCount') or 0)
     if rev_count >= 50: scores['REP-28.1'] = True
     
+    # Пагинация и 6-месячный фильтр
     reviews_raw = data.get('reviews') or []
-    reviews = [r for r in reviews_raw if isinstance(r, dict)]
-    if reviews:
+    six_months_ago = now - timedelta(days=180)
+    recent_reviews = []
+    
+    for r in reviews_raw:
+        if not isinstance(r, dict): continue
+        r_date = parse_yandex_date(r.get('date') or r.get('time'))
+        if r_date and r_date >= six_months_ago:
+            recent_reviews.append(r)
+            
+    if not recent_reviews:
+        scores['META_NO_RECENT_REVIEWS'] = True
+    else:
         replied = 0
         has_positive_replied = False
         has_unanswered_negative = False
-        for r in reviews[:20]:
+        
+        latest_date = parse_yandex_date(recent_reviews[0].get('date'))
+        if latest_date and (now - latest_date).days <= 14:
+            scores['REP-29.1'] = True
+            
+        for r in recent_reviews[:20]:
             r_rating = float(r.get('rating') or 0.0)
             reply_text = str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip()
+            
             if reply_text:
                 replied += 1
                 if r_rating >= 4.0: has_positive_replied = True
+                
+                bc_date = parse_yandex_date(r.get('businessCommentDate'))
+                rev_date = parse_yandex_date(r.get('date'))
+                if bc_date and rev_date and (bc_date - rev_date).days <= 3:
+                    scores['REP-30.2'] = True
             else:
                 if r_rating <= 3.0: has_unanswered_negative = True
                 
-        if len(reviews[:20]) > 0:
-            if replied / len(reviews[:20]) >= 0.9: scores['REP-30.1'] = True
+        if len(recent_reviews[:20]) > 0:
+            if replied / len(recent_reviews[:20]) >= 0.9: scores['REP-30.1'] = True
+            photos_in_revs = sum(1 for r in recent_reviews[:20] if r.get('photos') or r.get('photoDetails'))
+            if photos_in_revs / len(recent_reviews[:20]) >= 0.1: scores['REP-35.1'] = True
+            
         if has_positive_replied: scores['REP-30.3'] = True
         if not has_unanswered_negative: scores['REP-32.1'] = True
         
     return scores
 
 def calculate_dynamic_expert_rules(data, prompts_data, target_url):
-    """Облегченный ИИ: проверяет факты на основе контекста карточки (Отзывы, Товары, Описание)"""
     scores = {}
     if not expert_engine or not prompts_data: return scores
     
     title = str(data.get('title') or '')
     desc = str(data.get('description') or '')[:1000]
     
-    # 1. Извлекаем отзывы (берем 10 штук для ИИ)
-    reviews_raw = data.get('reviews') or []
+    now = datetime.now(timezone.utc)
+    six_months_ago = now - timedelta(days=180)
+    recent_reviews = []
+    for r in data.get('reviews') or []:
+        r_date = parse_yandex_date(r.get('date'))
+        if r_date and r_date >= six_months_ago:
+            recent_reviews.append(r)
+            
     reviews_text = ""
-    for r in reviews_raw[:10]:
+    for r in recent_reviews[:10]:
         if isinstance(r, dict):
             u_text = r.get('text', '')
             o_reply = r.get('businessComment') or r.get('reply', {}).get('text') if isinstance(r.get('reply'), dict) else ''
             reviews_text += f"Отзыв: {u_text}\nОтвет владельца: {o_reply}\n---\n"
             
-    # 2. Извлекаем услуги/товары
     prods = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
     prods_text = ", ".join([str(p.get('name')) for p in prods if isinstance(p, dict)][:20])
 
@@ -337,10 +382,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         <meta charset="utf-8">
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Playfair+Display:wght@700&display=swap');
-            
             @page {{
-                size: A4;
-                margin: 25mm;
+                size: A4; margin: 25mm;
                 @bottom-left {{ content: "PIN100 Analytics | Строго конфиденциально"; font-family: 'Inter', sans-serif; font-size: 8pt; color: #94A3B8; }}
                 @bottom-right {{ content: "Стр. " counter(page); font-family: 'Inter', sans-serif; font-size: 8pt; color: #94A3B8; }}
             }}
@@ -362,7 +405,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     </head>
     <body>
     """
-
     if logo_b64:
         html += f'<img src="data:image/png;base64,{logo_b64}" class="watermark">'
 
@@ -389,36 +431,18 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     for bt, text in blocks_fin:
         html += f"""<div class="avoid-break"><div class="block-title">{bt}</div><div class="block-line"></div><p>{text}</p><br></div>"""
     
-    html += '<div class="page-break"></div><h2>Аналитика воронки продаж</h2>'
-    html += '<p style="margin-bottom: 25px;">Ниже представлена оцифровка вашего профиля по ключевым этапам конверсии.</p>'
+    html += '<div class="page-break"></div><h2>Аналитика воронки продаж</h2><p style="margin-bottom: 25px;">Ниже представлена оцифровка вашего профиля по ключевым этапам конверсии.</p>'
     
     blocks = [
-        {
-            "title": "Блок 1. Видимость и Охваты", 
-            "groups": ['SEO и Трафик', 'Активность'], 
-            "desc": "Этот блок отвечает за то, как часто вас находят потенциальные клиенты в поиске Яндекса. Правильная настройка позволяет алгоритмам показывать вашу карточку выше конкурентов по целевым запросам."
-        },
-        {
-            "title": "Блок 2. Упаковка и Конверсия", 
-            "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'], 
-            "desc": "Здесь мы оцениваем, насколько карточка привлекательна для клиента. Качественный визуал, полные цены и удобные кнопки превращают обычный просмотр в реальный звонок или переход на сайт."
-        },
-        {
-            "title": "Блок 3. Репутационный капитал", 
-            "groups": ['Репутация'], 
-            "desc": "Клиенты всегда читают отзывы перед покупкой, особенно при высоких чеках. Системная работа с обратной связью (даже негативной) повышает лояльность и траст профиля."
-        },
-        {
-            "title": "Блок 4. Скрытые алгоритмы", 
-            "groups": ['Технологии и ИИ'], 
-            "desc": "Это невидимая для пользователя, но критически важная для роботов Яндекса часть. Разметка данных помогает нейросетям лучше понимать бизнес."
-        }
+        {"title": "Блок 1. Видимость и Охваты", "groups": ['SEO и Трафик', 'Активность'], "desc": "Этот блок отвечает за то, как часто вас находят потенциальные клиенты в поиске Яндекса. Правильная настройка позволяет алгоритмам показывать вашу карточку выше конкурентов по целевым запросам."},
+        {"title": "Блок 2. Упаковка и Конверсия", "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'], "desc": "Здесь мы оцениваем, насколько карточка привлекательна для клиента. Качественный визуал, полные цены и удобные кнопки превращают обычный просмотр в реальный звонок или переход на сайт."},
+        {"title": "Блок 3. Репутационный капитал", "groups": ['Репутация'], "desc": "Клиенты всегда читают отзывы перед покупкой, особенно при высоких чеках. Системная работа с обратной связью (даже негативной) повышает лояльность и траст профиля."},
+        {"title": "Блок 4. Скрытые алгоритмы", "groups": ['Технологии и ИИ'], "desc": "Это невидимая для пользователя, но критически важная для роботов Яндекса часть. Разметка данных помогает нейросетям лучше понимать бизнес."}
     ]
 
     for block in blocks:
         block_items = [r for r in results_data if r['Группа'] in block['groups']]
         if not block_items: continue
-        
         earned_score = sum(r.get('Earned', 0.0) for r in block_items)
         max_score = sum(r.get('Max', 0.0) for r in block_items)
         percentage = (earned_score / max_score * 100) if max_score > 0 else 100
@@ -439,132 +463,52 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         </div>
         """
 
-    # --- ДОРОЖНАЯ КАРТА (ТОЛЬКО ДЛЯ PRO) ---
     if report_type == "PRO":
-        html += """
-        <div class="page-break"></div>
-        <h1 style="margin-top: 20px;">Пошаговая дорожная карта</h1>
-        <div class="gold-line"></div>
-        <p style="font-size: 11pt; margin-bottom: 25px;">Мы собрали все выявленные уязвимости и распределили их по приоритету. Следуйте этому Экшн-плану, чтобы за 30 дней забрать максимум органического трафика в вашей нише.</p>
-        """
-        
+        html += """<div class="page-break"></div><h1 style="margin-top: 20px;">Пошаговая дорожная карта</h1><div class="gold-line"></div><p style="font-size: 11pt; margin-bottom: 25px;">Мы собрали все выявленные уязвимости и распределили их по приоритету. Следуйте этому Экшн-плану, чтобы за 30 дней забрать максимум органического трафика в вашей нише.</p>"""
         stages = {
             1: {"title": "Этап 1: Быстрые победы (Дни 1-3)", "desc": "Срочные исправления. Эти ошибки сжигают вашу конверсию прямо сейчас.", "color": "#DC2626"},
             2: {"title": "Этап 2: Упаковка смыслов (Дни 4-14)", "desc": "Базовое заполнение. Сделайте профиль понятным и привлекательным для клиента.", "color": "#C5A880"},
             3: {"title": "Этап 3: Масштабирование (Дни 15-30)", "desc": "Работа с репутацией и скрытыми алгоритмами Яндекса для захвата топа.", "color": "#16A34A"}
         }
-        
         failed_items = [i for i in results_data if i['Результат'] == 'НЕТ']
-        
         for stage_num, stage_info in stages.items():
             stage_items = [i for i in failed_items if i.get('Этап', 3) == stage_num]
             if stage_items:
-                html += f"""
-                <div class="avoid-break" style="margin-bottom: 35px;">
-                    <h2 style="color: {stage_info['color']}; border-bottom-color: {stage_info['color']}; font-size: 20pt;">{stage_info['title']}</h2>
-                    <p style="font-size: 11pt; margin-bottom: 20px;"><i>{stage_info['desc']}</i></p>
-                """
-                
+                html += f"""<div class="avoid-break" style="margin-bottom: 35px;"><h2 style="color: {stage_info['color']}; border-bottom-color: {stage_info['color']}; font-size: 20pt;">{stage_info['title']}</h2><p style="font-size: 11pt; margin-bottom: 20px;"><i>{stage_info['desc']}</i></p>"""
                 groups_in_stage = {}
                 for item in stage_items:
                     g = item['Группа']
                     if g not in groups_in_stage: groups_in_stage[g] = []
                     groups_in_stage[g].append(item)
-                    
                 for g_name, items in groups_in_stage.items():
-                    html += f"""
-                    <div style="margin-bottom: 25px;">
-                        <div style="font-weight: bold; font-size: 12pt; color: #0A1128; margin-bottom: 15px; padding-left: 10px; border-left: 3px solid {stage_info['color']};">{g_name}</div>
-                    """
+                    html += f"""<div style="margin-bottom: 25px;"><div style="font-weight: bold; font-size: 12pt; color: #0A1128; margin-bottom: 15px; padding-left: 10px; border-left: 3px solid {stage_info['color']};">{g_name}</div>"""
                     for item in items:
-                        html += f"""
-                        <div style="margin-bottom: 15px; padding-left: 15px;">
-                            <span style="font-weight: bold; color: #334155;">• {item['Критерий']}</span><br>
-                            <span style="color: #475569; font-size: 10.5pt;">{item['Обоснование']}</span>
-                        </div>
-                        """
+                        html += f"""<div style="margin-bottom: 15px; padding-left: 15px;"><span style="font-weight: bold; color: #334155;">• {item['Критерий']}</span><br><span style="color: #475569; font-size: 10.5pt;">{item['Обоснование']}</span></div>"""
                     html += "</div>"
-                    
                 html += "</div>"
-                
-        if not failed_items:
-            html += "<p style='color: #16A34A; font-weight: bold;'>Ваш профиль идеален! Все этапы дорожной карты выполнены.</p>"
+        if not failed_items: html += "<p style='color: #16A34A; font-weight: bold;'>Ваш профиль идеален! Все этапы дорожной карты выполнены.</p>"
 
-        # CLOSING OFFER
         html += """
-        <div class="page-break"></div>
-        <h1 style="margin-top: 50px;">Что делать дальше?</h1>
-        <div class="gold-line"></div>
-        <p style="font-size: 11pt; margin-bottom: 30px;">Вы получили подробный Экшн-план по захвату органического трафика. У вас есть два пути реализации:</p>
-
+        <div class="page-break"></div><h1 style="margin-top: 50px;">Что делать дальше?</h1><div class="gold-line"></div><p style="font-size: 11pt; margin-bottom: 30px;">Вы получили подробный Экшн-план по захвату органического трафика. У вас есть два пути реализации:</p>
         <table style="width: 100%; border-collapse: separate; border-spacing: 15px 0; margin-left: -15px; margin-bottom: 40px;">
             <tr>
-                <td style="width: 50%; padding: 25px; background: #F8FAFC; border: 1px solid #E2E8F0; border-top: 4px solid #94A3B8; vertical-align: top;">
-                    <h3 style="margin-top: 0; color: #334155; font-family: 'Inter', sans-serif;">Путь 1: Самостоятельно</h3>
-                    <ul style="padding-left: 20px; font-size: 10.5pt; color: #475569; line-height: 1.6; margin-bottom: 0;">
-                        <li>Передать этот документ вашему маркетологу или ассистенту.</li>
-                        <li>Потратить 30-45 дней на погружение в алгоритмы геосервисов.</li>
-                        <li>Взять на себя риски прохождения модерации Яндекса.</li>
-                    </ul>
-                </td>
-                <td style="width: 50%; padding: 25px; background: #FFFBF5; border: 1px solid #F3E8D6; border-top: 4px solid #C5A880; vertical-align: top;">
-                    <h3 style="margin-top: 0; color: #0A1128; font-family: 'Inter', sans-serif;">Путь 2: Сделаем за вас</h3>
-                    <ul style="padding-left: 20px; font-size: 10.5pt; color: #0A1128; line-height: 1.6; margin-bottom: 0;">
-                        <li>Наша команда экспертов берет на себя <b>100% рутины</b>.</li>
-                        <li>Внедрение всей Дорожной карты за <b>5-7 дней</b> без вашего участия.</li>
-                        <li>Гарантия прохождения модерации и защита от теневых банов.</li>
-                    </ul>
-                </td>
+                <td style="width: 50%; padding: 25px; background: #F8FAFC; border: 1px solid #E2E8F0; border-top: 4px solid #94A3B8; vertical-align: top;"><h3 style="margin-top: 0; color: #334155; font-family: 'Inter', sans-serif;">Путь 1: Самостоятельно</h3><ul style="padding-left: 20px; font-size: 10.5pt; color: #475569; line-height: 1.6; margin-bottom: 0;"><li>Передать этот документ вашему маркетологу или ассистенту.</li><li>Потратить 30-45 дней на погружение в алгоритмы геосервисов.</li><li>Взять на себя риски прохождения модерации Яндекса.</li></ul></td>
+                <td style="width: 50%; padding: 25px; background: #FFFBF5; border: 1px solid #F3E8D6; border-top: 4px solid #C5A880; vertical-align: top;"><h3 style="margin-top: 0; color: #0A1128; font-family: 'Inter', sans-serif;">Путь 2: Сделаем за вас</h3><ul style="padding-left: 20px; font-size: 10.5pt; color: #0A1128; line-height: 1.6; margin-bottom: 0;"><li>Наша команда экспертов берет на себя <b>100% рутины</b>.</li><li>Внедрение всей Дорожной карты за <b>5-7 дней</b> без вашего участия.</li><li>Гарантия прохождения модерации и защита от теневых банов.</li></ul></td>
             </tr>
         </table>
-
-        <div class="avoid-break" style="background: #0A1128; color: white; text-align: center; padding: 40px 20px; border-radius: 8px;">
-            <div style="font-size: 18pt; font-family: 'Playfair Display', serif; margin-bottom: 15px; color: #C5A880;">Готовы делегировать и получать горячие лиды?</div>
-            <p style="font-size: 11.5pt; color: #cbd5e1; margin-bottom: 25px;">Свяжитесь с нами для бесплатной консультации и оценки сроков внедрения.</p>
-            <div style="font-size: 16pt; font-weight: bold; color: white; letter-spacing: 0.5px;">Telegram: @paulvenkov | pin100.ru</div>
-        </div>
+        <div class="avoid-break" style="background: #0A1128; color: white; text-align: center; padding: 40px 20px; border-radius: 8px;"><div style="font-size: 18pt; font-family: 'Playfair Display', serif; margin-bottom: 15px; color: #C5A880;">Готовы делегировать и получать горячие лиды?</div><p style="font-size: 11.5pt; color: #cbd5e1; margin-bottom: 25px;">Свяжитесь с нами для бесплатной консультации и оценки сроков внедрения.</p><div style="font-size: 16pt; font-weight: bold; color: white; letter-spacing: 0.5px;">Telegram: @paulvenkov | pin100.ru</div></div>
         """
 
-    # --- ОФФЕР (ТОЛЬКО ДЛЯ LITE) ---
     if report_type == "LITE":
         html += f"""
-            <div class="page-break"></div>
-            <h1 style="margin-top: 50px;">Почему вам нужен<br>PRO-аудит?</h1>
-            <div class="gold-line"></div>
-            
-            <p style="font-size: 11pt; margin-bottom: 20px;">
-                В экспресс-версии мы подсветили лишь верхушку айсберга и показали реальную цифру ваших потерь. PRO-аудит — это инструмент тотального контроля и ваш пошаговый план по захвату топа в геосервисах.
-            </p>
-            
-            <div style="background-color: #F8FAFC; border-left: 4px solid #C5A880; padding: 15px; margin-bottom: 25px;">
-                <b>Независимый контроль подрядчиков:</b> Узнайте реальное положение дел без «розовых очков» маркетинговых агентств. Отчет покажет, за что вы платите деньги и где подрядчики недорабатывают.
-            </div>
-
-            <h3 style="color: #0A1128; font-family: 'Playfair Display', serif; font-size: 16pt;">Что внутри PRO-версии:</h3>
-            <ul style="margin-bottom: 25px; line-height: 1.6;">
-                <li><b>Полная декомпозиция:</b> Разбор, значение и объяснение всех 79 параметров ранжирования Яндекса для вашей карточки.</li>
-                <li><b>Дорожная карта:</b> Пошаговый Экшн-план исправления ошибок по дням (от критических и срочных до долгосрочных).</li>
-                <li><b>Скрытые лайфхаки:</b> Практические фишки алгоритмов, которые знают только топ-5% бизнесов в топе выдачи.</li>
-            </ul>
-            
-            <div class="bento-box avoid-break">
-                <div class="bento-title">Инвестиция в рост:</div>
-                <div class="bento-value text-navy">4 880 ₽</div>
-                <p style="font-size: 10pt; color: #16A34A; margin-top: 10px; font-weight: bold;">
-                    🎁 Бонус: Если вы решите делегировать работу профессионалам и закажете заполнение карточки у нашей команды, мы полностью вычтем стоимость этого аудита из чека.
-                </p>
-            </div>
-            
-            <p style="font-size: 10.5pt; color: #475569; font-style: italic; margin-bottom: 20px;">
-                * Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж от gross-менеджеров. Вы обращаетесь к нам, только если сами надумаете.
-            </p>
-            
-            <div style="border-top: 1px solid #E2E8F0; padding-top: 20px;">
-                <p style="font-size: 11pt;">Запросить полную версию без обязательств:</p>
-                <p style="font-size: 14pt; color: #0A1128;"><b>Telegram: @paulvenkov | pin100.ru</b></p>
-            </div>
+            <div class="page-break"></div><h1 style="margin-top: 50px;">Почему вам нужен<br>PRO-аудит?</h1><div class="gold-line"></div>
+            <p style="font-size: 11pt; margin-bottom: 20px;">В экспресс-версии мы подсветили лишь верхушку айсберга и показали реальную цифру ваших потерь. PRO-аудит — это инструмент тотального контроля и ваш пошаговый план по захвату топа в геосервисах.</p>
+            <div style="background-color: #F8FAFC; border-left: 4px solid #C5A880; padding: 15px; margin-bottom: 25px;"><b>Независимый контроль подрядчиков:</b> Узнайте реальное положение дел без «розовых очков» маркетинговых агентств. Отчет покажет, за что вы платите деньги и где подрядчики недорабатывают.</div>
+            <h3 style="color: #0A1128; font-family: 'Playfair Display', serif; font-size: 16pt;">Что внутри PRO-версии:</h3><ul style="margin-bottom: 25px; line-height: 1.6;"><li><b>Полная декомпозиция:</b> Разбор, значение и объяснение всех 79 параметров ранжирования Яндекса для вашей карточки.</li><li><b>Дорожная карта:</b> Пошаговый Экшн-план исправления ошибок по дням (от критических и срочных до долгосрочных).</li><li><b>Скрытые лайфхаки:</b> Практические фишки алгоритмов, которые знают только топ-5% бизнесов в топе выдачи.</li></ul>
+            <div class="bento-box avoid-break"><div class="bento-title">Инвестиция в рост:</div><div class="bento-value text-navy">4 880 ₽</div><p style="font-size: 10pt; color: #16A34A; margin-top: 10px; font-weight: bold;">🎁 Бонус: Если вы решите делегировать работу профессионалам и закажете заполнение карточки у нашей команды, мы полностью вычтем стоимость этого аудита из чека.</p></div>
+            <p style="font-size: 10.5pt; color: #475569; font-style: italic; margin-bottom: 20px;">* Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж от наших менеджеров. Вы обращаетесь к нам, только если сами надумаете.</p>
+            <div style="border-top: 1px solid #E2E8F0; padding-top: 20px;"><p style="font-size: 11pt;">Запросить полную версию без обязательств:</p><p style="font-size: 14pt; color: #0A1128;"><b>Telegram: @paulvenkov | pin100.ru</b></p></div>
         """
-
     html += "</body></html>"
     return HTML(string=html).write_pdf()
 
@@ -601,9 +545,7 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             try: niche_key = determine_niche_by_expert(title, cat)
             except: niche_key = "OTHER"
             
-            # ВАЖНО: Используем новую безошибочную функцию для хард-фактов
             raw_scores = calculate_hard_facts(data)
-            
             exp_sc = calculate_dynamic_expert_rules(data, prompts_data, url)
             raw_scores.update(exp_sc)
             
@@ -635,6 +577,10 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                     else:
                         comm = "НЕТ"
                         final_reason = reason_error
+                        
+                        # Переопределение для Репутации при отсутствии свежих отзывов за 6 мес
+                        if raw_scores.get('META_NO_RECENT_REVIEWS') and group == 'Репутация' and code not in ['REP-27.1', 'REP-27.2', 'REP-28.1', 'REP-83.1', 'REP-85.1']:
+                            final_reason = "За последние 6 месяцев нет ни одного свежего отзыва. Метрика обнулена, так как алгоритмам Яндекса нужны актуальные данные для ранжирования."
                         
                     results.append({
                         "Код": code, 
