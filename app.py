@@ -28,7 +28,9 @@ APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper"
 
 try:
     genai.configure(api_key=st.secrets.get("GEMINI_API_KEY", ""))
-    expert_engine = genai.GenerativeModel('gemini-3.5-flash-lite') 
+    # Жестко фиксируем температуру, чтобы ИИ перестал "креативить" и баллы не прыгали
+    generation_config = {"temperature": 0.0, "top_p": 0.1, "top_k": 1}
+    expert_engine = genai.GenerativeModel('gemini-3.5-flash-lite', generation_config=generation_config) 
 except Exception as e:
     expert_engine = None
 
@@ -87,7 +89,7 @@ def init_google_sheets():
 def get_database_from_sheets():
     doc = init_google_sheets()
     
-    # Читаем сырые значения для защиты от багов форматирования gspread
+    # Читаем сырые значения (защита от локалей)
     raw_rules = doc.worksheet("Rules").get_all_values()
     headers_rules = raw_rules[0]
     rules = [dict(zip(headers_rules, row)) for row in raw_rules[1:] if any(row)]
@@ -244,7 +246,9 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
 Критерии для оценки:
 {chr(10).join(rules_list)}
 
-Верни строго JSON формата {{'CODE': true/false}}. Без пояснений.
+ВНИМАНИЕ! Ты - строгий аудитор. 
+Верни строго JSON формата {{"CODE": true/false}}. 
+В ответе ОБЯЗАТЕЛЬНО должны присутствовать абсолютно все {len(rules_list)} кодов из списка критериев. Не теряй ни одной метрики. Никакого текста, кроме JSON.
 """
     try:
         response = expert_engine.generate_content(batch_prompt)
@@ -622,8 +626,15 @@ if st.button("🚀 Запустить генерацию отчетов", type="
 
             st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно.".replace(',', ' '))
             
-            # РЕЖИМ РАЗРАБОТЧИКА (Визуальный контроль парсера)
+            # РЕЖИМ РАЗРАБОТЧИКА (СКАЧИВАНИЕ JSON)
             with st.expander("🛠 Режим разработчика: Сырой JSON от Яндекса (Проверка на галлюцинации)"):
+                json_string = json.dumps(data, ensure_ascii=False, indent=4)
+                st.download_button(
+                    label="💾 Скачать сырой JSON",
+                    data=json_string,
+                    file_name=f"{title.replace(' ', '_')}_yandex_data.json",
+                    mime="application/json"
+                )
                 st.json(data)
 
             st.divider()
