@@ -11,8 +11,11 @@ import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 from concurrent.futures import ThreadPoolExecutor
-from weasyprint import HTML
 import base64
+import tempfile
+
+# НОВЫЙ ДВИЖОК ДЛЯ ПРЕМИУМ-ВЕРСТКИ
+import typst
 
 # ==========================================
 # 0. НАСТРОЙКИ БРЕНДИНГА PIN100
@@ -161,46 +164,33 @@ def calculate_hard_facts(data):
     title = str(data.get('title') or '')
     desc = str(data.get('description') or '')
     
-    # PROF-01.1: Название
     if data.get('isVerifiedOwner') or len(title) > 2: scores['PROF-01.1'] = True
-    
-    # PROF-03.1: Категории
     if data.get('categories'): scores['PROF-03.1'] = True
-    
-    # PROF-04.1: Ссылка на сайт
     url = str(data.get('url') or data.get('website') or '').lower()
     if url: scores['PROF-04.1'] = True
     
-    # PROF-05.1 и 05.2: Телефон и его формат
     phones = data.get('phones') or []
     if phones: 
         scores['PROF-05.1'] = True
         if any(str(p).startswith('+7') or str(p).startswith('8') for p in phones):
             scores['PROF-05.2'] = True
         
-    # PROF-07.1: График работы
     schedule = data.get('schedule') or data.get('workingHours') or []
     if isinstance(schedule, list) and len(schedule) >= 7: scores['PROF-07.1'] = True
     elif isinstance(schedule, dict) and len(schedule.keys()) >= 7: scores['PROF-07.1'] = True
     
-    # PROF-08.1: Атрибуты (Особенности) - обработка словаря
     features = data.get('features')
     if isinstance(features, dict) and len(features.keys()) > 0: scores['PROF-08.1'] = True
     elif isinstance(features, list) and len(features) > 0: scores['PROF-08.1'] = True
     
-    # PROF-09.1: Длина описания
     if len(desc) > 1500: scores['PROF-09.1'] = True
-    
-    # PROF-12.1: Синяя Галочка
     if data.get('isVerifiedOwner'): scores['PROF-12.1'] = True
     
-    # PROF-13.1, PROF-13.2: Мессенджеры и Соцсети
     links_data = data.get('socialLinks') or data.get('links') or []
     owner_links = url + " " + desc + " " + " ".join([str(l) for l in links_data])
     if any(s in owner_links.lower() for s in ["t.me", "wa.me", "whatsapp", "viber"]): scores['PROF-13.1'] = True
     if any(s in owner_links.lower() for s in ["vk.com", "youtube", "dzen", "instagram", "inst:"]): scores['PROF-13.2'] = True
     
-    # КАТАЛОГ ТОВАРОВ (PROF-11.1 - 11.5)
     prods = []
     if isinstance(data.get('menu'), dict): prods.extend(data['menu'].get('items', []))
     if isinstance(data.get('productCatalog'), list): prods.extend(data['productCatalog'])
@@ -208,26 +198,19 @@ def calculate_hard_facts(data):
     valid_prods = [p for p in prods if isinstance(p, dict)]
     if valid_prods:
         if len(valid_prods) >= 10: scores['PROF-11.1'] = True
-        
         photos_count = sum(1 for p in valid_prods if p.get('photoUrl') or p.get('photo'))
         if photos_count / len(valid_prods) >= 0.8: scores['PROF-11.2'] = True
-        
         prices_count = sum(1 for p in valid_prods if any(char.isdigit() for char in str(p.get('price') or '')))
         if prices_count / len(valid_prods) >= 0.8: scores['PROF-11.3'] = True
-        
         desc_count = sum(1 for p in valid_prods if len(str(p.get('description') or '')) > 50)
         if desc_count / len(valid_prods) >= 0.8: scores['PROF-11.4'] = True
-        
         cats = set([p.get('category') for p in valid_prods if p.get('category')])
         if len(cats) >= 2: scores['PROF-11.5'] = True
         
-    # SEO-18.1: Адрес
     addr = str(data.get('address') or '')
     if len(addr) > 5: scores['SEO-18.1'] = True
     
-    # ВИЗУАЛ И АКТИВНОСТЬ
     if data.get('videoCount', 0) > 0 or data.get('videos') or data.get('mobileVideos'): scores['CONT-42.1'] = True
-    
     photo_count = int(data.get('photoCount') or len(data.get('photos') or []) or 0)
     if photo_count >= 15: scores['CONT-36.1'] = True
     if photo_count >= 30: scores['CONT-36.2'] = True
@@ -240,7 +223,6 @@ def calculate_hard_facts(data):
             scores['ACT-68.1'] = True
             break
             
-    # РЕПУТАЦИЯ (Отзывы, Охват, Негатив)
     rating = float(data.get('rating') or 0.0)
     if rating >= 4.5: scores['REP-27.1'] = True
     if rating >= 4.8: scores['REP-27.2'] = True
@@ -248,7 +230,6 @@ def calculate_hard_facts(data):
     rev_count = int(data.get('reviewsCount') or data.get('ratingsCount') or data.get('reviewCount') or 0)
     if rev_count >= 50: scores['REP-28.1'] = True
     
-    # Пагинация и 6-месячный фильтр
     reviews_raw = data.get('reviews') or []
     six_months_ago = now - timedelta(days=180)
     recent_reviews = []
@@ -355,119 +336,113 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
     return scores
 
 # ==========================================
-# 3.5. WEASYPRINT: ГЕНЕРАЦИЯ ПРЕМИУМ PDF
+# 3.5. TYPST: ГЕНЕРАЦИЯ ПРЕМИУМ PDF
 # ==========================================
+def clean_typography(text):
+    """Филологическая очистка текстов от базы данных"""
+    t = text.replace(" это ", " — это ")
+    t = t.replace(" реквизитов красный ", " реквизитов — красный ")
+    t = t.replace("сегодня вы", "сегодня, вы")
+    t = t.replace("капитал за счет", "капитал, за счет")
+    t = t.replace("описание это", "описание — это")
+    t = t.replace("контакты это", "контакты — это")
+    t = t.replace("записи это", "записи — это")
+    return t
+
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, report_type="PRO"):
     current_date = datetime.now().strftime("%d.%m.%Y")
     
-    score_class = "text-success" if score >= 80 else ("text-gold" if score >= 50 else "text-error")
+    score_color = "16A34A" if score >= 80 else ("C5A880" if score >= 50 else "DC2626")
     dev = round(100 - score, 1)
     lost_clients = int(round(dev / 10))
     lost_leads = int(client_leads * (dev / 100))
     ltv_loss = revenue_loss * 12
     rev_str = f"- {revenue_loss:,}".replace(',', ' ') + " ₽ / мес"
-
-    logo_b64 = ""
-    logo_path = "logo.png" if os.path.exists("logo.png") else ("PIN100 big logo.png" if os.path.exists("PIN100 big logo.png") else None)
-    if logo_path:
-        try:
-            with open(logo_path, "rb") as img_file:
-                logo_b64 = base64.b64encode(img_file.read()).decode('utf-8')
-        except: pass
-
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@700&display=swap');
-            
-            @page {{
-                size: A4; margin: 25mm 20mm;
-                @bottom-left {{ content: "PIN100 Analytics | Строго конфиденциально"; font-family: 'Inter', sans-serif; font-size: 8.5pt; color: #94A3B8; }}
-                @bottom-right {{ content: "Стр. " counter(page); font-family: 'Inter', sans-serif; font-size: 8.5pt; color: #94A3B8; }}
-            }}
-            body {{ font-family: 'Inter', sans-serif; color: #334155; font-size: 11pt; line-height: 1.6; }}
-            h1, h2, h3, .playfair {{ font-family: 'Playfair Display', serif; color: #0A1128; }}
-            
-            /* Cover */
-            .cover-page {{ margin-top: 200px; }}
-            .cover-logo {{ font-size: 16pt; font-weight: bold; font-family: 'Playfair Display', serif; color: #C5A880; margin-bottom: 50px; letter-spacing: 2px; text-transform: uppercase; }}
-            .cover-title {{ font-size: 38pt; line-height: 1.15; margin-bottom: 30px; }}
-            .gold-line-large {{ width: 80mm; height: 3px; background-color: #C5A880; margin-bottom: 40px; }}
-            .cover-subtitle {{ font-size: 14pt; color: #475569; line-height: 1.6; }}
-            
-            /* Typography & Blocks */
-            h2 {{ font-size: 24pt; margin-bottom: 25px; padding-bottom: 10px; border-bottom: 2px solid #C5A880; page-break-after: avoid; }}
-            .bento-container {{ width: 100%; margin-bottom: 25px; border-collapse: separate; border-spacing: 0; }}
-            .bento-box {{ background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 25px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }}
-            .bento-title {{ font-size: 11pt; color: #64748B; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }}
-            .bento-value {{ font-size: 28pt; font-weight: 700; }}
-            
-            /* Colors */
-            .text-success {{ color: #16A34A; }} .text-error {{ color: #DC2626; }} .text-gold {{ color: #C5A880; }} .text-navy {{ color: #0A1128; }}
-            
-            /* Layout */
-            .page-break {{ page-break-before: always; }}
-            .avoid-break {{ page-break-inside: avoid; }}
-            
-            /* Roadmap Items */
-            .group-badge {{ display: inline-block; background: #0A1128; color: #FFFFFF; padding: 6px 16px; border-radius: 4px; font-size: 10.5pt; font-weight: 600; margin-bottom: 15px; margin-top: 25px; text-transform: uppercase; letter-spacing: 1px; }}
-            .roadmap-item {{ margin-bottom: 20px; padding-left: 20px; border-left: 3px solid #E2E8F0; }}
-            .roadmap-title {{ font-weight: 700; color: #0F172A; font-size: 12pt; margin-bottom: 6px; }}
-            .roadmap-desc {{ font-size: 10.5pt; color: #475569; line-height: 1.5; }}
-            
-            .watermark {{ position: fixed; top: 0; right: 0; width: 40mm; opacity: 0.02; z-index: -1000; }}
-        </style>
-    </head>
-    <body>
-    """
-
-    if logo_b64:
-        html += f'<img src="data:image/png;base64,{logo_b64}" class="watermark">'
-
-    doc_title = 'Экспресс-аудит<br>упущенной выручки' if report_type == "LITE" else 'Экспертный аудит<br>упущенной выручки'
     
-    # Cover Page
-    html += f"""
-        <div class="cover-page">
-            <div class="cover-logo">PIN100 Analytics</div>
-            <h1 class="cover-title">{doc_title}</h1>
-            <div class="gold-line-large"></div>
-            <div class="cover-subtitle">
-                Подготовлено для бизнеса: <b style="color: #0A1128;">{title}</b><br>
-                Дата аудита: <b>{current_date}</b>
-            </div>
-        </div>
-        <div class="page-break"></div>
-        
-        <h2>Резюме для руководителя</h2>
-        <div class="bento-box"><div class="bento-title">Индекс готовности профиля:</div><div class="bento-value {score_class}">{round(score, 1)} / 100</div></div>
-        <div class="bento-box"><div class="bento-title">Упущенная выручка (Lost Revenue):</div><div class="bento-value text-error">{rev_str}</div></div>
-        <p style="font-size: 12pt; line-height: 1.6; margin-top: 30px;"><b>Вывод эксперта:</b> Отличное качество вашего продукта теряется из-за слабого присутствия в геосервисах. Из-за критических ошибок в заполнении карточки и отсутствии системной работы с отзывами вы уступаете позиции в поиске и ежемесячно отдаете горячих клиентов своим конкурентам.</p>
-        <div class="page-break"></div>
-        
-        <h2>Декомпозиция потерь</h2>
-    """
-    
+    title_safe = title.replace('"', '').replace('[', '\\[').replace(']', '\\]')
+    doc_title = "Экспресс-аудит\\nупущенной выручки" if report_type == "LITE" else "Экспертный аудит\\nупущенной выручки"
+
+    typ_source = f"""
+#set document(title: "Аудит PIN100 - {title_safe}", author: "PIN100 Analytics")
+#set page(
+  paper: "a4",
+  margin: (x: 20mm, y: 25mm),
+  footer: [
+    #set text(size: 8pt, fill: rgb("94A3B8"))
+    PIN100 Analytics | Строго конфиденциально
+    #h(1fr)
+    Стр. #counter(page).display()
+  ]
+)
+
+#set text(font: ("Inter", "Arial", "sans-serif"), size: 11pt, fill: rgb("334155"), lang: "ru")
+#show heading: set text(font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))
+
+// --- ОБЛОЖКА ---
+#v(150pt)
+#text(16pt, fill: rgb("C5A880"), weight: "bold", tracking: 2pt)[PIN100 ANALYTICS]
+#v(10pt)
+#heading(level: 1, size: 38pt)[{doc_title}]
+#v(10pt)
+#line(length: 80mm, stroke: 3pt + rgb("C5A880"))
+#v(30pt)
+#text(14pt, fill: rgb("475569"))[
+  Подготовлено для бизнеса: #strong(text(fill: rgb("0A1128"))[{title_safe}]) \\
+  Дата аудита: #strong[{current_date}]
+]
+#pagebreak()
+
+// --- РЕЗЮМЕ ---
+#heading(level: 2)[Резюме для руководителя]
+#v(10pt)
+#grid(
+  columns: (1fr, 1fr),
+  gutter: 20pt,
+  rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 8pt, inset: 20pt)[
+    #text(10.5pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ИНДЕКС ГОТОВНОСТИ ПРОФИЛЯ]\\
+    #v(8pt)
+    #text(28pt, weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)} / 100]
+  ],
+  rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 8pt, inset: 20pt)[
+    #text(10.5pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[УПУЩЕННАЯ ВЫРУЧКА (LOST REVENUE)]\\
+    #v(8pt)
+    #text(28pt, weight: "bold", fill: rgb("DC2626"))[{rev_str}]
+  ]
+)
+#v(20pt)
+#text(12pt, fill: rgb("334155"))[*Вывод эксперта:* Отличное качество вашего продукта теряется из-за слабого присутствия в геосервисах. Из-за критических ошибок в заполнении карточки и отсутствии системной работы с отзывами вы уступаете позиции в поиске и ежемесячно отдаете горячих клиентов своим конкурентам.]
+#v(30pt)
+
+// --- ДЕКОМПОЗИЦИЯ ---
+#heading(level: 2)[Декомпозиция потерь]
+#v(10pt)
+"""
+
     blocks_fin = [
-        ("А. Видимость бизнеса (Кто забирает клиентов)", f"Ваш профиль соответствует стандартам площадки лишь на <b>{round(score, 1)}%</b>. В реалиях алгоритмов Яндекса это означает, что из каждых 10 человек, которые прямо сейчас ищут ваши услуги, <b>{lost_clients}</b> до вас просто не доходят. Они видят в топе конкурентов с более грамотно упакованными карточками и оставляют деньги там."),
-        ("Б. Цена простоя (Ваши прямые убытки)", f"В вашей нише через геосервисы ежемесячно проходит около <b>{client_leads}</b> целевых запросов. Из-за пробелов в оптимизации профиля мимо вас проходит порядка <b>{lost_leads}</b> сделок. При вашем среднем чеке ({client_check:,} ₽) это превращается в кассовый разрыв на <b class='text-error'>{revenue_loss:,} ₽</b> каждый месяц.".replace(',', ' ')),
-        ("В. Скрытая угроза (Недополученный LTV)", f"Привлеченный клиент — это не разовая сделка, он остается с бизнесом надолго (в среднем от 12 месяцев). Упуская заказчиков сегодня, вы лишаете компанию будущих регулярных платежей. В годовом выражении эта недополученная выручка достигает <b class='text-error'>{ltv_loss:,} ₽</b>. Это капитал, за счет которого прямо сейчас масштабируются ваши конкуренты.".replace(',', ' '))
+        ("А. Видимость бизнеса (Кто забирает клиентов)", f"Ваш профиль соответствует стандартам площадки лишь на *{round(score, 1)}%*. В реалиях алгоритмов Яндекса это означает, что из каждых 10 человек, которые прямо сейчас ищут ваши услуги, *{lost_clients}* до вас просто не доходят. Они видят в топе конкурентов с более грамотно упакованными карточками и оставляют деньги там."),
+        ("Б. Цена простоя (Ваши прямые убытки)", f"В вашей нише через геосервисы ежемесячно проходит около *{client_leads}* целевых запросов. Из-за пробелов в оптимизации профиля мимо вас проходит порядка *{lost_leads}* сделок. При вашем среднем чеке ({client_check:,} ₽) это превращается в кассовый разрыв на #text(fill: rgb(\"DC2626\"), weight: \"bold\")[{revenue_loss:,} ₽] каждый месяц.".replace(',', ' ')),
+        ("В. Скрытая угроза (Недополученный LTV)", f"Привлеченный клиент — это не разовая сделка, он остается с бизнесом надолго (в среднем от 12 месяцев). Упуская заказчиков сегодня, вы лишаете компанию будущих регулярных платежей. В годовом выражении эта недополученная выручка достигает #text(fill: rgb(\"DC2626\"), weight: \"bold\")[{ltv_loss:,} ₽]. Это капитал, за счет которого прямо сейчас масштабируются ваши конкуренты.".replace(',', ' '))
     ]
     
     for bt, text in blocks_fin:
-        html += f"""
-        <div class="avoid-break" style="margin-bottom: 35px;">
-            <div style="font-family: 'Playfair Display', serif; font-size: 16pt; color: #0A1128; margin-bottom: 8px;">{bt}</div>
-            <div style="width: 40mm; height: 2px; background-color: #C5A880; margin-bottom: 15px;"></div>
-            <p style="color: #475569;">{text}</p>
-        </div>
-        """
-    
-    html += '<div class="page-break"></div><h2>Аналитика воронки продаж</h2><p style="margin-bottom: 35px; color: #475569; font-size: 11.5pt;">Ниже представлена оцифровка вашего профиля по ключевым этапам конверсии.</p>'
-    
+        typ_source += f"""
+#block(breakable: false)[
+    #text(16pt, font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"), weight: "bold")[{bt}]
+    #v(5pt)
+    #line(length: 40mm, stroke: 2pt + rgb("C5A880"))
+    #v(10pt)
+    #text(11.5pt, fill: rgb("475569"))[{text}]
+]
+#v(20pt)
+"""
+
+    # --- ВОРОНКА ---
+    typ_source += """
+#pagebreak()
+#heading(level: 2)[Аналитика воронки продаж]
+#text(11.5pt, fill: rgb("475569"))[Ниже представлена оцифровка вашего профиля по ключевым этапам конверсии.]
+#v(20pt)
+"""
     blocks = [
         {"title": "Блок 1. Видимость и Охваты", "groups": ['SEO и Трафик', 'Активность'], "desc": "Отвечает за то, как часто вас находят потенциальные клиенты в поиске Яндекса. Правильная настройка позволяет алгоритмам показывать вашу карточку выше конкурентов."},
         {"title": "Блок 2. Упаковка и Конверсия", "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'], "desc": "Оцениваем, насколько карточка привлекательна для клиента. Качественный визуал, полные цены и удобные кнопки превращают обычный просмотр в реальный звонок."},
@@ -481,127 +456,210 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         earned_score = sum(r.get('Earned', 0.0) for r in block_items)
         max_score = sum(r.get('Max', 0.0) for r in block_items)
         percentage = (earned_score / max_score * 100) if max_score > 0 else 100
-        bar_color = "#16A34A" if percentage >= 80 else ("#C5A880" if percentage >= 50 else "#DC2626")
+        bar_color = "16A34A" if percentage >= 80 else ("C5A880" if percentage >= 50 else "DC2626")
 
-        html += f"""
-        <div class="bento-box avoid-break">
-            <table style="width: 100%; border: none; margin-bottom: 12px;">
-                <tr>
-                    <td style="text-align: left; padding: 0;"><span style="font-size: 14pt; font-weight: 700; font-family: 'Playfair Display', serif; color: #0A1128;">{block['title']}</span></td>
-                    <td style="text-align: right; padding: 0;"><span style="font-size: 14pt; font-weight: 700; color: {bar_color};">{round(earned_score, 1)} / {round(max_score, 1)}</span></td>
-                </tr>
-            </table>
-            <div style="background: #F1F5F9; width: 100%; height: 10px; border-radius: 5px; margin-bottom: 15px;">
-                <div style="background: {bar_color}; width: {percentage}%; height: 10px; border-radius: 5px;"></div>
-            </div>
-            <p style="margin-bottom: 0; font-size: 10.5pt; color: #64748B; line-height: 1.5;"><i>{block['desc']}</i></p>
-        </div>
-        """
+        typ_source += f"""
+#block(breakable: false)[
+    #rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 8pt, inset: 20pt)[
+        #grid(
+            columns: (1fr, auto),
+            text(14pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[{block['title']}],
+            text(14pt, weight: "bold", fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}]
+        )
+        #v(10pt)
+        #box(width: 100%, height: 8pt, fill: rgb("E2E8F0"), radius: 4pt, clip: true)[
+            #box(width: {percentage}%, height: 8pt, fill: rgb("{bar_color}"), radius: 4pt)
+        ]
+        #v(10pt)
+        #text(10.5pt, fill: rgb("64748B"), style: "italic")[{block['desc']}]
+    ]
+]
+#v(15pt)
+"""
 
     # --- ДОРОЖНАЯ КАРТА (ТОЛЬКО ДЛЯ PRO) ---
     if report_type == "PRO":
-        html += """<div class="page-break"></div><h1 style="margin-top: 20px;">Пошаговая дорожная карта</h1><div class="gold-line-large"></div><p style="font-size: 12pt; margin-bottom: 35px; color: #475569;">Мы собрали все выявленные уязвимости и распределили их по приоритету. Следуйте этому Экшн-плану, чтобы за 30 дней забрать максимум органического трафика в вашей нише.</p>"""
+        typ_source += """
+#pagebreak()
+#heading(level: 1)[Пошаговая дорожная карта]
+#v(5pt)
+#line(length: 80mm, stroke: 3pt + rgb("C5A880"))
+#v(20pt)
+#text(12pt, fill: rgb("475569"))[Мы собрали все выявленные уязвимости и распределили их по приоритету. Следуйте этому Экшн-плану, чтобы за 30 дней забрать максимум органического трафика в вашей нише.]
+#v(20pt)
+"""
         stages = {
-            1: {"title": "Этап 1: Быстрые победы (Дни 1-3)", "desc": "Срочные исправления. Эти ошибки сжигают вашу конверсию прямо сейчас.", "color": "#DC2626"},
-            2: {"title": "Этап 2: Упаковка смыслов (Дни 4-14)", "desc": "Базовое заполнение. Сделайте профиль понятным и привлекательным для клиента.", "color": "#C5A880"},
-            3: {"title": "Этап 3: Масштабирование (Дни 15-30)", "desc": "Работа с репутацией и скрытыми алгоритмами Яндекса для захвата топа.", "color": "#16A34A"}
+            1: {"title": "Этап 1: Быстрые победы (Дни 1-3)", "desc": "Срочные исправления. Эти ошибки сжигают вашу конверсию прямо сейчас.", "color": "DC2626"},
+            2: {"title": "Этап 2: Упаковка смыслов (Дни 4-14)", "desc": "Базовое заполнение. Сделайте профиль понятным и привлекательным для клиента.", "color": "C5A880"},
+            3: {"title": "Этап 3: Масштабирование (Дни 15-30)", "desc": "Работа с репутацией и скрытыми алгоритмами Яндекса для захвата топа.", "color": "16A34A"}
         }
+        
         failed_items = [i for i in results_data if i['Результат'] == 'НЕТ']
         for stage_num, stage_info in stages.items():
             stage_items = [i for i in failed_items if i.get('Этап', 3) == stage_num]
             if stage_items:
-                html += f"""<div class="avoid-break" style="margin-bottom: 40px;"><h2 style="color: {stage_info['color']}; border-bottom-color: {stage_info['color']}; font-size: 22pt;">{stage_info['title']}</h2><p style="font-size: 11.5pt; margin-bottom: 25px; color: #475569;"><i>{stage_info['desc']}</i></p>"""
+                typ_source += f"""
+#block(breakable: false)[
+    #text(22pt, font: ("Playfair Display", "Georgia", "serif"), fill: rgb("{stage_info['color']}"))[{stage_info['title']}]
+    #v(5pt)
+    #text(11.5pt, fill: rgb("475569"), style: "italic")[{stage_info['desc']}]
+    #v(20pt)
+]
+"""
                 groups_in_stage = {}
                 for item in stage_items:
                     g = item['Группа']
                     if g not in groups_in_stage: groups_in_stage[g] = []
                     groups_in_stage[g].append(item)
+                    
                 for g_name, items in groups_in_stage.items():
-                    html += f"""<div style="margin-bottom: 30px;"><div class="group-badge" style="background-color: {stage_info['color']};">{g_name}</div>"""
+                    typ_source += f"""
+#rect(fill: rgb("{stage_info['color']}"), radius: 4pt, inset: (x: 10pt, y: 6pt))[
+    #text(10pt, weight: "bold", fill: white, tracking: 1pt)[{g_name.upper()}]
+]
+#v(10pt)
+"""
                     for item in items:
-                        html += f"""<div class="roadmap-item avoid-break"><div class="roadmap-title">{item['Критерий']}</div><div class="roadmap-desc">{item['Обоснование']}</div></div>"""
-                    html += "</div>"
-                html += "</div>"
-        if not failed_items: html += "<div class='bento-box avoid-break' style='border-left: 4px solid #16A34A;'><p style='color: #16A34A; font-weight: bold; font-size: 14pt; margin: 0;'>Ваш профиль идеален! Все этапы дорожной карты выполнены.</p></div>"
+                        reason = clean_typography(item['Обоснование'])
+                        crit = item['Критерий'].replace('[', '\\[').replace(']', '\\]')
+                        typ_source += f"""
+#block(breakable: false)[
+    #grid(
+        columns: (10pt, 1fr),
+        gutter: 10pt,
+        circle(radius: 3pt, fill: rgb("{stage_info['color']}")),
+        [
+            #text(12pt, weight: "bold", fill: rgb("0A1128"))[{crit}]\\
+            #v(5pt)
+            #text(10.5pt, fill: rgb("475569"), lineclicks: 1.5)[{reason}]
+        ]
+    )
+]
+#v(15pt)
+"""
+        if not failed_items: 
+            typ_source += "\n#rect(stroke: (left: 4pt + rgb(\"16A34A\")), fill: rgb(\"F8FAFC\"), inset: 20pt)[#text(14pt, weight: \"bold\", fill: rgb(\"16A34A\"))[Ваш профиль идеален! Все этапы дорожной карты выполнены.]]\n"
 
-        # CLOSING OFFER
-        html += """
-        <div class="page-break"></div>
-        <h1 style="margin-top: 50px;">Что делать дальше?</h1>
-        <div class="gold-line-large"></div>
-        <p style="font-size: 12pt; margin-bottom: 40px; color: #475569;">Вы получили подробный Экшн-план по захвату органического трафика. У вас есть два пути реализации:</p>
+        # --- СИЛЬНЫЙ ОФФЕР ---
+        typ_source += f"""
+#pagebreak()
+#heading(level: 1)[Что делать дальше?]
+#v(5pt)
+#line(length: 80mm, stroke: 3pt + rgb("C5A880"))
+#v(20pt)
+#text(12pt, fill: rgb("475569"))[Вы получили подробный Экшн-план по захвату органического трафика. У вас есть два пути реализации:]
+#v(30pt)
 
-        <table style="width: 100%; border-collapse: separate; border-spacing: 20px 0; margin-left: -20px; margin-bottom: 50px; page-break-inside: avoid;">
-            <tr>
-                <td style="width: 50%; padding: 30px; background: #F8FAFC; border-radius: 12px; border-top: 6px solid #94A3B8; vertical-align: top;">
-                    <h3 style="margin-top: 0; color: #64748B; font-family: 'Inter', sans-serif; font-size: 16pt;">Путь 1: Самостоятельно</h3>
-                    <ul style="padding-left: 20px; font-size: 11pt; color: #475569; line-height: 1.6; margin-bottom: 0;">
-                        <li style="margin-bottom: 10px;">Передать этот документ вашему маркетологу или ассистенту.</li>
-                        <li style="margin-bottom: 10px;">Потратить 30-45 дней на погружение в алгоритмы геосервисов.</li>
-                        <li>Взять на себя риски прохождения модерации Яндекса.</li>
-                    </ul>
-                </td>
-                <td style="width: 50%; padding: 30px; background: #0A1128; border-radius: 12px; border-top: 6px solid #C5A880; vertical-align: top;">
-                    <h3 style="margin-top: 0; color: #C5A880; font-family: 'Inter', sans-serif; font-size: 16pt;">Путь 2: Сделаем за вас</h3>
-                    <ul style="padding-left: 20px; font-size: 11pt; color: #F8FAFC; line-height: 1.6; margin-bottom: 0;">
-                        <li style="margin-bottom: 10px;">Наша команда экспертов берет на себя <b>100% рутины</b>.</li>
-                        <li style="margin-bottom: 10px;">Внедрение всей Дорожной карты за <b>5-7 дней</b> без вашего участия.</li>
-                        <li>Гарантия прохождения модерации и защита от теневых банов.</li>
-                    </ul>
-                </td>
-            </tr>
-        </table>
+#grid(
+    columns: (1fr, 1fr),
+    gutter: 20pt,
+    rect(width: 100%, fill: rgb("F8FAFC"), stroke: (top: 6pt + rgb("94A3B8"), rest: 1pt + rgb("E2E8F0")), radius: 12pt, inset: 25pt)[
+        #text(16pt, weight: "bold", fill: rgb("64748B"))[Путь 1: Самостоятельно]
+        #v(20pt)
+        #set list(marker: text(fill: rgb("94A3B8"))[•])
+        #text(11pt, fill: rgb("475569"))[
+          - Передать этот документ вашему маркетологу или ассистенту.
+          - Потратить 30-45 дней на погружение в алгоритмы геосервисов.
+          - Взять на себя риски прохождения модерации Яндекса.
+        ]
+    ],
+    rect(width: 100%, fill: rgb("0A1128"), stroke: (top: 6pt + rgb("C5A880"), rest: 1pt + rgb("0A1128")), radius: 12pt, inset: 25pt)[
+        #text(16pt, weight: "bold", fill: rgb("C5A880"))[Путь 2: Сделаем за вас]
+        #v(20pt)
+        #set list(marker: text(fill: rgb("C5A880"))[✓])
+        #text(11pt, fill: rgb("F8FAFC"))[
+          - Наша команда экспертов берет на себя *100% рутины*.
+          - Внедряем Экшн-план за *5-7 дней под ключ*. Вы платите за результат, а не за часы работы.
+          - Гарантия прохождения модерации и защита от теневых банов.
+        ]
+    ]
+)
+#v(40pt)
 
-        <div class="avoid-break" style="background: #F8FAFC; border: 1px solid #E2E8F0; text-align: center; padding: 40px 20px; border-radius: 12px;">
-            <div style="font-size: 20pt; font-family: 'Playfair Display', serif; margin-bottom: 15px; color: #0A1128;">Готовы делегировать и получать горячие лиды?</div>
-            <p style="font-size: 12pt; color: #475569; margin-bottom: 30px;">Свяжитесь с нами для бесплатной консультации и оценки сроков внедрения.</p>
-            <div style="display: inline-block; background: #0A1128; color: #FFF; padding: 15px 30px; border-radius: 8px; font-size: 14pt; font-weight: 700; letter-spacing: 0.5px;">Telegram: @paulvenkov | pin100.ru</div>
-        </div>
-        """
+#rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 30pt)[
+    #align(center)[
+        #text(20pt, font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Готовы остановить потерю лидов?]
+        #v(15pt)
+        #text(12pt, fill: rgb("475569"))[Напишите мне в Telegram кодовое слово *«{title_safe.upper()}»*, и я пришлю вам 3 ключевых шага, которые мы внедрим в первые 24 часа работы.]
+        #v(25pt)
+        #rect(fill: rgb("0A1128"), radius: 8pt, inset: (x: 30pt, y: 15pt))[
+            #text(14pt, weight: "bold", fill: white, tracking: 0.5pt)[Telegram: \@paulvenkov | pin100.ru]
+        ]
+    ]
+]
+"""
 
-    # --- ОФФЕР (ТОЛЬКО ДЛЯ LITE) ---
+    # --- LITE ОФФЕР ---
     if report_type == "LITE":
-        html += f"""
-            <div class="page-break"></div>
-            <h1 style="margin-top: 50px;">Почему вам нужен<br>PRO-аудит?</h1>
-            <div class="gold-line-large"></div>
-            
-            <p style="font-size: 12pt; margin-bottom: 30px; color: #475569; line-height: 1.6;">
-                В экспресс-версии мы подсветили лишь верхушку айсберга и показали реальную цифру ваших потерь. PRO-аудит — это инструмент тотального контроля и ваш пошаговый план по захвату топа в геосервисах.
-            </p>
-            
-            <div class="bento-box avoid-break" style="border-left: 4px solid #C5A880; margin-bottom: 40px;">
-                <b style="color: #0A1128; font-size: 12pt;">Независимый контроль подрядчиков:</b><br>
-                Узнайте реальное положение дел без «розовых очков» маркетинговых агентств. Отчет покажет, за что вы платите деньги и где подрядчики недорабатывают.
-            </div>
+        typ_source += """
+#pagebreak()
+#heading(level: 1)[Почему вам нужен PRO-аудит?]
+#v(5pt)
+#line(length: 80mm, stroke: 3pt + rgb("C5A880"))
+#v(20pt)
 
-            <h3 style="color: #0A1128; font-family: 'Playfair Display', serif; font-size: 18pt; margin-bottom: 20px;">Что внутри PRO-версии:</h3>
-            <ul style="margin-bottom: 40px; line-height: 1.8; color: #334155; font-size: 11.5pt;">
-                <li><b>Полная декомпозиция:</b> Разбор, значение и объяснение всех 79 параметров ранжирования Яндекса для вашей карточки.</li>
-                <li><b>Дорожная карта:</b> Пошаговый Экшн-план исправления ошибок по дням (от критических и срочных до долгосрочных).</li>
-                <li><b>Скрытые лайфхаки:</b> Практические фишки алгоритмов, которые знают только топ-5% бизнесов в топе выдачи.</li>
-            </ul>
-            
-            <div class="bento-box avoid-break" style="background: #0A1128; color: #FFF; border: none;">
-                <div style="font-size: 12pt; color: #94A3B8; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px;">Инвестиция в рост:</div>
-                <div style="font-size: 32pt; font-weight: 700; color: #C5A880; margin-bottom: 15px;">4 880 ₽</div>
-                <p style="font-size: 10.5pt; color: #F1F5F9; line-height: 1.5; padding-top: 15px; border-top: 1px solid #334155;">
-                    🎁 <b>Бонус:</b> Если вы решите делегировать работу профессионалам и закажете заполнение карточки у нашей команды, мы полностью вычтем стоимость этого аудита из чека.
-                </p>
-            </div>
-            
-            <p style="font-size: 10pt; color: #94A3B8; font-style: italic; margin-bottom: 30px; margin-top: 20px;">
-                * Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж. Вы обращаетесь к нам, только если сами надумаете.
-            </p>
-            
-            <div style="text-align: center; margin-top: 40px;">
-                <p style="font-size: 12pt; color: #475569; margin-bottom: 15px;">Запросить полную версию без обязательств:</p>
-                <div style="display: inline-block; border: 2px solid #0A1128; color: #0A1128; padding: 12px 30px; border-radius: 8px; font-size: 14pt; font-weight: 700;">Telegram: @paulvenkov | pin100.ru</div>
-            </div>
-        """
+#text(12pt, fill: rgb("475569"))[В экспресс-версии мы подсветили лишь верхушку айсберга и показали реальную цифру ваших потерь. PRO-аудит — это инструмент тотального контроля и ваш пошаговый план по захвату топа в геосервисах.]
+#v(20pt)
 
-    html += "</body></html>"
-    return HTML(string=html).write_pdf()
+#rect(width: 100%, fill: rgb("F8FAFC"), stroke: (left: 4pt + rgb("C5A880"), rest: 1pt + rgb("E2E8F0")), inset: 20pt, radius: 4pt)[
+    #text(12pt, weight: "bold", fill: rgb("0A1128"))[Независимый контроль подрядчиков:]\\
+    #v(5pt)
+    #text(11pt, fill: rgb("475569"))[Узнайте реальное положение дел без «розовых очков» маркетинговых агентств. Отчет покажет, за что вы платите деньги и где подрядчики недорабатывают.]
+]
+#v(30pt)
+
+#text(18pt, font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Что внутри PRO-версии:]
+#v(15pt)
+#set list(marker: text(fill: rgb("0A1128"))[•])
+#text(11.5pt, fill: rgb("334155"))[
+  - *Полная декомпозиция:* Разбор, значение и объяснение всех параметров ранжирования Яндекса для вашей карточки.
+  - *Дорожная карта:* Пошаговый Экшн-план исправления ошибок по дням.
+  - *Скрытые лайфхаки:* Практические фишки алгоритмов, которые знают только топ-5% бизнесов в топе выдачи.
+]
+#v(30pt)
+
+#rect(width: 100%, fill: rgb("0A1128"), radius: 12pt, inset: 30pt)[
+    #text(12pt, fill: rgb("94A3B8"), weight: "bold", tracking: 1pt)[ИНВЕСТИЦИЯ В РОСТ:]
+    #v(10pt)
+    #text(32pt, weight: "bold", fill: rgb("C5A880"))[4 880 ₽]
+    #v(15pt)
+    #line(length: 100%, stroke: 1pt + rgb("334155"))
+    #v(15pt)
+    #text(11pt, fill: rgb("F1F5F9"))[🎁 *Бонус:* Если вы решите делегировать работу профессионалам и закажете заполнение карточки у нашей команды, мы полностью вычтем стоимость этого аудита из чека.]
+]
+
+#v(20pt)
+#text(10pt, fill: rgb("94A3B8"), style: "italic")[* Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж. Вы обращаетесь к нам, только если сами надумаете.]
+
+#v(40pt)
+#align(center)[
+    #text(12pt, fill: rgb("475569"))[Запросить полную версию без обязательств:]
+    #v(15pt)
+    #rect(stroke: 2pt + rgb("0A1128"), radius: 8pt, inset: (x: 30pt, y: 15pt))[
+        #text(14pt, weight: "bold", fill: rgb("0A1128"))[Telegram: \@paulvenkov | pin100.ru]
+    ]
+]
+"""
+
+    # Компиляция Typst в PDF
+    with tempfile.NamedTemporaryFile(suffix=".typ", delete=False, mode="w", encoding="utf-8") as tf:
+        tf.write(typ_source)
+        typ_path = tf.name
+        
+    pdf_path = typ_path.replace(".typ", ".pdf")
+    
+    try:
+        typst.compile(typ_path, output=pdf_path)
+        with open(pdf_path, "rb") as pdf_file:
+            pdf_bytes = pdf_file.read()
+    except Exception as e:
+        st.error(f"Ошибка компиляции Typst: {e}")
+        pdf_bytes = b""
+    finally:
+        if os.path.exists(typ_path): os.remove(typ_path)
+        if os.path.exists(pdf_path): os.remove(pdf_path)
+        
+    return pdf_bytes
 
 # ==========================================
 # 4. СБОРКА И ИНТЕРФЕЙС
@@ -726,7 +784,8 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             with col_lite:
                 st.download_button(label="📄 Скачать Экспресс-аудит (LITE)", data=pdf_lite_bytes, file_name=f"PIN100_LITE_{title.replace(' ', '_')}.pdf", mime="application/pdf")
             with col_pro:
-                st.download_button(label="💎 Скачать PRO-аудит", data=pdf_pro_bytes, file_name=f"PIN100_PRO_{title.replace(' ', '_')}.pdf", mime="application/pdf", type="primary")
+                if pdf_pro_bytes:
+                    st.download_button(label="💎 Скачать PRO-аудит", data=pdf_pro_bytes, file_name=f"PIN100_PRO_{title.replace(' ', '_')}.pdf", mime="application/pdf", type="primary")
 
             st.markdown("---")
             st.markdown("### 🔎 Просмотр полного аудита")
@@ -746,6 +805,6 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                 with st.expander(f"📁 {g_name} ({passed_count} из {total_count} в норме) | {round(earned_score, 1)} / {round(max_score, 1)} баллов"):
                     for item in items:
                         if item['Результат'] == 'ДА':
-                            st.success(f"**✅ {item['Критерий']}**\n\n{item['Обоснование']}")
+                            st.success(f"**✅ {item['Критерий']}**\n\n{clean_typography(item['Обоснование'])}")
                         else:
-                            st.error(f"**❌ {item['Критерий']}**\n\n{item['Обоснование']}")
+                            st.error(f"**❌ {item['Критерий']}**\n\n{clean_typography(item['Обоснование'])}")
