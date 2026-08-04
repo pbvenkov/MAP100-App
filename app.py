@@ -149,65 +149,109 @@ def get_safe_list(data, keys):
         elif isinstance(data.get(k), dict): res.append(data[k])
     return res
 
-def calculate_prof_rules(data):
+def calculate_hard_facts(data):
     scores = {}
     title = str(data.get('title') or '')
-    description = str(data.get('description') or '')
-    if data.get('isVerifiedOwner'):
-        for k in ['PROF-12.1', 'PROF-01.1', 'PROF-03.1', 'PROF-05.1', 'PROF-07.1']: scores[k] = True
-    else:
-        if len(title) > 2: scores['PROF-01.1'] = True
-        if data.get('categories'): scores['PROF-03.1'] = True
-        if data.get('phones'): scores['PROF-05.1'] = True
-        schedule = data.get('schedule') or data.get('workingHours') or []
-        if isinstance(schedule, list) and len(schedule) >= 7: scores['PROF-07.1'] = True
-        elif isinstance(schedule, dict) and len(schedule.keys()) >= 7: scores['PROF-07.1'] = True
-    feat = data.get('features')
-    if isinstance(feat, list):
-        if len(feat) > 0: scores['PROF-08.1'] = True
-        if len(feat) >= 5: scores['PROF-08.2'] = True
-    if len(description) > 1500: scores['PROF-09.1'] = True
+    desc = str(data.get('description') or '')
+    
+    # PROF-01.1: Название
+    if data.get('isVerifiedOwner') or len(title) > 2: scores['PROF-01.1'] = True
+    
+    # PROF-03.1: Категории
+    if data.get('categories'): scores['PROF-03.1'] = True
+    
+    # PROF-04.1: Ссылка на сайт
     url = str(data.get('url') or data.get('website') or '').lower()
     if url: scores['PROF-04.1'] = True
-    prods = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
-    valid_prods = [p for p in prods if isinstance(p, dict)]
-    if len(valid_prods) >= 10: scores['PROF-11.1'] = True
-    owner_links = url + " " + description + " "
-    links_data = data.get('links') or data.get('socialLinks') or data.get('socials') or []
-    if isinstance(links_data, list): owner_links += " ".join(str(l) for l in links_data)
-    elif isinstance(links_data, dict): owner_links += " ".join(str(v) for v in links_data.values())
+    
+    # PROF-05.1 и 05.2: Телефон и его формат
+    phones = data.get('phones') or []
+    if phones: 
+        scores['PROF-05.1'] = True
+        if any(str(p).startswith('+7') or str(p).startswith('8') for p in phones):
+            scores['PROF-05.2'] = True
+        
+    # PROF-07.1: График работы
+    schedule = data.get('schedule') or data.get('workingHours') or []
+    if isinstance(schedule, list) and len(schedule) >= 7: scores['PROF-07.1'] = True
+    elif isinstance(schedule, dict) and len(schedule.keys()) >= 7: scores['PROF-07.1'] = True
+    
+    # PROF-08.1: Атрибуты (Особенности) - обработка словаря
+    features = data.get('features')
+    if isinstance(features, dict) and len(features.keys()) > 0: scores['PROF-08.1'] = True
+    elif isinstance(features, list) and len(features) > 0: scores['PROF-08.1'] = True
+    
+    # PROF-09.1: Длина описания
+    if len(desc) > 1500: scores['PROF-09.1'] = True
+    
+    # PROF-12.1: Синяя Галочка
+    if data.get('isVerifiedOwner'): scores['PROF-12.1'] = True
+    
+    # PROF-13.1, PROF-13.2: Мессенджеры и Соцсети
+    links_data = data.get('socialLinks') or data.get('links') or []
+    owner_links = url + " " + desc + " " + " ".join([str(l) for l in links_data])
+    if any(s in owner_links.lower() for s in ["t.me", "wa.me", "whatsapp", "viber"]): scores['PROF-13.1'] = True
     if any(s in owner_links.lower() for s in ["vk.com", "youtube", "dzen", "instagram", "inst:"]): scores['PROF-13.2'] = True
-    return scores
-
-def calculate_rep_rules(data):
-    scores = {}
-    try: rating = float(data.get('rating') or 0.0)
-    except: rating = 0.0
+    
+    # КАТАЛОГ ТОВАРОВ (PROF-11.1 - 11.5)
+    prods = []
+    if isinstance(data.get('menu'), dict):
+        prods.extend(data['menu'].get('items', []))
+    if isinstance(data.get('productCatalog'), list):
+        prods.extend(data['productCatalog'])
+        
+    valid_prods = [p for p in prods if isinstance(p, dict)]
+    if valid_prods:
+        if len(valid_prods) >= 10: scores['PROF-11.1'] = True
+        
+        photos_count = sum(1 for p in valid_prods if p.get('photoUrl') or p.get('photo'))
+        if photos_count / len(valid_prods) >= 0.8: scores['PROF-11.2'] = True
+        
+        prices_count = sum(1 for p in valid_prods if p.get('price'))
+        if prices_count / len(valid_prods) >= 0.8: scores['PROF-11.3'] = True
+        
+        desc_count = sum(1 for p in valid_prods if len(str(p.get('description') or '')) > 50)
+        if desc_count / len(valid_prods) >= 0.8: scores['PROF-11.4'] = True
+        
+        cats = set([p.get('category') for p in valid_prods if p.get('category')])
+        if len(cats) >= 2: scores['PROF-11.5'] = True
+        
+    # SEO-18.1: Адрес
+    addr = str(data.get('address') or '')
+    if len(addr) > 5: scores['SEO-18.1'] = True
+    
+    # ВИЗУАЛ И АКТИВНОСТЬ
+    if data.get('videoCount', 0) > 0 or data.get('videos') or data.get('mobileVideos'): scores['CONT-42.1'] = True
+    if data.get('posts') or data.get('mobilePosts'): scores['CONV-51.1'] = True
+    
+    # РЕПУТАЦИЯ (Отзывы, Охват, Негатив)
+    rating = float(data.get('rating') or 0.0)
     if rating >= 4.5: scores['REP-27.1'] = True
     if rating >= 4.8: scores['REP-27.2'] = True
-    try: rev_count = int(data.get('reviewsCount') or data.get('ratingsCount') or 0)
-    except: rev_count = 0
+    
+    rev_count = int(data.get('reviewsCount') or data.get('ratingsCount') or data.get('reviewCount') or 0)
     if rev_count >= 50: scores['REP-28.1'] = True
-    reviews_raw = data.get('reviews')
-    if not isinstance(reviews_raw, list): return scores
+    
+    reviews_raw = data.get('reviews') or []
     reviews = [r for r in reviews_raw if isinstance(r, dict)]
-    if not reviews: return scores
-    ow_txt = []
-    for r in reviews[:20]:
-        is_replied = False
-        rep_text = ""
-        if r.get('businessComment'):
-            rep_text = str(r.get('businessComment')).strip()
-            if rep_text: is_replied = True
-        else:
-            rep = r.get('reply') or r.get('ownerAnswer') or r.get('businessResponse') or r.get('response')
-            if isinstance(rep, dict):
-                rep_text = str(rep.get('text') or '').strip()
-                if rep_text: is_replied = True
-        if is_replied and rep_text: ow_txt.append(rep_text.lower())
-    if ow_txt:
-        stop_words = ['не были', 'не находим', 'уточните', 'нет в базе']
-        if any(w in t for t in ow_txt for w in stop_words): scores['REP-33.1'] = True
+    if reviews:
+        replied = 0
+        has_positive_replied = False
+        has_unanswered_negative = False
+        for r in reviews[:20]:
+            r_rating = float(r.get('rating') or 0.0)
+            reply_text = str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip()
+            if reply_text:
+                replied += 1
+                if r_rating >= 4.0: has_positive_replied = True
+            else:
+                if r_rating <= 3.0: has_unanswered_negative = True
+                
+        if len(reviews[:20]) > 0:
+            if replied / len(reviews[:20]) >= 0.9: scores['REP-30.1'] = True
+        if has_positive_replied: scores['REP-30.3'] = True
+        if not has_unanswered_negative: scores['REP-32.1'] = True
+        
     return scores
 
 def calculate_dynamic_expert_rules(data, prompts_data, target_url):
@@ -512,7 +556,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             </div>
             
             <p style="font-size: 10.5pt; color: #475569; font-style: italic; margin-bottom: 20px;">
-                * Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж от наших менеджеров. Вы обращаетесь к нам, только если сами надумаете.
+                * Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж от gross-менеджеров. Вы обращаетесь к нам, только если сами надумаете.
             </p>
             
             <div style="border-top: 1px solid #E2E8F0; padding-top: 20px;">
@@ -557,8 +601,8 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             try: niche_key = determine_niche_by_expert(title, cat)
             except: niche_key = "OTHER"
             
-            raw_scores = {}
-            for f in [calculate_prof_rules, calculate_rep_rules]: raw_scores.update(f(data))
+            # ВАЖНО: Используем новую безошибочную функцию для хард-фактов
+            raw_scores = calculate_hard_facts(data)
             
             exp_sc = calculate_dynamic_expert_rules(data, prompts_data, url)
             raw_scores.update(exp_sc)
@@ -626,7 +670,7 @@ if st.button("🚀 Запустить генерацию отчетов", type="
 
             st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно.".replace(',', ' '))
             
-            # РЕЖИМ РАЗРАБОТЧИКА (СКАЧИВАНИЕ JSON)
+            # РЕЖИМ РАЗРАБОТЧИКА С КНОПКОЙ СКАЧИВАНИЯ
             with st.expander("🛠 Режим разработчика: Сырой JSON от Яндекса (Проверка на галлюцинации)"):
                 json_string = json.dumps(data, ensure_ascii=False, indent=4)
                 st.download_button(
