@@ -355,7 +355,7 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
     return scores
 
 # ==========================================
-# 3.5. WEASYPRINT: ГЕНЕРАЦИЯ PDF (HTML->PDF)
+# 3.5. WEASYPRINT: ГЕНЕРАЦИЯ ПРЕМИУМ PDF
 # ==========================================
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, report_type="PRO"):
     current_date = datetime.now().strftime("%d.%m.%Y")
@@ -381,62 +381,97 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     <head>
         <meta charset="utf-8">
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Playfair+Display:wght@700&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@700&display=swap');
+            
             @page {{
-                size: A4; margin: 25mm;
-                @bottom-left {{ content: "PIN100 Analytics | Строго конфиденциально"; font-family: 'Inter', sans-serif; font-size: 8pt; color: #94A3B8; }}
-                @bottom-right {{ content: "Стр. " counter(page); font-family: 'Inter', sans-serif; font-size: 8pt; color: #94A3B8; }}
+                size: A4; margin: 25mm 20mm;
+                @bottom-left {{ content: "PIN100 Analytics | Строго конфиденциально"; font-family: 'Inter', sans-serif; font-size: 8.5pt; color: #94A3B8; }}
+                @bottom-right {{ content: "Стр. " counter(page); font-family: 'Inter', sans-serif; font-size: 8.5pt; color: #94A3B8; }}
             }}
-            body {{ font-family: 'Inter', sans-serif; color: #334155; font-size: 11pt; line-height: 1.5; }}
-            h1, h2, .block-title {{ font-family: 'Playfair Display', serif; color: #0A1128; }}
-            h1 {{ font-size: 32pt; margin-bottom: 10px; margin-top: 150px; line-height: 1.2;}}
-            h2 {{ font-size: 24pt; margin-bottom: 20px; border-bottom: 2px solid #C5A880; padding-bottom: 10px; }}
-            .gold-line {{ width: 80mm; height: 2px; background-color: #C5A880; margin-bottom: 20px; }}
-            .bento-box {{ background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 20px; margin-bottom: 20px; }}
-            .bento-title {{ font-size: 11pt; margin-bottom: 5px; color: #334155; }}
-            .bento-value {{ font-size: 24pt; font-weight: 700; }}
+            body {{ font-family: 'Inter', sans-serif; color: #334155; font-size: 11pt; line-height: 1.6; }}
+            h1, h2, h3, .playfair {{ font-family: 'Playfair Display', serif; color: #0A1128; }}
+            
+            /* Cover */
+            .cover-page {{ margin-top: 200px; }}
+            .cover-logo {{ font-size: 16pt; font-weight: bold; font-family: 'Playfair Display', serif; color: #C5A880; margin-bottom: 50px; letter-spacing: 2px; text-transform: uppercase; }}
+            .cover-title {{ font-size: 38pt; line-height: 1.15; margin-bottom: 30px; }}
+            .gold-line-large {{ width: 80mm; height: 3px; background-color: #C5A880; margin-bottom: 40px; }}
+            .cover-subtitle {{ font-size: 14pt; color: #475569; line-height: 1.6; }}
+            
+            /* Typography & Blocks */
+            h2 {{ font-size: 24pt; margin-bottom: 25px; padding-bottom: 10px; border-bottom: 2px solid #C5A880; page-break-after: avoid; }}
+            .bento-container {{ width: 100%; margin-bottom: 25px; border-collapse: separate; border-spacing: 0; }}
+            .bento-box {{ background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 25px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }}
+            .bento-title {{ font-size: 11pt; color: #64748B; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }}
+            .bento-value {{ font-size: 28pt; font-weight: 700; }}
+            
+            /* Colors */
             .text-success {{ color: #16A34A; }} .text-error {{ color: #DC2626; }} .text-gold {{ color: #C5A880; }} .text-navy {{ color: #0A1128; }}
+            
+            /* Layout */
             .page-break {{ page-break-before: always; }}
-            .block-title {{ font-size: 16pt; margin-bottom: 5px; font-weight: 700; }}
-            .block-line {{ width: 50mm; height: 1px; background-color: #C5A880; margin-bottom: 15px; }}
             .avoid-break {{ page-break-inside: avoid; }}
+            
+            /* Roadmap Items */
+            .group-badge {{ display: inline-block; background: #0A1128; color: #FFFFFF; padding: 6px 16px; border-radius: 4px; font-size: 10.5pt; font-weight: 600; margin-bottom: 15px; margin-top: 25px; text-transform: uppercase; letter-spacing: 1px; }}
+            .roadmap-item {{ margin-bottom: 20px; padding-left: 20px; border-left: 3px solid #E2E8F0; }}
+            .roadmap-title {{ font-weight: 700; color: #0F172A; font-size: 12pt; margin-bottom: 6px; }}
+            .roadmap-desc {{ font-size: 10.5pt; color: #475569; line-height: 1.5; }}
+            
             .watermark {{ position: fixed; top: 0; right: 0; width: 40mm; opacity: 0.02; z-index: -1000; }}
         </style>
     </head>
     <body>
     """
+
     if logo_b64:
         html += f'<img src="data:image/png;base64,{logo_b64}" class="watermark">'
 
     doc_title = 'Экспресс-аудит<br>упущенной выручки' if report_type == "LITE" else 'Экспертный аудит<br>упущенной выручки'
+    
+    # Cover Page
     html += f"""
-        <div style="font-size: 20pt; font-weight: bold; font-family: 'Playfair Display', serif; color: #0A1128;">PIN100</div>
-        <h1>{doc_title}</h1><div class="gold-line"></div>
-        <p style="font-size: 12pt;">Подготовлено для бизнеса: <b>{title}</b><br>Дата аудита: <b>{current_date}</b></p>
+        <div class="cover-page">
+            <div class="cover-logo">PIN100 Analytics</div>
+            <h1 class="cover-title">{doc_title}</h1>
+            <div class="gold-line-large"></div>
+            <div class="cover-subtitle">
+                Подготовлено для бизнеса: <b style="color: #0A1128;">{title}</b><br>
+                Дата аудита: <b>{current_date}</b>
+            </div>
+        </div>
         <div class="page-break"></div>
         
         <h2>Резюме для руководителя</h2>
         <div class="bento-box"><div class="bento-title">Индекс готовности профиля:</div><div class="bento-value {score_class}">{round(score, 1)} / 100</div></div>
         <div class="bento-box"><div class="bento-title">Упущенная выручка (Lost Revenue):</div><div class="bento-value text-error">{rev_str}</div></div>
-        <p><b>Вывод эксперта:</b> Отличное качество вашего продукта теряется из-за слабого присутствия в геосервисах. Из-за критических ошибок в заполнении карточки и отсутствии системной работы с отзывами вы уступаете позиции в поиске и ежемесячно отдаете горячих клиентов своим конкурентам.</p>
+        <p style="font-size: 12pt; line-height: 1.6; margin-top: 30px;"><b>Вывод эксперта:</b> Отличное качество вашего продукта теряется из-за слабого присутствия в геосервисах. Из-за критических ошибок в заполнении карточки и отсутствии системной работы с отзывами вы уступаете позиции в поиске и ежемесячно отдаете горячих клиентов своим конкурентам.</p>
         <div class="page-break"></div>
         
         <h2>Декомпозиция потерь</h2>
     """
-    blocks_fin = [
-        ("А. Видимость бизнеса (Кто забирает ваших клиентов)", f"Ваш профиль соответствует стандартам площадки лишь на {round(score, 1)}%. В реалиях алгоритмов Яндекса это означает, что из каждых 10 человек, которые прямо сейчас ищут ваши услуги, {lost_clients} до вас просто не доходят. Они видят в топе конкурентов с более грамотно упакованными карточками и оставляют деньги там."),
-        ("Б. Цена простоя (Ваши прямые убытки)", f"В вашей нише через геосервисы ежемесячно проходит около {client_leads} целевых запросов. Из-за пробелов в оптимизации профиля мимо вас проходит порядка {lost_leads} сделок. При вашем среднем чеке ({client_check:,} ₽) это превращается в кассовый разрыв на {revenue_loss:,} ₽ каждый месяц.".replace(',', ' ')),
-        ("В. Скрытая угроза (Недополученный LTV)", f"Привлеченный клиент — это не разовая сделка, он остается с бизнесом надолго (в среднем от 12 месяцев). Упуская заказчиков сегодня, вы лишаете компанию будущих регулярных платежей. В годовом выражении эта недополученная выручка достигает {ltv_loss:,} ₽. Это капитал, за счет которого прямо сейчас масштабируются ваши конкуренты.".replace(',', ' '))
-    ]
-    for bt, text in blocks_fin:
-        html += f"""<div class="avoid-break"><div class="block-title">{bt}</div><div class="block-line"></div><p>{text}</p><br></div>"""
     
-    html += '<div class="page-break"></div><h2>Аналитика воронки продаж</h2><p style="margin-bottom: 25px;">Ниже представлена оцифровка вашего профиля по ключевым этапам конверсии.</p>'
+    blocks_fin = [
+        ("А. Видимость бизнеса (Кто забирает клиентов)", f"Ваш профиль соответствует стандартам площадки лишь на <b>{round(score, 1)}%</b>. В реалиях алгоритмов Яндекса это означает, что из каждых 10 человек, которые прямо сейчас ищут ваши услуги, <b>{lost_clients}</b> до вас просто не доходят. Они видят в топе конкурентов с более грамотно упакованными карточками и оставляют деньги там."),
+        ("Б. Цена простоя (Ваши прямые убытки)", f"В вашей нише через геосервисы ежемесячно проходит около <b>{client_leads}</b> целевых запросов. Из-за пробелов в оптимизации профиля мимо вас проходит порядка <b>{lost_leads}</b> сделок. При вашем среднем чеке ({client_check:,} ₽) это превращается в кассовый разрыв на <b class='text-error'>{revenue_loss:,} ₽</b> каждый месяц.".replace(',', ' ')),
+        ("В. Скрытая угроза (Недополученный LTV)", f"Привлеченный клиент — это не разовая сделка, он остается с бизнесом надолго (в среднем от 12 месяцев). Упуская заказчиков сегодня, вы лишаете компанию будущих регулярных платежей. В годовом выражении эта недополученная выручка достигает <b class='text-error'>{ltv_loss:,} ₽</b>. Это капитал, за счет которого прямо сейчас масштабируются ваши конкуренты.".replace(',', ' '))
+    ]
+    
+    for bt, text in blocks_fin:
+        html += f"""
+        <div class="avoid-break" style="margin-bottom: 35px;">
+            <div style="font-family: 'Playfair Display', serif; font-size: 16pt; color: #0A1128; margin-bottom: 8px;">{bt}</div>
+            <div style="width: 40mm; height: 2px; background-color: #C5A880; margin-bottom: 15px;"></div>
+            <p style="color: #475569;">{text}</p>
+        </div>
+        """
+    
+    html += '<div class="page-break"></div><h2>Аналитика воронки продаж</h2><p style="margin-bottom: 35px; color: #475569; font-size: 11.5pt;">Ниже представлена оцифровка вашего профиля по ключевым этапам конверсии.</p>'
     
     blocks = [
-        {"title": "Блок 1. Видимость и Охваты", "groups": ['SEO и Трафик', 'Активность'], "desc": "Этот блок отвечает за то, как часто вас находят потенциальные клиенты в поиске Яндекса. Правильная настройка позволяет алгоритмам показывать вашу карточку выше конкурентов по целевым запросам."},
-        {"title": "Блок 2. Упаковка и Конверсия", "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'], "desc": "Здесь мы оцениваем, насколько карточка привлекательна для клиента. Качественный визуал, полные цены и удобные кнопки превращают обычный просмотр в реальный звонок или переход на сайт."},
-        {"title": "Блок 3. Репутационный капитал", "groups": ['Репутация'], "desc": "Клиенты всегда читают отзывы перед покупкой, особенно при высоких чеках. Системная работа с обратной связью (даже негативной) повышает лояльность и траст профиля."},
+        {"title": "Блок 1. Видимость и Охваты", "groups": ['SEO и Трафик', 'Активность'], "desc": "Отвечает за то, как часто вас находят потенциальные клиенты в поиске Яндекса. Правильная настройка позволяет алгоритмам показывать вашу карточку выше конкурентов."},
+        {"title": "Блок 2. Упаковка и Конверсия", "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал'], "desc": "Оцениваем, насколько карточка привлекательна для клиента. Качественный визуал, полные цены и удобные кнопки превращают обычный просмотр в реальный звонок."},
+        {"title": "Блок 3. Репутационный капитал", "groups": ['Репутация'], "desc": "Клиенты всегда читают отзывы перед покупкой, особенно при высоких чеках. Системная работа с обратной связью повышает лояльность и траст профиля."},
         {"title": "Блок 4. Скрытые алгоритмы", "groups": ['Технологии и ИИ'], "desc": "Это невидимая для пользователя, но критически важная для роботов Яндекса часть. Разметка данных помогает нейросетям лучше понимать бизнес."}
     ]
 
@@ -449,22 +484,23 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         bar_color = "#16A34A" if percentage >= 80 else ("#C5A880" if percentage >= 50 else "#DC2626")
 
         html += f"""
-        <div class="avoid-break" style="margin-bottom: 25px; padding: 20px; border: 1px solid #E2E8F0; border-radius: 8px; background: #F8FAFC;">
-            <table style="width: 100%; border: none; margin-bottom: 10px;">
+        <div class="bento-box avoid-break">
+            <table style="width: 100%; border: none; margin-bottom: 12px;">
                 <tr>
-                    <td style="text-align: left; padding: 0;"><span style="font-size: 14pt; font-weight: bold; font-family: 'Playfair Display', serif; color: #0A1128;">{block['title']}</span></td>
-                    <td style="text-align: right; padding: 0;"><span style="font-size: 14pt; font-weight: bold; color: {bar_color};">{round(earned_score, 1)} / {round(max_score, 1)}</span></td>
+                    <td style="text-align: left; padding: 0;"><span style="font-size: 14pt; font-weight: 700; font-family: 'Playfair Display', serif; color: #0A1128;">{block['title']}</span></td>
+                    <td style="text-align: right; padding: 0;"><span style="font-size: 14pt; font-weight: 700; color: {bar_color};">{round(earned_score, 1)} / {round(max_score, 1)}</span></td>
                 </tr>
             </table>
-            <div style="background: #E2E8F0; width: 100%; height: 8px; border-radius: 4px; margin-bottom: 15px;">
-                <div style="background: {bar_color}; width: {percentage}%; height: 8px; border-radius: 4px;"></div>
+            <div style="background: #F1F5F9; width: 100%; height: 10px; border-radius: 5px; margin-bottom: 15px;">
+                <div style="background: {bar_color}; width: {percentage}%; height: 10px; border-radius: 5px;"></div>
             </div>
-            <p style="margin-bottom: 0; font-size: 10.5pt; color: #475569;"><i>{block['desc']}</i></p>
+            <p style="margin-bottom: 0; font-size: 10.5pt; color: #64748B; line-height: 1.5;"><i>{block['desc']}</i></p>
         </div>
         """
 
+    # --- ДОРОЖНАЯ КАРТА (ТОЛЬКО ДЛЯ PRO) ---
     if report_type == "PRO":
-        html += """<div class="page-break"></div><h1 style="margin-top: 20px;">Пошаговая дорожная карта</h1><div class="gold-line"></div><p style="font-size: 11pt; margin-bottom: 25px;">Мы собрали все выявленные уязвимости и распределили их по приоритету. Следуйте этому Экшн-плану, чтобы за 30 дней забрать максимум органического трафика в вашей нише.</p>"""
+        html += """<div class="page-break"></div><h1 style="margin-top: 20px;">Пошаговая дорожная карта</h1><div class="gold-line-large"></div><p style="font-size: 12pt; margin-bottom: 35px; color: #475569;">Мы собрали все выявленные уязвимости и распределили их по приоритету. Следуйте этому Экшн-плану, чтобы за 30 дней забрать максимум органического трафика в вашей нише.</p>"""
         stages = {
             1: {"title": "Этап 1: Быстрые победы (Дни 1-3)", "desc": "Срочные исправления. Эти ошибки сжигают вашу конверсию прямо сейчас.", "color": "#DC2626"},
             2: {"title": "Этап 2: Упаковка смыслов (Дни 4-14)", "desc": "Базовое заполнение. Сделайте профиль понятным и привлекательным для клиента.", "color": "#C5A880"},
@@ -474,41 +510,96 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         for stage_num, stage_info in stages.items():
             stage_items = [i for i in failed_items if i.get('Этап', 3) == stage_num]
             if stage_items:
-                html += f"""<div class="avoid-break" style="margin-bottom: 35px;"><h2 style="color: {stage_info['color']}; border-bottom-color: {stage_info['color']}; font-size: 20pt;">{stage_info['title']}</h2><p style="font-size: 11pt; margin-bottom: 20px;"><i>{stage_info['desc']}</i></p>"""
+                html += f"""<div class="avoid-break" style="margin-bottom: 40px;"><h2 style="color: {stage_info['color']}; border-bottom-color: {stage_info['color']}; font-size: 22pt;">{stage_info['title']}</h2><p style="font-size: 11.5pt; margin-bottom: 25px; color: #475569;"><i>{stage_info['desc']}</i></p>"""
                 groups_in_stage = {}
                 for item in stage_items:
                     g = item['Группа']
                     if g not in groups_in_stage: groups_in_stage[g] = []
                     groups_in_stage[g].append(item)
                 for g_name, items in groups_in_stage.items():
-                    html += f"""<div style="margin-bottom: 25px;"><div style="font-weight: bold; font-size: 12pt; color: #0A1128; margin-bottom: 15px; padding-left: 10px; border-left: 3px solid {stage_info['color']};">{g_name}</div>"""
+                    html += f"""<div style="margin-bottom: 30px;"><div class="group-badge" style="background-color: {stage_info['color']};">{g_name}</div>"""
                     for item in items:
-                        html += f"""<div style="margin-bottom: 15px; padding-left: 15px;"><span style="font-weight: bold; color: #334155;">• {item['Критерий']}</span><br><span style="color: #475569; font-size: 10.5pt;">{item['Обоснование']}</span></div>"""
+                        html += f"""<div class="roadmap-item avoid-break"><div class="roadmap-title">{item['Критерий']}</div><div class="roadmap-desc">{item['Обоснование']}</div></div>"""
                     html += "</div>"
                 html += "</div>"
-        if not failed_items: html += "<p style='color: #16A34A; font-weight: bold;'>Ваш профиль идеален! Все этапы дорожной карты выполнены.</p>"
+        if not failed_items: html += "<div class="bento-box avoid-break" style="border-left: 4px solid #16A34A;"><p style='color: #16A34A; font-weight: bold; font-size: 14pt; margin: 0;'>Ваш профиль идеален! Все этапы дорожной карты выполнены.</p></div>"
 
+        # CLOSING OFFER
         html += """
-        <div class="page-break"></div><h1 style="margin-top: 50px;">Что делать дальше?</h1><div class="gold-line"></div><p style="font-size: 11pt; margin-bottom: 30px;">Вы получили подробный Экшн-план по захвату органического трафика. У вас есть два пути реализации:</p>
-        <table style="width: 100%; border-collapse: separate; border-spacing: 15px 0; margin-left: -15px; margin-bottom: 40px;">
+        <div class="page-break"></div>
+        <h1 style="margin-top: 50px;">Что делать дальше?</h1>
+        <div class="gold-line-large"></div>
+        <p style="font-size: 12pt; margin-bottom: 40px; color: #475569;">Вы получили подробный Экшн-план по захвату органического трафика. У вас есть два пути реализации:</p>
+
+        <table style="width: 100%; border-collapse: separate; border-spacing: 20px 0; margin-left: -20px; margin-bottom: 50px; page-break-inside: avoid;">
             <tr>
-                <td style="width: 50%; padding: 25px; background: #F8FAFC; border: 1px solid #E2E8F0; border-top: 4px solid #94A3B8; vertical-align: top;"><h3 style="margin-top: 0; color: #334155; font-family: 'Inter', sans-serif;">Путь 1: Самостоятельно</h3><ul style="padding-left: 20px; font-size: 10.5pt; color: #475569; line-height: 1.6; margin-bottom: 0;"><li>Передать этот документ вашему маркетологу или ассистенту.</li><li>Потратить 30-45 дней на погружение в алгоритмы геосервисов.</li><li>Взять на себя риски прохождения модерации Яндекса.</li></ul></td>
-                <td style="width: 50%; padding: 25px; background: #FFFBF5; border: 1px solid #F3E8D6; border-top: 4px solid #C5A880; vertical-align: top;"><h3 style="margin-top: 0; color: #0A1128; font-family: 'Inter', sans-serif;">Путь 2: Сделаем за вас</h3><ul style="padding-left: 20px; font-size: 10.5pt; color: #0A1128; line-height: 1.6; margin-bottom: 0;"><li>Наша команда экспертов берет на себя <b>100% рутины</b>.</li><li>Внедрение всей Дорожной карты за <b>5-7 дней</b> без вашего участия.</li><li>Гарантия прохождения модерации и защита от теневых банов.</li></ul></td>
+                <td style="width: 50%; padding: 30px; background: #F8FAFC; border-radius: 12px; border-top: 6px solid #94A3B8; vertical-align: top;">
+                    <h3 style="margin-top: 0; color: #64748B; font-family: 'Inter', sans-serif; font-size: 16pt;">Путь 1: Самостоятельно</h3>
+                    <ul style="padding-left: 20px; font-size: 11pt; color: #475569; line-height: 1.6; margin-bottom: 0;">
+                        <li style="margin-bottom: 10px;">Передать этот документ вашему маркетологу или ассистенту.</li>
+                        <li style="margin-bottom: 10px;">Потратить 30-45 дней на погружение в алгоритмы геосервисов.</li>
+                        <li>Взять на себя риски прохождения модерации Яндекса.</li>
+                    </ul>
+                </td>
+                <td style="width: 50%; padding: 30px; background: #0A1128; border-radius: 12px; border-top: 6px solid #C5A880; vertical-align: top;">
+                    <h3 style="margin-top: 0; color: #C5A880; font-family: 'Inter', sans-serif; font-size: 16pt;">Путь 2: Сделаем за вас</h3>
+                    <ul style="padding-left: 20px; font-size: 11pt; color: #F8FAFC; line-height: 1.6; margin-bottom: 0;">
+                        <li style="margin-bottom: 10px;">Наша команда экспертов берет на себя <b>100% рутины</b>.</li>
+                        <li style="margin-bottom: 10px;">Внедрение всей Дорожной карты за <b>5-7 дней</b> без вашего участия.</li>
+                        <li>Гарантия прохождения модерации и защита от теневых банов.</li>
+                    </ul>
+                </td>
             </tr>
         </table>
-        <div class="avoid-break" style="background: #0A1128; color: white; text-align: center; padding: 40px 20px; border-radius: 8px;"><div style="font-size: 18pt; font-family: 'Playfair Display', serif; margin-bottom: 15px; color: #C5A880;">Готовы делегировать и получать горячие лиды?</div><p style="font-size: 11.5pt; color: #cbd5e1; margin-bottom: 25px;">Свяжитесь с нами для бесплатной консультации и оценки сроков внедрения.</p><div style="font-size: 16pt; font-weight: bold; color: white; letter-spacing: 0.5px;">Telegram: @paulvenkov | pin100.ru</div></div>
+
+        <div class="avoid-break" style="background: #F8FAFC; border: 1px solid #E2E8F0; text-align: center; padding: 40px 20px; border-radius: 12px;">
+            <div style="font-size: 20pt; font-family: 'Playfair Display', serif; margin-bottom: 15px; color: #0A1128;">Готовы делегировать и получать горячие лиды?</div>
+            <p style="font-size: 12pt; color: #475569; margin-bottom: 30px;">Свяжитесь с нами для бесплатной консультации и оценки сроков внедрения.</p>
+            <div style="display: inline-block; background: #0A1128; color: #FFF; padding: 15px 30px; border-radius: 8px; font-size: 14pt; font-weight: 700; letter-spacing: 0.5px;">Telegram: @paulvenkov | pin100.ru</div>
+        </div>
         """
 
+    # --- ОФФЕР (ТОЛЬКО ДЛЯ LITE) ---
     if report_type == "LITE":
         html += f"""
-            <div class="page-break"></div><h1 style="margin-top: 50px;">Почему вам нужен<br>PRO-аудит?</h1><div class="gold-line"></div>
-            <p style="font-size: 11pt; margin-bottom: 20px;">В экспресс-версии мы подсветили лишь верхушку айсберга и показали реальную цифру ваших потерь. PRO-аудит — это инструмент тотального контроля и ваш пошаговый план по захвату топа в геосервисах.</p>
-            <div style="background-color: #F8FAFC; border-left: 4px solid #C5A880; padding: 15px; margin-bottom: 25px;"><b>Независимый контроль подрядчиков:</b> Узнайте реальное положение дел без «розовых очков» маркетинговых агентств. Отчет покажет, за что вы платите деньги и где подрядчики недорабатывают.</div>
-            <h3 style="color: #0A1128; font-family: 'Playfair Display', serif; font-size: 16pt;">Что внутри PRO-версии:</h3><ul style="margin-bottom: 25px; line-height: 1.6;"><li><b>Полная декомпозиция:</b> Разбор, значение и объяснение всех 79 параметров ранжирования Яндекса для вашей карточки.</li><li><b>Дорожная карта:</b> Пошаговый Экшн-план исправления ошибок по дням (от критических и срочных до долгосрочных).</li><li><b>Скрытые лайфхаки:</b> Практические фишки алгоритмов, которые знают только топ-5% бизнесов в топе выдачи.</li></ul>
-            <div class="bento-box avoid-break"><div class="bento-title">Инвестиция в рост:</div><div class="bento-value text-navy">4 880 ₽</div><p style="font-size: 10pt; color: #16A34A; margin-top: 10px; font-weight: bold;">🎁 Бонус: Если вы решите делегировать работу профессионалам и закажете заполнение карточки у нашей команды, мы полностью вычтем стоимость этого аудита из чека.</p></div>
-            <p style="font-size: 10.5pt; color: #475569; font-style: italic; margin-bottom: 20px;">* Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж от наших менеджеров. Вы обращаетесь к нам, только если сами надумаете.</p>
-            <div style="border-top: 1px solid #E2E8F0; padding-top: 20px;"><p style="font-size: 11pt;">Запросить полную версию без обязательств:</p><p style="font-size: 14pt; color: #0A1128;"><b>Telegram: @paulvenkov | pin100.ru</b></p></div>
+            <div class="page-break"></div>
+            <h1 style="margin-top: 50px;">Почему вам нужен<br>PRO-аудит?</h1>
+            <div class="gold-line-large"></div>
+            
+            <p style="font-size: 12pt; margin-bottom: 30px; color: #475569; line-height: 1.6;">
+                В экспресс-версии мы подсветили лишь верхушку айсберга и показали реальную цифру ваших потерь. PRO-аудит — это инструмент тотального контроля и ваш пошаговый план по захвату топа в геосервисах.
+            </p>
+            
+            <div class="bento-box avoid-break" style="border-left: 4px solid #C5A880; margin-bottom: 40px;">
+                <b style="color: #0A1128; font-size: 12pt;">Независимый контроль подрядчиков:</b><br>
+                Узнайте реальное положение дел без «розовых очков» маркетинговых агентств. Отчет покажет, за что вы платите деньги и где подрядчики недорабатывают.
+            </div>
+
+            <h3 style="color: #0A1128; font-family: 'Playfair Display', serif; font-size: 18pt; margin-bottom: 20px;">Что внутри PRO-версии:</h3>
+            <ul style="margin-bottom: 40px; line-height: 1.8; color: #334155; font-size: 11.5pt;">
+                <li><b>Полная декомпозиция:</b> Разбор, значение и объяснение всех 79 параметров ранжирования Яндекса для вашей карточки.</li>
+                <li><b>Дорожная карта:</b> Пошаговый Экшн-план исправления ошибок по дням (от критических и срочных до долгосрочных).</li>
+                <li><b>Скрытые лайфхаки:</b> Практические фишки алгоритмов, которые знают только топ-5% бизнесов в топе выдачи.</li>
+            </ul>
+            
+            <div class="bento-box avoid-break" style="background: #0A1128; color: #FFF; border: none;">
+                <div style="font-size: 12pt; color: #94A3B8; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px;">Инвестиция в рост:</div>
+                <div style="font-size: 32pt; font-weight: 700; color: #C5A880; margin-bottom: 15px;">4 880 ₽</div>
+                <p style="font-size: 10.5pt; color: #F1F5F9; line-height: 1.5; padding-top: 15px; border-top: 1px solid #334155;">
+                    🎁 <b>Бонус:</b> Если вы решите делегировать работу профессионалам и закажете заполнение карточки у нашей команды, мы полностью вычтем стоимость этого аудита из чека.
+                </p>
+            </div>
+            
+            <p style="font-size: 10pt; color: #94A3B8; font-style: italic; margin-bottom: 30px; margin-top: 20px;">
+                * Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж. Вы обращаетесь к нам, только если сами надумаете.
+            </p>
+            
+            <div style="text-align: center; margin-top: 40px;">
+                <p style="font-size: 12pt; color: #475569; margin-bottom: 15px;">Запросить полную версию без обязательств:</p>
+                <div style="display: inline-block; border: 2px solid #0A1128; color: #0A1128; padding: 12px 30px; border-radius: 8px; font-size: 14pt; font-weight: 700;">Telegram: @paulvenkov | pin100.ru</div>
+            </div>
         """
+
     html += "</body></html>"
     return HTML(string=html).write_pdf()
 
@@ -578,7 +669,6 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                         comm = "НЕТ"
                         final_reason = reason_error
                         
-                        # Переопределение для Репутации при отсутствии свежих отзывов за 6 мес
                         if raw_scores.get('META_NO_RECENT_REVIEWS') and group == 'Репутация' and code not in ['REP-27.1', 'REP-27.2', 'REP-28.1', 'REP-83.1', 'REP-85.1']:
                             final_reason = "За последние 6 месяцев нет ни одного свежего отзыва. Метрика обнулена, так как алгоритмам Яндекса нужны актуальные данные для ранжирования."
                         
@@ -616,7 +706,6 @@ if st.button("🚀 Запустить генерацию отчетов", type="
 
             st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно.".replace(',', ' '))
             
-            # РЕЖИМ РАЗРАБОТЧИКА С КНОПКОЙ СКАЧИВАНИЯ
             with st.expander("🛠 Режим разработчика: Сырой JSON от Яндекса (Проверка на галлюцинации)"):
                 json_string = json.dumps(data, ensure_ascii=False, indent=4)
                 st.download_button(
@@ -639,7 +728,6 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             with col_pro:
                 st.download_button(label="💎 Скачать PRO-аудит", data=pdf_pro_bytes, file_name=f"PIN100_PRO_{title.replace(' ', '_')}.pdf", mime="application/pdf", type="primary")
 
-            # --- ЭКРАННЫЙ АУДИТ ---
             st.markdown("---")
             st.markdown("### 🔎 Просмотр полного аудита")
             
