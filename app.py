@@ -337,7 +337,7 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
 # 3.5. TYPST: ГЕНЕРАЦИЯ ПРЕМИУМ PDF
 # ==========================================
 def clean_typography(text):
-    """Филологическая очистка текстов: тире, запятые и безопасный код для Typst"""
+    """Филологическая очистка текстов: тире, запятые и абсолютно безопасный код для Typst"""
     t = str(text)
     t = t.replace(" это ", " — это ")
     t = t.replace(" реквизитов красный ", " реквизитов — красный ")
@@ -347,12 +347,13 @@ def clean_typography(text):
     t = t.replace("контакты это", "контакты — это")
     t = t.replace("записи это", "записи — это")
     
-    # Жесткое экранирование ВСЕХ спецсимволов Typst
-    t = t.replace('\\', '\\\\')
-    t = t.replace('[', '\\[').replace(']', '\\]')
-    t = t.replace('$', '\\$')
-    t = t.replace('*', '\\*').replace('_', '\\_')
-    t = t.replace('@', '\\@')
+    # Жесткое экранирование ВСЕХ спецсимволов Typst для контентных блоков
+    t = t.replace('\\', r'\\')
+    t = t.replace('[', r'\[').replace(']', r'\]')
+    t = t.replace('{', r'\{').replace('}', r'\}')
+    t = t.replace('$', r'\$')
+    t = t.replace('*', r'\*').replace('_', r'\_')
+    t = t.replace('#', r'\#')
     
     return t
 
@@ -365,12 +366,14 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     lost_leads = int(client_leads * (dev / 100))
     ltv_loss = revenue_loss * 12
     
+    # Безопасное форматирование чисел (пробелы вместо запятых)
     rev_loss_fmt = f"{revenue_loss:,}".replace(',', ' ')
     cc_fmt = f"{client_check:,}".replace(',', ' ')
     ltv_loss_fmt = f"{ltv_loss:,}".replace(',', ' ')
     
     rev_str = f"- {rev_loss_fmt} ₽ / мес"
     
+    # Имя без спецсимволов для использования в ссылках и заголовках
     title_safe = str(title).replace('"', '').replace('[', '').replace(']', '').replace('\\', '').replace('#', '').replace('*', '').replace('$', '')
     doc_title = "Экспресс-аудит#linebreak()упущенной выручки" if report_type == "LITE" else "Экспертный аудит#linebreak()упущенной выручки"
 
@@ -652,7 +655,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 ]
 
 #v(20pt)
-#text(10pt, fill: rgb("94A3B8"), style: "italic")[* Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж. Вы обращаетесь к нам, только если сами надумаете.]
+#text(10pt, fill: rgb("94A3B8"), style: "italic")[Примечание: Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж. Вы обращаетесь к нам, только если сами надумаете.]
 
 #v(40pt)
 #align(center)[
