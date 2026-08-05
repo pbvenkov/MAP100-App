@@ -347,8 +347,13 @@ def clean_typography(text):
     t = t.replace("контакты это", "контакты — это")
     t = t.replace("записи это", "записи — это")
     
-    # Экранируем символы, которые могут сломать синтаксис Typst
-    t = t.replace('[', '\\[').replace(']', '\\]').replace('"', '\\"').replace('#', '\\#')
+    # Жесткое экранирование ВСЕХ спецсимволов Typst
+    t = t.replace('\\', '\\\\')
+    t = t.replace('[', '\\[').replace(']', '\\]')
+    t = t.replace('$', '\\$')
+    t = t.replace('*', '\\*').replace('_', '\\_')
+    t = t.replace('@', '\\@')
+    
     return t
 
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, report_type="PRO"):
@@ -360,14 +365,13 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     lost_leads = int(client_leads * (dev / 100))
     ltv_loss = revenue_loss * 12
     
-    # Форматируем числа безопасно, чтобы не сломать запятыми синтаксис внутри Typst
     rev_loss_fmt = f"{revenue_loss:,}".replace(',', ' ')
     cc_fmt = f"{client_check:,}".replace(',', ' ')
     ltv_loss_fmt = f"{ltv_loss:,}".replace(',', ' ')
     
     rev_str = f"- {rev_loss_fmt} ₽ / мес"
     
-    title_safe = str(title).replace('"', '').replace('[', '').replace(']', '').replace('\\', '').replace('#', '')
+    title_safe = str(title).replace('"', '').replace('[', '').replace(']', '').replace('\\', '').replace('#', '').replace('*', '').replace('$', '')
     doc_title = "Экспресс-аудит#linebreak()упущенной выручки" if report_type == "LITE" else "Экспертный аудит#linebreak()упущенной выручки"
 
     typ_source = f"""
@@ -379,7 +383,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #set text(size: 8pt, fill: rgb("94A3B8"))
     PIN100 Analytics | Строго конфиденциально
     #h(1fr)
-    Стр. #counter(page).display()
+    Стр. #context counter(page).display()
   ]
 )
 
@@ -598,7 +602,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(12pt, fill: rgb("475569"))[Напишите мне в Telegram кодовое слово *«{title_safe.upper()}»*, и я пришлю вам 3 ключевых шага, которые мы внедрим в первые 24 часа работы.]
         #v(25pt)
         #rect(fill: rgb("0A1128"), radius: 8pt, inset: (x: 30pt, y: 15pt))[
-            #text(14pt, weight: "bold", fill: white, tracking: 0.5pt)[Telegram: @paulvenkov | pin100.ru]
+            #text(14pt, weight: "bold", fill: white, tracking: 0.5pt)[Telegram: \\@paulvenkov | pin100.ru]
         ]
     ]
 ]
@@ -655,7 +659,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #text(12pt, fill: rgb("475569"))[Запросить полную версию без обязательств:]
     #v(15pt)
     #rect(stroke: 2pt + rgb("0A1128"), radius: 8pt, inset: (x: 30pt, y: 15pt))[
-        #text(14pt, weight: "bold", fill: rgb("0A1128"))[Telegram: @paulvenkov | pin100.ru]
+        #text(14pt, weight: "bold", fill: rgb("0A1128"))[Telegram: \\@paulvenkov | pin100.ru]
     ]
 ]
 """
