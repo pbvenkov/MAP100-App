@@ -339,7 +339,10 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
 def clean_typography(text):
     """Филологическая очистка текстов: тире, запятые и абсолютно безопасный код для Typst"""
     t = str(text)
-    t = t.replace(" это ", " — это ")
+    
+    # Заменяем двойные тире, дефисы и прочий мусор на одинарное длинное тире
+    t = re.sub(r'[-—]\s*[-—]', '—', t)
+    
     t = t.replace(" реквизитов красный ", " реквизитов — красный ")
     t = t.replace("сегодня вы", "сегодня, вы")
     t = t.replace("капитал за счет", "капитал, за счет")
@@ -375,7 +378,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     
     # Имя без спецсимволов для использования в ссылках и заголовках
     title_safe = str(title).replace('"', '').replace('[', '').replace(']', '').replace('\\', '').replace('#', '').replace('*', '').replace('$', '')
-    doc_title = "Экспресс-аудит#linebreak()упущенной выручки" if report_type == "LITE" else "Экспертный аудит#linebreak()упущенной выручки"
+    doc_title = "Экспертная оценка качества ведения#linebreak()карточки компании и работы#linebreak()с отзывами в Яндекс.Бизнес"
 
     typ_source = f"""
 #set document(title: "Аудит PIN100 - {title_safe}", author: "PIN100 Analytics")
@@ -397,12 +400,12 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(150pt)
 #text(16pt, fill: rgb("C5A880"), weight: "bold", tracking: 2pt)[PIN100 ANALYTICS]
 #v(10pt)
-#text(38pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[{doc_title}]
+#text(26pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[{doc_title}]
 #v(10pt)
 #line(length: 80mm, stroke: 3pt + rgb("C5A880"))
 #v(30pt)
 #text(14pt, fill: rgb("475569"))[
-  Подготовлено для бизнеса: #strong(text(fill: rgb("0A1128"))[{title_safe}]) #linebreak()
+  Подготовлено для: #strong(text(fill: rgb("0A1128"))[{title_safe}]) #linebreak()
   Дата аудита: #strong[{current_date}]
 ]
 #pagebreak()
@@ -455,7 +458,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(20pt)
 """
 
-    # --- ВОРОНКА ---
+    # --- ВОРОНКА С КОЛОНКАМИ УСПЕХОВ И ОШИБОК ---
     typ_source += """
 #pagebreak()
 #heading(level: 2)[Аналитика воронки продаж]
@@ -476,6 +479,12 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         max_score = sum(r.get('Max', 0.0) for r in block_items)
         percentage = (earned_score / max_score * 100) if max_score > 0 else 100
         bar_color = "16A34A" if percentage >= 80 else ("C5A880" if percentage >= 50 else "DC2626")
+        
+        passed_items = [clean_typography(r['Критерий']) for r in block_items if r['Результат'] == 'ДА']
+        failed_items_block = [clean_typography(r['Критерий']) for r in block_items if r['Результат'] == 'НЕТ']
+        
+        passed_list = "\n".join([f"  - {item}" for item in passed_items]) if passed_items else "  - Нет данных"
+        failed_list = "\n".join([f"  - {item}" for item in failed_items_block]) if failed_items_block else "  - Ошибок не найдено"
 
         typ_source += f"""
 #block(breakable: false)[
@@ -491,6 +500,27 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         ]
         #v(10pt)
         #text(10.5pt, fill: rgb("64748B"), style: "italic")[{block['desc']}]
+        #v(15pt)
+        #line(length: 100%, stroke: 0.5pt + rgb("E2E8F0"))
+        #v(15pt)
+        #grid(
+            columns: (1fr, 1fr),
+            gutter: 15pt,
+            [
+                #text(9pt, weight: "bold", fill: rgb("16A34A"), tracking: 0.5pt)[ПРАВИЛЬНО УКАЗАНЫ:]
+                #v(6pt)
+                #set text(size: 8.5pt, fill: rgb("475569"))
+                #set list(marker: text(fill: rgb("16A34A"))[✓])
+{passed_list}
+            ],
+            [
+                #text(9pt, weight: "bold", fill: rgb("DC2626"), tracking: 0.5pt)[ТРЕБУЮТ ВНИМАНИЯ:]
+                #v(6pt)
+                #set text(size: 8.5pt, fill: rgb("475569"))
+                #set list(marker: text(fill: rgb("DC2626"))[×])
+{failed_list}
+            ]
+        )
     ]
 ]
 #v(15pt)
@@ -560,109 +590,82 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         if not failed_items: 
             typ_source += "\n#rect(stroke: (left: 4pt + rgb(\"16A34A\")), fill: rgb(\"F8FAFC\"), inset: 20pt)[#text(14pt, weight: \"bold\", fill: rgb(\"16A34A\"))[Ваш профиль идеален! Все этапы дорожной карты выполнены.]]\n"
 
-        # --- СИЛЬНЫЙ ОФФЕР ---
-        typ_source += f"""
+    # --- УНИВЕРСАЛЬНЫЙ СИЛЬНЫЙ ОФФЕР (ДЛЯ LITE И PRO) ---
+    typ_source += f"""
 #pagebreak()
 #text(24pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Что делать дальше?]
 #v(5pt)
 #line(length: 80mm, stroke: 3pt + rgb("C5A880"))
 #v(20pt)
-#text(12pt, fill: rgb("475569"))[Вы получили подробный Экшн-план по захвату органического трафика. У вас есть два пути реализации:]
+#text(12pt, fill: rgb("475569"))[Выберите подходящий формат сотрудничества для кратного роста вашей выручки:]
 #v(30pt)
 
 #grid(
     columns: (1fr, 1fr),
     gutter: 20pt,
-    rect(width: 100%, fill: rgb("F8FAFC"), stroke: (top: 6pt + rgb("94A3B8"), bottom: 1pt + rgb("E2E8F0"), left: 1pt + rgb("E2E8F0"), right: 1pt + rgb("E2E8F0")), radius: 12pt, inset: 25pt)[
-        #text(16pt, weight: "bold", fill: rgb("64748B"))[Путь 1: Самостоятельно]
-        #v(20pt)
-        #set list(marker: text(fill: rgb("94A3B8"))[•])
+    row-gutter: 20pt,
+    
+    rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 25pt)[
+        #text(10pt, fill: rgb("64748B"), weight: "bold", tracking: 1pt)[TRIPWIRE]
+        #v(8pt)
+        #text(16pt, weight: "bold", fill: rgb("0A1128"))[Глубокий аудит]
+        #v(5pt)
+        #text(20pt, weight: "bold", fill: rgb("C5A880"))[4 880 ₽]
+        #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("475569"))[
-          - Передать этот документ вашему маркетологу или ассистенту.
-          - Потратить 30-45 дней на погружение в алгоритмы геосервисов.
-          - Взять на себя риски прохождения модерации Яндекса.
-        ]
+        #text(11pt, fill: rgb("475569"))[Глубокий аудит и пошаговый план для тех, кто хочет всё настраивать самостоятельно или проконтролировать своего маркетолога.]
     ],
-    rect(width: 100%, fill: rgb("0A1128"), stroke: (top: 6pt + rgb("C5A880"), bottom: 1pt + rgb("0A1128"), left: 1pt + rgb("0A1128"), right: 1pt + rgb("0A1128")), radius: 12pt, inset: 25pt)[
-        #text(16pt, weight: "bold", fill: rgb("C5A880"))[Путь 2: Сделаем за вас]
-        #v(20pt)
-        #set list(marker: text(fill: rgb("C5A880"))[✓])
+    
+    rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 25pt)[
+        #text(10pt, fill: rgb("64748B"), weight: "bold", tracking: 1pt)[CORE-ПРОДУКТ]
+        #v(8pt)
+        #text(16pt, weight: "bold", fill: rgb("0A1128"))[Базовая упаковка]
+        #v(5pt)
+        #text(20pt, weight: "bold", fill: rgb("C5A880"))[14 880 ₽]
+        #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("F8FAFC"))[
-          - Наша команда экспертов берет на себя *100% рутины*.
-          - Внедряем Экшн-план за *5-7 дней под ключ*. Вы платите за результат, а не за часы работы.
-          - Гарантия прохождения модерации и защита от теневых банов.
-        ]
+        #text(11pt, fill: rgb("475569"))[Аудит + полное исправление всех найденных ошибок нашими руками. Делаем профиль привлекательным и конверсионным.]
+    ],
+    
+    rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 25pt)[
+        #text(10pt, fill: rgb("64748B"), weight: "bold", tracking: 1pt)[RECURRING]
+        #v(8pt)
+        #text(16pt, weight: "bold", fill: rgb("0A1128"))[ИИ-помощник]
+        #v(5pt)
+        #text(20pt, weight: "bold", fill: rgb("C5A880"))[3 880 ₽ / мес]
+        #v(15pt)
+        #set par(leading: 0.5em)
+        #text(11pt, fill: rgb("475569"))[Системное поддержание рейтинга, умные ответы на отзывы и регулярный мониторинг активности.]
+    ],
+    
+    rect(width: 100%, fill: rgb("0A1128"), stroke: 1pt + rgb("0A1128"), radius: 12pt, inset: 25pt)[
+        #text(10pt, fill: rgb("94A3B8"), weight: "bold", tracking: 1pt)[VIP]
+        #v(8pt)
+        #text(16pt, weight: "bold", fill: rgb("FFFFFF"))[Всё под ключ]
+        #v(5pt)
+        #text(20pt, weight: "bold", fill: rgb("C5A880"))[28 880 ₽ / мес]
+        #v(15pt)
+        #set par(leading: 0.5em)
+        #text(11pt, fill: rgb("94A3B8"))[Максимальный пакет с гарантией ведения. Мы забираем на себя 100% рутины по продвижению на геосервисах.]
     ]
 )
 #v(40pt)
 
 #rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 30pt)[
     #align(center)[
-        #text(20pt, font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Готовы остановить потерю лидов?]
+        #text(20pt, font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Готовы кратно увеличить поток клиентов?]
         #v(15pt)
-        #text(12pt, fill: rgb("475569"))[Напишите мне в Telegram кодовое слово *«{title_safe.upper()}»*, и я пришлю вам 3 ключевых шага, которые мы внедрим в первые 24 часа работы.]
+        #text(12pt, fill: rgb("475569"))[Выберите тариф и напишите мне в Telegram кодовое слово *«{title_safe.upper()}»*.]
         #v(25pt)
-        #rect(fill: rgb("0A1128"), radius: 8pt, inset: (x: 30pt, y: 15pt))[
-            #text(14pt, weight: "bold", fill: white, tracking: 0.5pt)[Telegram: \\@paulvenkov | pin100.ru]
+        #link("https://t.me/paulvenkov")[
+            #rect(fill: rgb("0A1128"), radius: 8pt, inset: (x: 30pt, y: 15pt))[
+                #text(14pt, weight: "bold", fill: white, tracking: 0.5pt)[Написать в Telegram: \@paulvenkov]
+            ]
         ]
-    ]
-]
-"""
-
-    # --- LITE ОФФЕР ---
-    if report_type == "LITE":
-        typ_source += """
-#pagebreak()
-#text(24pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Почему вам нужен PRO-аудит?]
-#v(5pt)
-#line(length: 80mm, stroke: 3pt + rgb("C5A880"))
-#v(20pt)
-
-#set par(leading: 0.6em)
-#text(12pt, fill: rgb("475569"))[В экспресс-версии мы подсветили лишь верхушку айсберга и показали реальную цифру ваших потерь. PRO-аудит — это инструмент тотального контроля и ваш пошаговый план по захвату топа в геосервисах.]
-#v(20pt)
-
-#rect(width: 100%, fill: rgb("F8FAFC"), stroke: (left: 4pt + rgb("C5A880"), top: 1pt + rgb("E2E8F0"), bottom: 1pt + rgb("E2E8F0"), right: 1pt + rgb("E2E8F0")), inset: 20pt, radius: 4pt)[
-    #text(12pt, weight: "bold", fill: rgb("0A1128"))[Независимый контроль подрядчиков:]
-    #linebreak()
-    #v(5pt)
-    #set par(leading: 0.5em)
-    #text(11pt, fill: rgb("475569"))[Узнайте реальное положение дел без «розовых очков» маркетинговых агентств. Отчет покажет, за что вы платите деньги и где подрядчики недорабатывают.]
-]
-#v(30pt)
-
-#text(18pt, font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Что внутри PRO-версии:]
-#v(15pt)
-#set list(marker: text(fill: rgb("0A1128"))[•])
-#set par(leading: 0.6em)
-#text(11.5pt, fill: rgb("334155"))[
-  - *Полная декомпозиция:* Разбор, значение и объяснение всех параметров ранжирования Яндекса для вашей карточки.
-  - *Дорожная карта:* Пошаговый Экшн-план исправления ошибок по дням.
-  - *Скрытые лайфхаки:* Практические фишки алгоритмов, которые знают только топ-5% бизнесов в топе выдачи.
-]
-#v(30pt)
-
-#rect(width: 100%, fill: rgb("0A1128"), radius: 12pt, inset: 30pt)[
-    #text(12pt, fill: rgb("94A3B8"), weight: "bold", tracking: 1pt)[ИНВЕСТИЦИЯ В РОСТ:]
-    #v(10pt)
-    #text(32pt, weight: "bold", fill: rgb("C5A880"))[4 880 ₽]
-    #v(15pt)
-    #line(length: 100%, stroke: 1pt + rgb("334155"))
-    #v(15pt)
-    #text(11pt, fill: rgb("F1F5F9"))[🎁 *Бонус:* Если вы решите делегировать работу профессионалам и закажете заполнение карточки у нашей команды, мы полностью вычтем стоимость этого аудита из чека.]
-]
-
-#v(20pt)
-#text(10pt, fill: rgb("94A3B8"), style: "italic")[Примечание: Мы ценим ваш комфорт: никаких спам-рассылок, холодных прозвонов и агрессивных продаж. Вы обращаетесь к нам, только если сами надумаете.]
-
-#v(40pt)
-#align(center)[
-    #text(12pt, fill: rgb("475569"))[Запросить полную версию без обязательств:]
-    #v(15pt)
-    #rect(stroke: 2pt + rgb("0A1128"), radius: 8pt, inset: (x: 30pt, y: 15pt))[
-        #text(14pt, weight: "bold", fill: rgb("0A1128"))[Telegram: \\@paulvenkov | pin100.ru]
+        #v(15pt)
+        #link("https://pin100.ru")[
+            #text(12pt, fill: rgb("0A1128"), weight: "bold", underline: true)[Перейти на сайт pin100.ru]
+        ]
     ]
 ]
 """
