@@ -13,8 +13,6 @@ import google.generativeai as genai
 from concurrent.futures import ThreadPoolExecutor
 import base64
 import tempfile
-
-# НОВЫЙ ДВИЖОК ДЛЯ ПРЕМИУМ-ВЕРСТКИ
 import typst
 
 # ==========================================
@@ -339,14 +337,18 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
 # 3.5. TYPST: ГЕНЕРАЦИЯ ПРЕМИУМ PDF
 # ==========================================
 def clean_typography(text):
-    """Филологическая очистка текстов от базы данных"""
-    t = text.replace(" это ", " — это ")
+    """Филологическая очистка текстов: тире, запятые и безопасный код для Typst"""
+    t = str(text)
+    t = t.replace(" это ", " — это ")
     t = t.replace(" реквизитов красный ", " реквизитов — красный ")
     t = t.replace("сегодня вы", "сегодня, вы")
     t = t.replace("капитал за счет", "капитал, за счет")
     t = t.replace("описание это", "описание — это")
     t = t.replace("контакты это", "контакты — это")
     t = t.replace("записи это", "записи — это")
+    
+    # Экранируем символы, которые могут сломать синтаксис Typst
+    t = t.replace('[', '\\[').replace(']', '\\]').replace('"', '\\"').replace('#', '\\#')
     return t
 
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, report_type="PRO"):
@@ -357,10 +359,16 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     lost_clients = int(round(dev / 10))
     lost_leads = int(client_leads * (dev / 100))
     ltv_loss = revenue_loss * 12
-    rev_str = f"- {revenue_loss:,}".replace(',', ' ') + " ₽ / мес"
     
-    title_safe = title.replace('"', '').replace('[', '\\[').replace(']', '\\]')
-    doc_title = "Экспресс-аудит\\nупущенной выручки" if report_type == "LITE" else "Экспертный аудит\\nупущенной выручки"
+    # Форматируем числа безопасно, чтобы не сломать запятыми синтаксис внутри Typst
+    rev_loss_fmt = f"{revenue_loss:,}".replace(',', ' ')
+    cc_fmt = f"{client_check:,}".replace(',', ' ')
+    ltv_loss_fmt = f"{ltv_loss:,}".replace(',', ' ')
+    
+    rev_str = f"- {rev_loss_fmt} ₽ / мес"
+    
+    title_safe = str(title).replace('"', '').replace('[', '').replace(']', '').replace('\\', '').replace('#', '')
+    doc_title = "Экспресс-аудит#linebreak()упущенной выручки" if report_type == "LITE" else "Экспертный аудит#linebreak()упущенной выручки"
 
     typ_source = f"""
 #set document(title: "Аудит PIN100 - {title_safe}", author: "PIN100 Analytics")
@@ -382,12 +390,12 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(150pt)
 #text(16pt, fill: rgb("C5A880"), weight: "bold", tracking: 2pt)[PIN100 ANALYTICS]
 #v(10pt)
-#heading(level: 1, size: 38pt)[{doc_title}]
+#text(38pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[{doc_title}]
 #v(10pt)
 #line(length: 80mm, stroke: 3pt + rgb("C5A880"))
 #v(30pt)
 #text(14pt, fill: rgb("475569"))[
-  Подготовлено для бизнеса: #strong(text(fill: rgb("0A1128"))[{title_safe}]) \\
+  Подготовлено для бизнеса: #strong(text(fill: rgb("0A1128"))[{title_safe}]) #linebreak()
   Дата аудита: #strong[{current_date}]
 ]
 #pagebreak()
@@ -399,17 +407,20 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   columns: (1fr, 1fr),
   gutter: 20pt,
   rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 8pt, inset: 20pt)[
-    #text(10.5pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ИНДЕКС ГОТОВНОСТИ ПРОФИЛЯ]\\
+    #text(10.5pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ИНДЕКС ГОТОВНОСТИ ПРОФИЛЯ]
+    #linebreak()
     #v(8pt)
     #text(28pt, weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)} / 100]
   ],
   rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 8pt, inset: 20pt)[
-    #text(10.5pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[УПУЩЕННАЯ ВЫРУЧКА (LOST REVENUE)]\\
+    #text(10.5pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[УПУЩЕННАЯ ВЫРУЧКА (LOST REVENUE)]
+    #linebreak()
     #v(8pt)
     #text(28pt, weight: "bold", fill: rgb("DC2626"))[{rev_str}]
   ]
 )
 #v(20pt)
+#set par(leading: 0.6em)
 #text(12pt, fill: rgb("334155"))[*Вывод эксперта:* Отличное качество вашего продукта теряется из-за слабого присутствия в геосервисах. Из-за критических ошибок в заполнении карточки и отсутствии системной работы с отзывами вы уступаете позиции в поиске и ежемесячно отдаете горячих клиентов своим конкурентам.]
 #v(30pt)
 
@@ -420,8 +431,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 
     blocks_fin = [
         ("А. Видимость бизнеса (Кто забирает клиентов)", f"Ваш профиль соответствует стандартам площадки лишь на *{round(score, 1)}%*. В реалиях алгоритмов Яндекса это означает, что из каждых 10 человек, которые прямо сейчас ищут ваши услуги, *{lost_clients}* до вас просто не доходят. Они видят в топе конкурентов с более грамотно упакованными карточками и оставляют деньги там."),
-        ("Б. Цена простоя (Ваши прямые убытки)", f"В вашей нише через геосервисы ежемесячно проходит около *{client_leads}* целевых запросов. Из-за пробелов в оптимизации профиля мимо вас проходит порядка *{lost_leads}* сделок. При вашем среднем чеке ({client_check:,} ₽) это превращается в кассовый разрыв на #text(fill: rgb(\"DC2626\"), weight: \"bold\")[{revenue_loss:,} ₽] каждый месяц.".replace(',', ' ')),
-        ("В. Скрытая угроза (Недополученный LTV)", f"Привлеченный клиент — это не разовая сделка, он остается с бизнесом надолго (в среднем от 12 месяцев). Упуская заказчиков сегодня, вы лишаете компанию будущих регулярных платежей. В годовом выражении эта недополученная выручка достигает #text(fill: rgb(\"DC2626\"), weight: \"bold\")[{ltv_loss:,} ₽]. Это капитал, за счет которого прямо сейчас масштабируются ваши конкуренты.".replace(',', ' '))
+        ("Б. Цена простоя (Ваши прямые убытки)", f"В вашей нише через геосервисы ежемесячно проходит около *{client_leads}* целевых запросов. Из-за пробелов в оптимизации профиля мимо вас проходит порядка *{lost_leads}* сделок. При вашем среднем чеке ({cc_fmt} ₽) это превращается в кассовый разрыв на #text(fill: rgb(\"DC2626\"), weight: \"bold\")[{rev_loss_fmt} ₽] каждый месяц."),
+        ("В. Скрытая угроза (Недополученный LTV)", f"Привлеченный клиент — это не разовая сделка, он остается с бизнесом надолго (в среднем от 12 месяцев). Упуская заказчиков сегодня, вы лишаете компанию будущих регулярных платежей. В годовом выражении эта недополученная выручка достигает #text(fill: rgb(\"DC2626\"), weight: \"bold\")[{ltv_loss_fmt} ₽]. Это капитал, за счет которого прямо сейчас масштабируются ваши конкуренты.")
     ]
     
     for bt, text in blocks_fin:
@@ -431,6 +442,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #v(5pt)
     #line(length: 40mm, stroke: 2pt + rgb("C5A880"))
     #v(10pt)
+    #set par(leading: 0.6em)
     #text(11.5pt, fill: rgb("475569"))[{text}]
 ]
 #v(20pt)
@@ -481,7 +493,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     if report_type == "PRO":
         typ_source += """
 #pagebreak()
-#heading(level: 1)[Пошаговая дорожная карта]
+#text(24pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Пошаговая дорожная карта]
 #v(5pt)
 #line(length: 80mm, stroke: 3pt + rgb("C5A880"))
 #v(20pt)
@@ -521,7 +533,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 """
                     for item in items:
                         reason = clean_typography(item['Обоснование'])
-                        crit = item['Критерий'].replace('[', '\\[').replace(']', '\\]')
+                        crit = clean_typography(item['Критерий'])
                         typ_source += f"""
 #block(breakable: false)[
     #grid(
@@ -529,9 +541,10 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         gutter: 10pt,
         circle(radius: 3pt, fill: rgb("{stage_info['color']}")),
         [
-            #text(12pt, weight: "bold", fill: rgb("0A1128"))[{crit}]\\
+            #text(12pt, weight: "bold", fill: rgb("0A1128"))[{crit}]
             #v(5pt)
-            #text(10.5pt, fill: rgb("475569"), lineclicks: 1.5)[{reason}]
+            #set par(leading: 0.5em)
+            #text(10.5pt, fill: rgb("475569"))[{reason}]
         ]
     )
 ]
@@ -543,7 +556,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         # --- СИЛЬНЫЙ ОФФЕР ---
         typ_source += f"""
 #pagebreak()
-#heading(level: 1)[Что делать дальше?]
+#text(24pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Что делать дальше?]
 #v(5pt)
 #line(length: 80mm, stroke: 3pt + rgb("C5A880"))
 #v(20pt)
@@ -553,20 +566,22 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #grid(
     columns: (1fr, 1fr),
     gutter: 20pt,
-    rect(width: 100%, fill: rgb("F8FAFC"), stroke: (top: 6pt + rgb("94A3B8"), rest: 1pt + rgb("E2E8F0")), radius: 12pt, inset: 25pt)[
+    rect(width: 100%, fill: rgb("F8FAFC"), stroke: (top: 6pt + rgb("94A3B8"), bottom: 1pt + rgb("E2E8F0"), left: 1pt + rgb("E2E8F0"), right: 1pt + rgb("E2E8F0")), radius: 12pt, inset: 25pt)[
         #text(16pt, weight: "bold", fill: rgb("64748B"))[Путь 1: Самостоятельно]
         #v(20pt)
         #set list(marker: text(fill: rgb("94A3B8"))[•])
+        #set par(leading: 0.5em)
         #text(11pt, fill: rgb("475569"))[
           - Передать этот документ вашему маркетологу или ассистенту.
           - Потратить 30-45 дней на погружение в алгоритмы геосервисов.
           - Взять на себя риски прохождения модерации Яндекса.
         ]
     ],
-    rect(width: 100%, fill: rgb("0A1128"), stroke: (top: 6pt + rgb("C5A880"), rest: 1pt + rgb("0A1128")), radius: 12pt, inset: 25pt)[
+    rect(width: 100%, fill: rgb("0A1128"), stroke: (top: 6pt + rgb("C5A880"), bottom: 1pt + rgb("0A1128"), left: 1pt + rgb("0A1128"), right: 1pt + rgb("0A1128")), radius: 12pt, inset: 25pt)[
         #text(16pt, weight: "bold", fill: rgb("C5A880"))[Путь 2: Сделаем за вас]
         #v(20pt)
         #set list(marker: text(fill: rgb("C5A880"))[✓])
+        #set par(leading: 0.5em)
         #text(11pt, fill: rgb("F8FAFC"))[
           - Наша команда экспертов берет на себя *100% рутины*.
           - Внедряем Экшн-план за *5-7 дней под ключ*. Вы платите за результат, а не за часы работы.
@@ -583,7 +598,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(12pt, fill: rgb("475569"))[Напишите мне в Telegram кодовое слово *«{title_safe.upper()}»*, и я пришлю вам 3 ключевых шага, которые мы внедрим в первые 24 часа работы.]
         #v(25pt)
         #rect(fill: rgb("0A1128"), radius: 8pt, inset: (x: 30pt, y: 15pt))[
-            #text(14pt, weight: "bold", fill: white, tracking: 0.5pt)[Telegram: \@paulvenkov | pin100.ru]
+            #text(14pt, weight: "bold", fill: white, tracking: 0.5pt)[Telegram: @paulvenkov | pin100.ru]
         ]
     ]
 ]
@@ -593,17 +608,20 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     if report_type == "LITE":
         typ_source += """
 #pagebreak()
-#heading(level: 1)[Почему вам нужен PRO-аудит?]
+#text(24pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Почему вам нужен PRO-аудит?]
 #v(5pt)
 #line(length: 80mm, stroke: 3pt + rgb("C5A880"))
 #v(20pt)
 
+#set par(leading: 0.6em)
 #text(12pt, fill: rgb("475569"))[В экспресс-версии мы подсветили лишь верхушку айсберга и показали реальную цифру ваших потерь. PRO-аудит — это инструмент тотального контроля и ваш пошаговый план по захвату топа в геосервисах.]
 #v(20pt)
 
-#rect(width: 100%, fill: rgb("F8FAFC"), stroke: (left: 4pt + rgb("C5A880"), rest: 1pt + rgb("E2E8F0")), inset: 20pt, radius: 4pt)[
-    #text(12pt, weight: "bold", fill: rgb("0A1128"))[Независимый контроль подрядчиков:]\\
+#rect(width: 100%, fill: rgb("F8FAFC"), stroke: (left: 4pt + rgb("C5A880"), top: 1pt + rgb("E2E8F0"), bottom: 1pt + rgb("E2E8F0"), right: 1pt + rgb("E2E8F0")), inset: 20pt, radius: 4pt)[
+    #text(12pt, weight: "bold", fill: rgb("0A1128"))[Независимый контроль подрядчиков:]
+    #linebreak()
     #v(5pt)
+    #set par(leading: 0.5em)
     #text(11pt, fill: rgb("475569"))[Узнайте реальное положение дел без «розовых очков» маркетинговых агентств. Отчет покажет, за что вы платите деньги и где подрядчики недорабатывают.]
 ]
 #v(30pt)
@@ -611,6 +629,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #text(18pt, font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Что внутри PRO-версии:]
 #v(15pt)
 #set list(marker: text(fill: rgb("0A1128"))[•])
+#set par(leading: 0.6em)
 #text(11.5pt, fill: rgb("334155"))[
   - *Полная декомпозиция:* Разбор, значение и объяснение всех параметров ранжирования Яндекса для вашей карточки.
   - *Дорожная карта:* Пошаговый Экшн-план исправления ошибок по дням.
@@ -636,28 +655,22 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #text(12pt, fill: rgb("475569"))[Запросить полную версию без обязательств:]
     #v(15pt)
     #rect(stroke: 2pt + rgb("0A1128"), radius: 8pt, inset: (x: 30pt, y: 15pt))[
-        #text(14pt, weight: "bold", fill: rgb("0A1128"))[Telegram: \@paulvenkov | pin100.ru]
+        #text(14pt, weight: "bold", fill: rgb("0A1128"))[Telegram: @paulvenkov | pin100.ru]
     ]
 ]
 """
 
-    # Компиляция Typst в PDF
     with tempfile.NamedTemporaryFile(suffix=".typ", delete=False, mode="w", encoding="utf-8") as tf:
         tf.write(typ_source)
         typ_path = tf.name
         
-    pdf_path = typ_path.replace(".typ", ".pdf")
-    
     try:
-        typst.compile(typ_path, output=pdf_path)
-        with open(pdf_path, "rb") as pdf_file:
-            pdf_bytes = pdf_file.read()
+        pdf_bytes = typst.compile(typ_path)
     except Exception as e:
         st.error(f"Ошибка компиляции Typst: {e}")
         pdf_bytes = b""
     finally:
         if os.path.exists(typ_path): os.remove(typ_path)
-        if os.path.exists(pdf_path): os.remove(pdf_path)
         
     return pdf_bytes
 
@@ -782,7 +795,8 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             
             col_lite, col_pro = st.columns(2)
             with col_lite:
-                st.download_button(label="📄 Скачать Экспресс-аудит (LITE)", data=pdf_lite_bytes, file_name=f"PIN100_LITE_{title.replace(' ', '_')}.pdf", mime="application/pdf")
+                if pdf_lite_bytes:
+                    st.download_button(label="📄 Скачать Экспресс-аудит (LITE)", data=pdf_lite_bytes, file_name=f"PIN100_LITE_{title.replace(' ', '_')}.pdf", mime="application/pdf")
             with col_pro:
                 if pdf_pro_bytes:
                     st.download_button(label="💎 Скачать PRO-аудит", data=pdf_pro_bytes, file_name=f"PIN100_PRO_{title.replace(' ', '_')}.pdf", mime="application/pdf", type="primary")
