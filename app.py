@@ -22,7 +22,7 @@ PROJECT_NAME = "PIN100"
 EXPERT_TITLE = "Генератор B2B Воронки (LITE / PRO Отчеты)"
 
 # ==========================================
-# 1. НАСТРОЙКИ СЕКРЕТОВ И API
+# 1. СЕКРЕТЫ И ИНИЦИАЛИЗАЦИЯ ИИ
 # ==========================================
 APIFY_API_TOKEN = st.secrets.get("APIFY_API_TOKEN", "")
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
@@ -44,7 +44,7 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
         except Exception: pass
 
 # ==========================================
-# 1.5. БАЗА ДАННЫХ НИШ И БЕНЧМАРКОВ
+# 2. БАЗЫ ДАННЫХ И GOOGLE SHEETS
 # ==========================================
 NICHE_ECONOMICS = {
     "HORECA": {"leads": 150, "check": 2000, "label": "HORECA"},
@@ -56,89 +56,86 @@ NICHE_ECONOMICS = {
     "OTHER": {"leads": 50, "check": 5000, "label": "Прочее"}
 }
 
-def determine_niche_by_expert(title, category):
-    if not expert_engine: raise Exception("Модуль экспертной оценки не инициализирован.")
-    prompt = f"""Проведи экспертную оценку бизнеса по названию "{title}" и категории "{category}".
-ВНИМАНИЕ: Если в категории есть слова "стоматология", "клиника", "медицина", "красота", "салон" - это СТРОГО BEAUTY_MEDICAL.
-Определи ОДИН наиболее подходящий сегмент: HORECA, B2B, RETAIL, AUTO, SERVICES, BEAUTY_MEDICAL, OTHER.
-Верни ТОЛЬКО ОДНО СЛОВО - ключ на английском."""
+def get_google_credentials():
+    creds_str = st.secrets.get("GCP_CREDENTIALS", "{}")
+    creds_dict = json.loads(creds_str)
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    return Credentials.from_service_account_info(creds_dict, scopes=scopes)
+
+# Улучшение 1: Кэширование базы данных для защиты от Rate Limits
+@st.cache_data(ttl=300) 
+def fetch_cached_database():
     try:
-        response = expert_engine.generate_content(prompt)
-        key = response.text.strip().upper()
-        for v in ["BEAUTY_MEDICAL", "HORECA", "B2B", "RETAIL", "AUTO", "SERVICES", "OTHER"]:
-            if v in key: return v
-        return "OTHER"
+        client = gspread.authorize(get_google_credentials())
+        doc = client.open_by_url(st.secrets["SPREADSHEET_URL"])
+        
+        raw_rules = doc.worksheet("Rules").get_all_values()
+        rules = [dict(zip(raw_rules[0], row)) for row in raw_rules[1:] if any(row)]
+        
+        raw_prompts = doc.worksheet("Prompts").get_all_values()
+        prompts = [dict(zip(raw_prompts[0], row)) for row in raw_prompts[1:] if any(row)]
+        
+        return rules, prompts
     except Exception as e:
-        raise Exception(f"Сбой модуля экспертной оценки (Ниша): {str(e)}")
+        st.error(f"Ошибка чтения Google Sheets: {e}")
+        return [], []
+
+# Улучшение 4: Автосохранение лидов и результатов в базу
+def save_audit_to_sheets(url, title, niche, total_score, results_data):
+    try:
+        client = gspread.authorize(get_google_credentials())
+        doc = client.open_by_url(st.secrets["SPREADSHEET_URL"])
+        ws = doc.worksheet("Results")
+        headers = ws.row_values(1)
+        
+        row_dict = {
+            "Дата": datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M:%S"),
+            "Ссылка": url,
+            "Компания": title,
+            "Ниша": niche,
+            "Общий балл": str(round(total_score, 1)).replace('.', ',')
+        }
+        
+        for r in results_data:
+            code = r.get("Код")
+            if code:
+                row_dict[code] = str(round(r.get("Earned", 0), 1)).replace('.', ',')
+                
+        row_to_append = [row_dict.get(h, "") for h in headers]
+        ws.append_row(row_to_append)
+    except Exception as e:
+        pass # Тихо игнорируем ошибку записи, чтобы не прерывать показ отчета клиенту
 
 # ==========================================
-# 2. ПАРСЕР GOOGLE ТАБЛИЦЫ И APIFY
+# 3. ПАРСЕР APIFY
 # ==========================================
-@st.cache_resource(ttl=600) 
-def init_google_sheets():
-    try:
-        creds_str = st.secrets.get("GCP_CREDENTIALS", "{}")
-        creds_dict = json.loads(creds_str)
-        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        return gspread.authorize(credentials).open_by_url(st.secrets["SPREADSHEET_URL"])
-    except Exception as e:
-        st.error(f"Ошибка подключения к Google Sheets: {e}")
-        st.stop()
-
-def get_database_from_sheets():
-    doc = init_google_sheets()
-    raw_rules = doc.worksheet("Rules").get_all_values()
-    headers_rules = raw_rules[0]
-    rules = [dict(zip(headers_rules, row)) for row in raw_rules[1:] if any(row)]
-    
-    raw_prompts = doc.worksheet("Prompts").get_all_values()
-    headers_prompts = raw_prompts[0]
-    prompts = [dict(zip(headers_prompts, row)) for row in raw_prompts[1:] if any(row)]
-    
-    return rules, prompts, doc
-
 def fetch_apify_data(yandex_url):
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
     run_req = requests.post(run_url, json={"startUrls": [{"url": yandex_url}], "maxItems": 1}).json()
     if 'error' in run_req: 
-        err_msg = f"Ошибка Apify API: {run_req['error']}"
-        send_telegram_alert(err_msg, yandex_url)
-        raise Exception(err_msg)
+        raise Exception(f"Ошибка Apify API: {run_req['error']}")
         
     run_id, dataset_id = run_req['data']['id'], run_req['data']['defaultDatasetId']
     status, retries = "RUNNING", 0
     
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
-        if retries >= 35: 
-            err_msg = "Таймаут парсера Apify (Яндекс слишком долго отвечает)."
-            send_telegram_alert(err_msg, yandex_url)
-            raise Exception(err_msg)
+        if retries >= 35: raise Exception("Таймаут парсера Apify (Яндекс слишком долго отвечает).")
         time.sleep(5)
         status = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}").json()['data']['status']
         retries += 1
         
-    if status != "SUCCEEDED": 
-        err_msg = f"Парсер упал со статусом {status}."
-        send_telegram_alert(err_msg, yandex_url)
-        raise Exception(err_msg)
+    if status != "SUCCEEDED": raise Exception(f"Парсер упал со статусом {status}.")
         
     dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}").json()
-    if not dataset: 
-        err_msg = "Яндекс отдал пустой результат (сработала капча или блокировка парсера)."
-        send_telegram_alert(err_msg, yandex_url)
-        raise Exception(err_msg)
-        
+    if not dataset: raise Exception("Яндекс отдал пустой результат (вероятна капча).")
+    
     data = dataset[0]
     if not data.get('title') or len(str(data.get('title'))) < 2:
-        err_msg = "Яндекс вернул пустую заглушку вместо реальной карточки бизнеса. Вероятно, включилась защита от ботов."
-        send_telegram_alert(err_msg, yandex_url)
-        raise Exception(err_msg)
-        
+        raise Exception("Яндекс вернул пустую заглушку вместо карточки.")
     return data
 
 # ==========================================
-# 3. АЛГОРИТМЫ ОЦЕНКИ PIN100
+# 4. АЛГОРИТМЫ ОЦЕНКИ И ИИ
 # ==========================================
 def get_safe_list(data, keys):
     res = []
@@ -153,8 +150,28 @@ def parse_yandex_date(date_val):
         if isinstance(date_val, (int, float)) or (isinstance(date_val, str) and str(date_val).isdigit()):
             return datetime.fromtimestamp(int(date_val)/1000, tz=timezone.utc)
         return datetime.fromisoformat(str(date_val).replace('Z', '+00:00'))
-    except:
-        return None
+    except: return None
+
+# Улучшение 2: Вынос промпта Ниши в Таблицу
+def determine_niche_by_expert(title, category, prompts_data):
+    if not expert_engine: raise Exception("ИИ не инициализирован.")
+    
+    niche_prompt = next((p.get("Промпт для ИИ") for p in prompts_data if p.get("Код") == "NICHE_PROMPT"), None)
+    if not niche_prompt:
+        niche_prompt = """Проведи экспертную оценку бизнеса по названию "{title}" и категории "{category}".
+ВНИМАНИЕ: Если в категории есть слова "стоматология", "клиника", "медицина", "красота", "салон" - это СТРОГО BEAUTY_MEDICAL.
+Определи ОДИН наиболее подходящий сегмент: HORECA, B2B, RETAIL, AUTO, SERVICES, BEAUTY_MEDICAL, OTHER.
+Верни ТОЛЬКО ОДНО СЛОВО - ключ на английском."""
+    
+    prompt = niche_prompt.replace("{title}", title).replace("{category}", category)
+    try:
+        response = expert_engine.generate_content(prompt)
+        key = response.text.strip().upper()
+        for v in ["BEAUTY_MEDICAL", "HORECA", "B2B", "RETAIL", "AUTO", "SERVICES", "OTHER"]:
+            if v in key: return v
+        return "OTHER"
+    except Exception as e:
+        raise Exception(f"Сбой ИИ (Ниша): {str(e)}")
 
 def calculate_hard_facts(data):
     scores = {}
@@ -231,7 +248,6 @@ def calculate_hard_facts(data):
     reviews_raw = data.get('reviews') or []
     six_months_ago = now - timedelta(days=180)
     recent_reviews = []
-    
     for r in reviews_raw:
         if not isinstance(r, dict): continue
         r_date = parse_yandex_date(r.get('date') or r.get('time'))
@@ -246,8 +262,7 @@ def calculate_hard_facts(data):
         has_unanswered_negative = False
         
         latest_date = parse_yandex_date(recent_reviews[0].get('date'))
-        if latest_date and (now - latest_date).days <= 14:
-            scores['REP-29.1'] = True
+        if latest_date and (now - latest_date).days <= 14: scores['REP-29.1'] = True
             
         for r in recent_reviews[:20]:
             r_rating = float(r.get('rating') or 0.0)
@@ -256,11 +271,9 @@ def calculate_hard_facts(data):
             if reply_text:
                 replied += 1
                 if r_rating >= 4.0: has_positive_replied = True
-                
                 bc_date = parse_yandex_date(r.get('businessCommentDate'))
                 rev_date = parse_yandex_date(r.get('date'))
-                if bc_date and rev_date and (bc_date - rev_date).days <= 3:
-                    scores['REP-30.2'] = True
+                if bc_date and rev_date and (bc_date - rev_date).days <= 3: scores['REP-30.2'] = True
             else:
                 if r_rating <= 3.0: has_unanswered_negative = True
                 
@@ -274,7 +287,7 @@ def calculate_hard_facts(data):
         
     return scores
 
-def calculate_dynamic_expert_rules(data, prompts_data, target_url):
+def calculate_dynamic_expert_rules(data, prompts_data):
     scores = {}
     if not expert_engine or not prompts_data: return scores
     
@@ -286,8 +299,7 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
     recent_reviews = []
     for r in data.get('reviews') or []:
         r_date = parse_yandex_date(r.get('date'))
-        if r_date and r_date >= six_months_ago:
-            recent_reviews.append(r)
+        if r_date and r_date >= six_months_ago: recent_reviews.append(r)
             
     reviews_text = ""
     for r in recent_reviews[:10]:
@@ -299,7 +311,7 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
     prods = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
     prods_text = ", ".join([str(p.get('name')) for p in prods if isinstance(p, dict)][:20])
 
-    rules_list = [f'"{p.get("Код", "").strip()}": {p.get("Промпт для ИИ", "").strip()}' for p in prompts_data if p.get('Код', '').strip()]
+    rules_list = [f'"{p.get("Код", "").strip()}": {p.get("Промпт для ИИ", "").strip()}' for p in prompts_data if p.get('Код', '').strip() and p.get('Код') != 'NICHE_PROMPT']
     if not rules_list: return scores
 
     batch_prompt = f"""
@@ -307,16 +319,13 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
 Название: {title}
 Описание: {desc}
 Товары/Услуги: {prods_text}
-
 Последние отзывы и ответы:
 {reviews_text[:2000]} 
 
 Критерии для оценки:
 {chr(10).join(rules_list)}
 
-ВНИМАНИЕ! Ты - строгий аудитор. 
-Верни строго JSON формата {{"CODE": true/false}}. 
-В ответе ОБЯЗАТЕЛЬНО должны присутствовать абсолютно все {len(rules_list)} кодов из списка критериев. Не теряй ни одной метрики. Никакого текста, кроме JSON.
+ВНИМАНИЕ! Верни строго JSON формата {{"CODE": true/false}}. В ответе ОБЯЗАТЕЛЬНО должны присутствовать абсолютно все кодов из списка критериев.
 """
     try:
         response = expert_engine.generate_content(batch_prompt)
@@ -325,24 +334,22 @@ def calculate_dynamic_expert_rules(data, prompts_data, target_url):
             res_json = json.loads(match.group(0))
             for code, result in res_json.items():
                 if str(result).lower() in ["1", "true"]: scores[code] = True
-        else:
-            raise ValueError("Ответ ИИ не содержит валидного JSON.")
-    except Exception as e:
-        err_msg = f"Сбой обработки Gemini (AI): {str(e)}"
-        send_telegram_alert(err_msg, target_url)
-        st.warning(f"🤖 **ИИ временно недоступен:** {err_msg}. Сложные метрики не были оценены.")
+    except: pass
     return scores
 
 # ==========================================
-# 3.5. TYPST: ГЕНЕРАЦИЯ ПРЕМИУМ PDF
+# 5. ТИПОГРАФИКА И PDF (TYPST)
 # ==========================================
 def clean_typography(text):
-    """Филологическая очистка текстов: тире, запятые и абсолютно безопасный код для Typst"""
+    """Филологическая очистка текстов и безопасность Typst"""
     t = str(text)
     
-    # Заменяем двойные тире, дефисы и прочий мусор на одинарное длинное тире
+    # 1. Избавляемся от "мусорных" тире и пробелов
     t = re.sub(r'[-—]\s*[-—]', '—', t)
+    t = t.replace(" - ", " — ")
     
+    # 2. Филологические правки
+    t = t.replace(" это ", " — это ")
     t = t.replace(" реквизитов красный ", " реквизитов — красный ")
     t = t.replace("сегодня вы", "сегодня, вы")
     t = t.replace("капитал за счет", "капитал, за счет")
@@ -350,14 +357,13 @@ def clean_typography(text):
     t = t.replace("контакты это", "контакты — это")
     t = t.replace("записи это", "записи — это")
     
-    # Жесткое экранирование ВСЕХ спецсимволов Typst для контентных блоков
+    # 3. Жесткое экранирование ВСЕХ спецсимволов Typst
     t = t.replace('\\', r'\\')
     t = t.replace('[', r'\[').replace(']', r'\]')
     t = t.replace('{', r'\{').replace('}', r'\}')
     t = t.replace('$', r'\$')
     t = t.replace('*', r'\*').replace('_', r'\_')
     t = t.replace('#', r'\#')
-    
     return t
 
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, report_type="PRO"):
@@ -369,14 +375,11 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     lost_leads = int(client_leads * (dev / 100))
     ltv_loss = revenue_loss * 12
     
-    # Безопасное форматирование чисел (пробелы вместо запятых)
     rev_loss_fmt = f"{revenue_loss:,}".replace(',', ' ')
     cc_fmt = f"{client_check:,}".replace(',', ' ')
     ltv_loss_fmt = f"{ltv_loss:,}".replace(',', ' ')
-    
     rev_str = f"- {rev_loss_fmt} ₽ / мес"
     
-    # Имя без спецсимволов для использования в ссылках и заголовках
     title_safe = str(title).replace('"', '').replace('[', '').replace(']', '').replace('\\', '').replace('#', '').replace('*', '').replace('$', '')
     doc_title = "Экспертная оценка качества ведения#linebreak()карточки компании и работы#linebreak()с отзывами в Яндекс.Бизнес"
 
@@ -648,7 +651,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(20pt, weight: "bold", fill: rgb("C5A880"))[4 880 ₽]
         #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("475569"))[Глубокий аудит и пошаговый план (для тех, кто хочет всё настраивать самостоятельно или проконтролировать своего маркетолога).]
+        #text(11pt, fill: rgb("475569"))[Глубокий аудит и пошаговый план (для тех, кто хочет всё настраивать самостоятельно или проверить своего маркетолога).]
     ],
     
     rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 25pt)[
@@ -659,7 +662,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(20pt, weight: "bold", fill: rgb("C5A880"))[14 880 ₽]
         #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("475569"))[Аудит + Базовая упаковка (мы сами своими руками исправляем всё то, что нашли в ходе глубокого аудита).]
+        #text(11pt, fill: rgb("475569"))[Аудит + Базовая упаковка (мы сами своими руками исправляем всё то, что нашли в ходе аудита).]
     ],
     
     rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 25pt)[
@@ -670,7 +673,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(20pt, weight: "bold", fill: rgb("C5A880"))[3 880 ₽ / мес]
         #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("475569"))[Системное поддержание рейтинга и умные ответы на все входящие отзывы клиентов.]
+        #text(11pt, fill: rgb("475569"))[Системное поддержание рейтинга и умные ответы на все новые отзывы клиентов.]
     ],
     
     rect(width: 100%, fill: rgb("0A1128"), stroke: 1pt + rgb("0A1128"), radius: 12pt, inset: 25pt)[
@@ -681,7 +684,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(20pt, weight: "bold", fill: rgb("C5A880"))[28 880 ₽ / мес]
         #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("94A3B8"))[Максимальный пакет с гарантией ведения. Мы забираем на себя 100% рутины по продвижению на геосервисах.]
+        #text(11pt, fill: rgb("94A3B8"))[Всё под ключ с гарантией ведения. Мы забираем на себя 100% рутины по продвижению на геосервисах.]
     ]
 )
 #v(40pt)
@@ -697,7 +700,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
                 #text(14pt, weight: "bold", fill: white, tracking: 0.5pt)[Написать в Telegram: \@paulvenkov]
             ]
         ]
-        #v(15pt)
+        #v(20pt)
         #link("https://pin100.ru")[
             #text(12pt, fill: rgb("0A1128"), weight: "bold", underline: true)[Перейти на сайт pin100.ru]
         ]
@@ -720,14 +723,15 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     return pdf_bytes
 
 # ==========================================
-# 4. СБОРКА И ИНТЕРФЕЙС
+# 6. СБОРКА И ИНТЕРФЕЙС (STREAMLIT)
 # ==========================================
 st.set_page_config(page_title=f"{PROJECT_NAME} | Экспертный Аудит", layout="wide", page_icon="📍")
-rules_data, prompts_data, doc_sheets = get_database_from_sheets()
+
+rules_data, prompts_data = fetch_cached_database()
 
 with st.sidebar: 
     st.markdown(f"## 📍 {PROJECT_NAME}")
-    st.write("✅ База бенчмарков подключена.")
+    st.write("✅ База данных подключена (Кэш активен).")
 
 st.title(f"📍 {PROJECT_NAME}: {EXPERT_TITLE}")
 url = st.text_input("Ссылка на карточку Яндекс.Бизнес")
@@ -749,11 +753,11 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             client_reviews = int(data.get('reviewsCount') or data.get('ratingsCount') or len(data.get('reviews') or []) or 0)
             
         with st.spinner("Экспертная оценка и расчет экономики..."):
-            try: niche_key = determine_niche_by_expert(title, cat)
+            try: niche_key = determine_niche_by_expert(title, cat, prompts_data)
             except: niche_key = "OTHER"
             
             raw_scores = calculate_hard_facts(data)
-            exp_sc = calculate_dynamic_expert_rules(data, prompts_data, url)
+            exp_sc = calculate_dynamic_expert_rules(data, prompts_data)
             raw_scores.update(exp_sc)
             
             results = []
@@ -798,6 +802,9 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                         "Earned": val,
                         "Max": max_s
                     })
+
+            # АВТОСОХРАНЕНИЕ В GOOGLE SHEETS
+            save_audit_to_sheets(url, title, niche_key, final_total_score, results)
 
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
             niche_label = eco.get("label", "Прочее")
