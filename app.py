@@ -62,7 +62,6 @@ def get_google_credentials():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     return Credentials.from_service_account_info(creds_dict, scopes=scopes)
 
-# Улучшение 1: Кэширование базы данных для защиты от Rate Limits
 @st.cache_data(ttl=300) 
 def fetch_cached_database():
     try:
@@ -80,7 +79,6 @@ def fetch_cached_database():
         st.error(f"Ошибка чтения Google Sheets: {e}")
         return [], []
 
-# Улучшение 4: Автосохранение лидов и результатов в базу
 def save_audit_to_sheets(url, title, niche, total_score, results_data):
     try:
         client = gspread.authorize(get_google_credentials())
@@ -104,7 +102,7 @@ def save_audit_to_sheets(url, title, niche, total_score, results_data):
         row_to_append = [row_dict.get(h, "") for h in headers]
         ws.append_row(row_to_append)
     except Exception as e:
-        pass # Тихо игнорируем ошибку записи, чтобы не прерывать показ отчета клиенту
+        pass 
 
 # ==========================================
 # 3. ПАРСЕР APIFY
@@ -152,7 +150,6 @@ def parse_yandex_date(date_val):
         return datetime.fromisoformat(str(date_val).replace('Z', '+00:00'))
     except: return None
 
-# Улучшение 2: Вынос промпта Ниши в Таблицу
 def determine_niche_by_expert(title, category, prompts_data):
     if not expert_engine: raise Exception("ИИ не инициализирован.")
     
@@ -344,11 +341,9 @@ def clean_typography(text):
     """Филологическая очистка текстов и безопасность Typst"""
     t = str(text)
     
-    # 1. Избавляемся от "мусорных" тире и пробелов
     t = re.sub(r'[-—]\s*[-—]', '—', t)
     t = t.replace(" - ", " — ")
     
-    # 2. Филологические правки
     t = t.replace(" это ", " — это ")
     t = t.replace(" реквизитов красный ", " реквизитов — красный ")
     t = t.replace("сегодня вы", "сегодня, вы")
@@ -357,7 +352,6 @@ def clean_typography(text):
     t = t.replace("контакты это", "контакты — это")
     t = t.replace("записи это", "записи — это")
     
-    # 3. Жесткое экранирование ВСЕХ спецсимволов Typst
     t = t.replace('\\', r'\\')
     t = t.replace('[', r'\[').replace(']', r'\]')
     t = t.replace('{', r'\{').replace('}', r'\}')
@@ -469,6 +463,13 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #v(5pt)
     #set par(leading: 0.5em)
     #text(10.5pt, fill: rgb("475569"))[Просто показывать клиентам плохо оформленную карточку — это *слив рекламного бюджета* и неизбежное *падение в органической выдаче*. \n\nПочему? Если Яндекс выводит вас в топ, но люди заходят и уходят без звонка (из-за скрытых цен, отсутствия фото или старых отзывов), система считывает это как "отказ". Алгоритм делает вывод, что бизнес некачественный, и принудительно опускает карточку на самое дно рейтинга.]
+]
+#v(15pt)
+#rect(width: 100%, fill: rgb("FFFBEB"), stroke: (left: 4pt + rgb("F59E0B")), inset: 15pt)[
+    #text(11.5pt, weight: "bold", fill: rgb("B45309"))[⚠️ Важно для плательщиков Рекламной подписки Яндекса:]
+    #v(5pt)
+    #set par(leading: 0.5em)
+    #text(10.5pt, fill: rgb("475569"))[Если вы уже используете или планируете подключать платное продвижение, помните: *алгоритм подписки продает вам показы и клики, а не продажи*. При готовности профиля ниже 80% запуск платной рекламы ведет к прямому сливу бюджета. Упаковка карточки по стандартам PIN100 перед запуском рекламы снижает стоимость привлеченного клиента в среднем на 40–60%.]
 ]
 
 #pagebreak()
@@ -662,7 +663,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(20pt, weight: "bold", fill: rgb("C5A880"))[14 880 ₽]
         #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("475569"))[Аудит + Базовая упаковка (мы сами своими руками исправляем всё то, что нашли в ходе аудита).]
+        #text(11pt, fill: rgb("475569"))[Аудит + Базовая упаковка. Идеальный фундамент перед запуском Рекламной подписки Яндекса (мы сами исправляем всё, что нашли).]
     ],
     
     rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 25pt)[
@@ -684,7 +685,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(20pt, weight: "bold", fill: rgb("C5A880"))[28 880 ₽ / мес]
         #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("94A3B8"))[Всё под ключ с гарантией ведения. Мы забираем на себя 100% рутины по продвижению на геосервисах.]
+        #text(11pt, fill: rgb("94A3B8"))[Всё под ключ с гарантией. Упаковка + ИИ-отзывы + стратегическое управление вашей Рекламной подпиской.]
     ]
 )
 #v(40pt)
