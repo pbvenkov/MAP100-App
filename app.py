@@ -674,7 +674,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(20pt, weight: "bold", fill: rgb("C5A880"))[3 880 ₽ / мес]
         #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("475569"))[Системное поддержание рейтинга и умные ответы на все новые отзывы клиентов.]
+        #text(11pt, fill: rgb("475569"))[Системная защита рейтинга и умные ответы на все новые отзывы клиентов.]
     ],
     
     rect(width: 100%, fill: rgb("0A1128"), stroke: 1pt + rgb("0A1128"), radius: 12pt, inset: 25pt)[
@@ -703,7 +703,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         ]
         #v(20pt)
         #link("https://pin100.ru")[
-            #text(12pt, fill: rgb("0A1128"), weight: "bold", underline: true)[Перейти на сайт pin100.ru]
+            #underline[#text(12pt, fill: rgb("0A1128"), weight: "bold")[Перейти на сайт pin100.ru]]
         ]
     ]
 ]
