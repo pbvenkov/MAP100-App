@@ -47,13 +47,14 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
 # 2. БАЗЫ ДАННЫХ И GOOGLE SHEETS
 # ==========================================
 NICHE_ECONOMICS = {
-    "HORECA": {"leads": 150, "check": 2000, "label": "HORECA"},
-    "B2B": {"leads": 40, "check": 30000, "label": "Легкий B2B / Обеспечение бизнеса"},
-    "RETAIL": {"leads": 200, "check": 1500, "label": "Ритейл"},
-    "AUTO": {"leads": 100, "check": 12000, "label": "Авто"},
-    "SERVICES": {"leads": 60, "check": 7000, "label": "Услуги B2C"},
-    "BEAUTY_MEDICAL": {"leads": 80, "check": 6000, "label": "Медицина / Бьюти"},
-    "OTHER": {"leads": 50, "check": 5000, "label": "Прочее"}
+    "HORECA": {"leads": 150, "check": 2000, "label": "HORECA", "ltv_months": 12},
+    "B2B": {"leads": 40, "check": 30000, "label": "Легкий B2B / Опт", "ltv_months": 12},
+    "B2B_HEAVY": {"leads": 10, "check": 500000, "label": "Сложный B2B / Производство", "ltv_months": 1},
+    "RETAIL": {"leads": 200, "check": 1500, "label": "Ритейл", "ltv_months": 12},
+    "AUTO": {"leads": 100, "check": 12000, "label": "Авто", "ltv_months": 6},
+    "SERVICES": {"leads": 60, "check": 7000, "label": "Услуги B2C", "ltv_months": 6},
+    "BEAUTY_MEDICAL": {"leads": 80, "check": 6000, "label": "Медицина / Бьюти", "ltv_months": 12},
+    "OTHER": {"leads": 50, "check": 5000, "label": "Прочее", "ltv_months": 6}
 }
 
 def get_google_credentials():
@@ -156,15 +157,15 @@ def determine_niche_by_expert(title, category, prompts_data):
     niche_prompt = next((p.get("Промпт для ИИ") for p in prompts_data if p.get("Код") == "NICHE_PROMPT"), None)
     if not niche_prompt:
         niche_prompt = """Проведи экспертную оценку бизнеса по названию "{title}" и категории "{category}".
-ВНИМАНИЕ: Если в категории есть слова "стоматология", "клиника", "медицина", "красота", "салон" - это СТРОГО BEAUTY_MEDICAL.
-Определи ОДИН наиболее подходящий сегмент: HORECA, B2B, RETAIL, AUTO, SERVICES, BEAUTY_MEDICAL, OTHER.
+ВНИМАНИЕ: Если в категории есть слова "завод", "производство", "опт", "промышленный" - это СТРОГО B2B_HEAVY.
+Определи ОДИН наиболее подходящий сегмент: HORECA, B2B, B2B_HEAVY, RETAIL, AUTO, SERVICES, BEAUTY_MEDICAL, OTHER.
 Верни ТОЛЬКО ОДНО СЛОВО - ключ на английском."""
     
     prompt = niche_prompt.replace("{title}", title).replace("{category}", category)
     try:
         response = expert_engine.generate_content(prompt)
         key = response.text.strip().upper()
-        for v in ["BEAUTY_MEDICAL", "HORECA", "B2B", "RETAIL", "AUTO", "SERVICES", "OTHER"]:
+        for v in ["B2B_HEAVY", "BEAUTY_MEDICAL", "HORECA", "B2B", "RETAIL", "AUTO", "SERVICES", "OTHER"]:
             if v in key: return v
         return "OTHER"
     except Exception as e:
@@ -338,12 +339,9 @@ def calculate_dynamic_expert_rules(data, prompts_data):
 # 5. ТИПОГРАФИКА И PDF (TYPST)
 # ==========================================
 def clean_typography(text):
-    """Филологическая очистка текстов и безопасность Typst"""
     t = str(text)
-    
     t = re.sub(r'[-—]\s*[-—]', '—', t)
     t = t.replace(" - ", " — ")
-    
     t = t.replace(" это ", " — это ")
     t = t.replace(" реквизитов красный ", " реквизитов — красный ")
     t = t.replace("сегодня вы", "сегодня, вы")
@@ -360,18 +358,16 @@ def clean_typography(text):
     t = t.replace('#', r'\#')
     return t
 
-def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, report_type="PRO"):
+def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, client_ltv, report_type="PRO"):
     current_date = datetime.now().strftime("%d.%m.%Y")
     
     score_color = "16A34A" if score >= 80 else ("C5A880" if score >= 50 else "DC2626")
     dev = round(100 - score, 1)
     lost_clients = int(round(dev / 10))
     lost_leads = int(client_leads * (dev / 100))
-    ltv_loss = revenue_loss * 12
     
     rev_loss_fmt = f"{revenue_loss:,}".replace(',', ' ')
     cc_fmt = f"{client_check:,}".replace(',', ' ')
-    ltv_loss_fmt = f"{ltv_loss:,}".replace(',', ' ')
     rev_str = f"- {rev_loss_fmt} ₽ / мес"
     
     title_safe = str(title).replace('"', '').replace('[', '').replace(']', '').replace('\\', '').replace('#', '').replace('*', '').replace('$', '')
@@ -418,6 +414,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #linebreak()
     #v(8pt)
     #text(28pt, weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)} / 100]
+    #v(4pt)
+    #text(9pt, fill: rgb("64748B"), style: "italic")[*Справочно:* Средний балл по вашей нише — 28/100]
   ],
   rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 8pt, inset: 20pt)[
     #text(10.5pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[УПУЩЕННАЯ ВЫРУЧКА (LOST REVENUE)]
@@ -436,9 +434,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(10pt)
 #set par(leading: 0.6em)
 #text(11.5pt, fill: rgb("475569"))[
-  В зависимости от сферы деятельности вашей компании, мы оцениваем правильность заполнения карточки в Яндекс.Бизнес и работу с отзывами по матрице из *79 параметров*, каждый из которых критически важен для алгоритмов площадки. Идеально заполненная карточка получает ровно *100 баллов*.
-
-  Для вашего удобства все параметры разбиты на 4 смысловых блока, которые решают две фундаментальные задачи:
+  Мы оцениваем правильность заполнения карточки в Яндекс.Бизнес по матрице из *79 параметров*, каждый из которых критически важен для алгоритмов площадки. Идеально заполненная карточка получает ровно *100 баллов*. 
+  Мы учитываем последние алгоритмические обновления площадки, такие как цикличность статуса «Синяя галочка», лимиты контента в 3000 символов и новые форматы историй.
 ]
 #v(15pt)
 #grid(
@@ -454,7 +451,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #text(11pt, weight: "bold", fill: rgb("0A1128"))[2. Целевое действие (ЦД)]
     #v(5pt)
     #set par(leading: 0.5em)
-    #text(10.5pt, fill: rgb("475569"))[Работают на конверсию. Убеждают клиента позвонить, построить маршрут или перейти на сайт, когда он *уже находится внутри*.\n_Примеры: понятный прайс-лист, яркие кнопки CTA, качественные фото, закрытие страхов в FAQ._]
+    #text(10.5pt, fill: rgb("475569"))[Работают на конверсию. Убеждают клиента позвонить, построить маршрут или перейти на сайт.\n_Примеры: понятный прайс-лист, яркие кнопки CTA, закрытие страхов в FAQ._]
   ]
 )
 #v(20pt)
@@ -469,7 +466,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #text(11.5pt, weight: "bold", fill: rgb("B45309"))[⚠️ Важно для плательщиков Рекламной подписки Яндекса:]
     #v(5pt)
     #set par(leading: 0.5em)
-    #text(10.5pt, fill: rgb("475569"))[Если вы уже используете или планируете подключать платное продвижение, помните: *алгоритм подписки продает вам показы и клики, а не продажи*. При готовности профиля ниже 80% запуск платной рекламы ведет к прямому сливу бюджета. Упаковка карточки по стандартам PIN100 перед запуском рекламы снижает стоимость привлеченного клиента в среднем на 40–60%.]
+    #text(10.5pt, fill: rgb("475569"))[Алгоритм подписки продает вам показы и клики, а не продажи. При готовности профиля ниже 80% запуск рекламы ведет к прямому сливу бюджета. Упаковка карточки по стандартам PIN100 перед запуском рекламы снижает стоимость привлеченного клиента в среднем на 40–60%.]
 ]
 
 #pagebreak()
@@ -478,11 +475,22 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(10pt)
 """
 
+    # ДИНАМИЧЕСКИЙ РАСЧЕТ УБЫТКОВ (С учетом LTV)
     blocks_fin = [
         ("А. Видимость бизнеса (Кто забирает клиентов)", f"Ваш профиль соответствует стандартам площадки лишь на *{round(score, 1)}%*. В реалиях алгоритмов Яндекса это означает, что из каждых 10 человек, которые прямо сейчас ищут ваши услуги, *{lost_clients}* до вас просто не доходят. Они видят в топе конкурентов с более грамотно упакованными карточками и оставляют деньги там."),
-        ("Б. Цена простоя (Ваши прямые убытки)", f"В вашей нише через геосервисы ежемесячно проходит около *{client_leads}* целевых запросов. Из-за пробелов в оптимизации профиля мимо вас проходит порядка *{lost_leads}* сделок. При вашем среднем чеке ({cc_fmt} ₽) это превращается в кассовый разрыв на #text(fill: rgb(\"DC2626\"), weight: \"bold\")[{rev_loss_fmt} ₽] каждый месяц."),
-        ("В. Скрытая угроза (Недополученный LTV)", f"Привлеченный клиент — это не разовая сделка, он остается с бизнесом надолго (в среднем от 12 месяцев). Упуская заказчиков сегодня, вы лишаете компанию будущих регулярных платежей. В годовом выражении эта недополученная выручка достигает #text(fill: rgb(\"DC2626\"), weight: \"bold\")[{ltv_loss_fmt} ₽]. Это капитал, за счет которого прямо сейчас масштабируются ваши конкуренты.")
+        ("Б. Цена простоя (Ваши прямые убытки)", f"В вашей нише через геосервисы ежемесячно проходит около *{client_leads}* целевых запросов. Из-за пробелов в оптимизации профиля мимо вас проходит порядка *{lost_leads}* сделок. При вашем среднем чеке ({cc_fmt} ₽) это превращается в кассовый разрыв на #text(fill: rgb(\"DC2626\"), weight: \"bold\")[{rev_loss_fmt} ₽] каждый месяц.")
     ]
+    
+    if client_ltv > 1:
+        ltv_loss = revenue_loss * client_ltv
+        ltv_loss_fmt = f"{ltv_loss:,}".replace(',', ' ')
+        blocks_fin.append(
+            ("В. Скрытая угроза (Недополученный LTV)", f"Привлеченный клиент — это не разовая сделка, он остается с бизнесом надолго (в среднем цикл жизни в вашей нише — {client_ltv} мес.). Упуская заказчиков сегодня, вы лишаете компанию будущих регулярных платежей. В масштабе цикла эта недополученная выручка достигает #text(fill: rgb(\"DC2626\"), weight: \"bold\")[{ltv_loss_fmt} ₽]. Это ресурсы, за счет которых прямо сейчас масштабируются ваши конкуренты.")
+        )
+    else:
+        blocks_fin.append(
+            ("В. Скрытая угроза (Сарафанное радио и рекомендации)", f"В вашей нише довольный B2B-заказчик — это главный источник рекомендаций. Теряя сделки на {rev_loss_fmt} ₽ из-за слабой карточки, вы лишаете себя не только этих денег, но и будущих крупных контрактов по рекомендации. Цена простоя для бизнеса масштабируется многократно.")
+        )
     
     for bt, text in blocks_fin:
         typ_source += f"""
@@ -574,6 +582,14 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #line(length: 80mm, stroke: 3pt + rgb("C5A880"))
 #v(20pt)
 #text(12pt, fill: rgb("475569"))[Мы собрали все выявленные уязвимости и распределили их по приоритету. Следуйте этому Экшн-плану, чтобы за 30 дней забрать максимум органического трафика в вашей нише.]
+#v(15pt)
+
+#rect(width: 100%, fill: rgb("FFFBEB"), stroke: 1pt + rgb("F59E0B"), radius: 8pt, inset: 15pt)[
+    #text(11pt, weight: "bold", fill: rgb("B45309"))[⚠️ Внимание: Ручное исправление не работает]
+    #v(5pt)
+    #set par(leading: 0.5em)
+    #text(10.5pt, fill: rgb("475569"))[Яндекс жестко пессимизирует ручные прайс-листы и стоковые фото. Для внедрения этого плана наша команда использует автоматизацию: интеграцию через XML/YML фиды и массовую EXIF-разметку фотографий скрытыми LSI-тегами. Это гарантирует 100% доверие алгоритмов и защиту от теневых банов.]
+]
 #v(20pt)
 """
         stages = {
@@ -629,7 +645,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         if not failed_items: 
             typ_source += "\n#rect(stroke: (left: 4pt + rgb(\"16A34A\")), fill: rgb(\"F8FAFC\"), inset: 20pt)[#text(14pt, weight: \"bold\", fill: rgb(\"16A34A\"))[Ваш профиль идеален! Все этапы дорожной карты выполнены.]]\n"
 
-    # --- УНИВЕРСАЛЬНЫЙ СИЛЬНЫЙ ОФФЕР (ДЛЯ LITE И PRO) ---
+    # --- УНИВЕРСАЛЬНЫЙ СИЛЬНЫЙ ОФФЕР (ИЗМЕНЕНО ДЛЯ PRO И LITE) ---
     typ_source += f"""
 #pagebreak()
 #text(24pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Что делать дальше?]
@@ -638,7 +654,11 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(20pt)
 #text(12pt, fill: rgb("475569"))[Выберите подходящий формат сотрудничества для кратного роста вашей выручки:]
 #v(30pt)
+"""
 
+    if report_type == "LITE":
+        # Для бесплатного экспресс-аудита показываем всю воронку, начиная с Tripwire
+        typ_source += """
 #grid(
     columns: (1fr, 1fr),
     gutter: 20pt,
@@ -652,7 +672,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(20pt, weight: "bold", fill: rgb("C5A880"))[4 880 ₽]
         #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("475569"))[Глубокий аудит и пошаговый план (для тех, кто хочет всё настраивать самостоятельно или проверить своего маркетолога).]
+        #text(11pt, fill: rgb("475569"))[Детальный аудит и пошаговый PDF-отчет (для тех, кто хочет проверить своего маркетолога).]
     ],
     
     rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 25pt)[
@@ -663,7 +683,27 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(20pt, weight: "bold", fill: rgb("C5A880"))[14 880 ₽]
         #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("475569"))[Аудит + Базовая упаковка. Идеальный фундамент перед запуском Рекламной подписки Яндекса (мы сами исправляем всё, что нашли).]
+        #text(11pt, fill: rgb("475569"))[Идеальный фундамент перед запуском Рекламной подписки Яндекса. Мы берем на себя 100% рутины.]
+    ]
+)
+"""
+    else:
+        # Для PRO-отчета убираем Tripwire (он уже куплен) и продаем упаковку и ведение
+        typ_source += """
+#grid(
+    columns: (1fr, 1fr),
+    gutter: 20pt,
+    row-gutter: 20pt,
+    
+    rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 25pt)[
+        #text(10pt, fill: rgb("64748B"), weight: "bold", tracking: 1pt)[CORE-ПРОДУКТ]
+        #v(8pt)
+        #text(16pt, weight: "bold", fill: rgb("0A1128"))[Базовая упаковка]
+        #v(5pt)
+        #text(20pt, weight: "bold", fill: rgb("C5A880"))[14 880 ₽]
+        #v(15pt)
+        #set par(leading: 0.5em)
+        #text(11pt, fill: rgb("475569"))[Идеальный фундамент. Мы внедряем Экшн-план за 5-7 дней под ключ. Вы платите за результат, а не за часы.]
     ],
     
     rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 25pt)[
@@ -674,25 +714,30 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(20pt, weight: "bold", fill: rgb("C5A880"))[3 880 ₽ / мес]
         #v(15pt)
         #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("475569"))[Системная защита рейтинга и умные ответы на все новые отзывы клиентов.]
+        #text(11pt, fill: rgb("475569"))[Ежемесячная системная защита рейтинга и умные ответы на все новые отзывы клиентов со скоростью до 2 часов.]
     ],
     
-    rect(width: 100%, fill: rgb("0A1128"), stroke: 1pt + rgb("0A1128"), radius: 12pt, inset: 25pt)[
-        #text(10pt, fill: rgb("94A3B8"), weight: "bold", tracking: 1pt)[VIP]
-        #v(8pt)
-        #text(16pt, weight: "bold", fill: rgb("FFFFFF"))[Всё под ключ]
-        #v(5pt)
-        #text(20pt, weight: "bold", fill: rgb("C5A880"))[28 880 ₽ / мес]
-        #v(15pt)
-        #set par(leading: 0.5em)
-        #text(11pt, fill: rgb("94A3B8"))[Всё под ключ с гарантией. Упаковка + ИИ-отзывы + стратегическое управление вашей Рекламной подпиской.]
+    grid.cell(colspan: 2)[
+        #rect(width: 100%, fill: rgb("0A1128"), stroke: 1pt + rgb("0A1128"), radius: 12pt, inset: 25pt)[
+            #text(10pt, fill: rgb("94A3B8"), weight: "bold", tracking: 1pt)[VIP ПЕРФОМАНС]
+            #v(8pt)
+            #text(16pt, weight: "bold", fill: rgb("FFFFFF"))[Всё под ключ]
+            #v(5pt)
+            #text(20pt, weight: "bold", fill: rgb("C5A880"))[От 35 000 ₽ / мес]
+            #v(15pt)
+            #set par(leading: 0.5em)
+            #text(11pt, fill: rgb("94A3B8"))[Для бизнеса с рекламными бюджетами. Полная инфраструктура: Упаковка + ИИ-отзывы + стратегическое управление вашей Рекламной подпиской и глубокая аналитика CPL.]
+        ]
     ]
 )
+"""
+
+    typ_source += f"""
 #v(40pt)
 
 #rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("E2E8F0"), radius: 12pt, inset: 30pt)[
     #align(center)[
-        #text(20pt, font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Готовы кратно увеличить поток клиентов?]
+        #text(20pt, font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Готовы остановить потерю лидов?]
         #v(15pt)
         #text(12pt, fill: rgb("475569"))[Выберите тариф и напишите мне в Telegram кодовое слово *«{title_safe.upper()}»*.]
         #v(25pt)
@@ -790,7 +835,8 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                         comm = "НЕТ"
                         final_reason = reason_error
                         
-                        if raw_scores.get('META_NO_RECENT_REVIEWS') and group == 'Репутация' and code not in ['REP-27.1', 'REP-27.2', 'REP-28.1', 'REP-83.1', 'REP-85.1']:
+                        dynamic_rep_metrics = ['REP-29.1', 'REP-29.2', 'REP-30.1', 'REP-30.2', 'REP-30.3', 'REP-31.1', 'REP-31.2', 'REP-32.1', 'REP-32.2', 'REP-35.1', 'REP-84.1', 'REP-32.3']
+                        if raw_scores.get('META_NO_RECENT_REVIEWS') and group == 'Репутация' and code in dynamic_rep_metrics:
                             final_reason = "За последние 6 месяцев нет ни одного свежего отзыва. Метрика обнулена, так как алгоритмам Яндекса нужны актуальные данные для ранжирования."
                         
                     results.append({
@@ -804,7 +850,6 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                         "Max": max_s
                     })
 
-            # АВТОСОХРАНЕНИЕ В GOOGLE SHEETS
             save_audit_to_sheets(url, title, niche_key, final_total_score, results)
 
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
@@ -815,6 +860,7 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                 st.markdown(f"### 🧮 Калькулятор: {niche_key}")
                 client_leads = st.number_input("Потенциал лидов/мес", value=eco["leads"], step=10)
                 client_check = st.number_input("Средний чек (₽)", value=eco["check"], step=5000)
+                client_ltv = st.number_input("Цикл LTV (месяцев)", value=eco["ltv_months"], step=1, help="Если 1 месяц, то блок недополученной LTV будет скрыт в отчете.")
 
             lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
             lost_revenue = int(client_leads * lost_percentage * client_check)
@@ -843,8 +889,8 @@ if st.button("🚀 Запустить генерацию отчетов", type="
             st.divider()
             st.markdown("### 📥 Выгрузка отчетов")
             
-            pdf_lite_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check, report_type="LITE")
-            pdf_pro_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check, report_type="PRO")
+            pdf_lite_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check, client_ltv, report_type="LITE")
+            pdf_pro_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check, client_ltv, report_type="PRO")
             
             col_lite, col_pro = st.columns(2)
             with col_lite:
