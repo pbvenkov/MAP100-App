@@ -110,6 +110,15 @@ def save_audit_to_sheets(url, title, niche, total_score, results_data):
 # 3. ПАРСЕР APIFY
 # ==========================================
 def fetch_apify_data(yandex_url):
+    # --- НАЧАЛО: АВТОМАТИЧЕСКИЙ РАЗВОРОТ КОРОТКИХ ССЫЛОК ---
+    if "/-/" in yandex_url:
+        try:
+            r = requests.get(yandex_url, allow_redirects=True, timeout=10)
+            yandex_url = r.url
+        except Exception as e:
+            raise Exception(f"Не удалось расшифровать короткую ссылку Яндекса: {e}")
+    # --- КОНЕЦ: АВТОМАТИЧЕСКИЙ РАЗВОРОТ КОРОТКИХ ССЫЛОК ---
+
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
     run_req = requests.post(run_url, json={"startUrls": [{"url": yandex_url}], "maxItems": 1}).json()
     if 'error' in run_req: 
