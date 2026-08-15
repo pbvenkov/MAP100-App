@@ -47,6 +47,7 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
 # 2. БАЗЫ ДАННЫХ И GOOGLE SHEETS
 # ==========================================
 NICHE_ECONOMICS = {
+    "DENTISTRY": {"leads": 70, "check": 25000, "label": "Стоматология", "ltv_months": 12},
     "HORECA": {"leads": 150, "check": 2000, "label": "HORECA", "ltv_months": 12},
     "B2B": {"leads": 40, "check": 30000, "label": "Легкий B2B / Опт", "ltv_months": 12},
     "B2B_HEAVY": {"leads": 10, "check": 500000, "label": "Сложный B2B / Производство", "ltv_months": 1},
@@ -158,14 +159,14 @@ def determine_niche_by_expert(title, category, prompts_data):
     if not niche_prompt:
         niche_prompt = """Проведи экспертную оценку бизнеса по названию "{title}" и категории "{category}".
 ВНИМАНИЕ: Если в категории есть слова "завод", "производство", "опт", "промышленный" - это СТРОГО B2B_HEAVY.
-Определи ОДИН наиболее подходящий сегмент: HORECA, B2B, B2B_HEAVY, RETAIL, AUTO, SERVICES, BEAUTY_MEDICAL, OTHER.
+Определи ОДИН наиболее подходящий сегмент: HORECA, B2B, B2B_HEAVY, RETAIL, AUTO, SERVICES, BEAUTY_MEDICAL, DENTISTRY, OTHER.
 Верни ТОЛЬКО ОДНО СЛОВО - ключ на английском."""
     
     prompt = niche_prompt.replace("{title}", title).replace("{category}", category)
     try:
         response = expert_engine.generate_content(prompt)
         key = response.text.strip().upper()
-        for v in ["B2B_HEAVY", "BEAUTY_MEDICAL", "HORECA", "B2B", "RETAIL", "AUTO", "SERVICES", "OTHER"]:
+        for v in ["B2B_HEAVY", "BEAUTY_MEDICAL", "DENTISTRY", "HORECA", "B2B", "RETAIL", "AUTO", "SERVICES", "OTHER"]:
             if v in key: return v
         return "OTHER"
     except Exception as e:
@@ -817,7 +818,18 @@ if st.button("🚀 Запустить генерацию отчетов", type="
                 group = str(r.get('Группа метрик', 'Прочее')).strip()
                 
                 reason_success = str(r.get('Обоснование_УСПЕХА', '')).strip() or f"Отлично! Параметр «{name}» настроен верно и усиливает ваш профиль."
-                reason_error = str(r.get('Обоснование_ОШИБКИ', '')).strip() or f"Отсутствие параметра «{name}» пессимизирует карточку и лишает вас органического трафика."
+                
+                # --- НАЧАЛО КАСКАДНОЙ ЛОГИКИ ОШИБОК ---
+                niche_error_col = f"Обоснование_ОШИБКИ_{niche_key}"
+                reason_error = str(r.get(niche_error_col, '')).strip()
+                
+                if not reason_error or reason_error.lower() == 'nan':
+                    reason_error = str(r.get('Обоснование_ОШИБКИ', '')).strip()
+                    
+                if not reason_error or reason_error.lower() == 'nan':
+                    reason_error = f"Отсутствие параметра «{name}» пессимизирует карточку и лишает вас органического трафика."
+                # --- КОНЕЦ КАСКАДНОЙ ЛОГИКИ ОШИБОК ---
+
                 try: stage_val = int(r.get('Этап_Внедрения', 3))
                 except: stage_val = 3
                 
