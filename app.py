@@ -539,7 +539,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
       #v(5pt)
       #text(24pt, weight: "bold", fill: rgb("C5A880"))[{package_price}]
       #v(5pt)
-      #text(10pt, fill: rgb("94A3B8"), style: "italic")[*Единоразовая инвестиция]
+      #text(10pt, fill: rgb("94A3B8"), style: "italic")[\*Единоразовая инвестиция]
       #v(15pt)
       #text(12pt, fill: rgb("94A3B8"))[Точка окупаемости (ROI):]
       #v(5pt)
