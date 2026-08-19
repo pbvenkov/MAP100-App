@@ -179,7 +179,7 @@ def determine_niche_by_expert(title, category, prompts_data):
     except Exception as e:
         raise Exception(f"Сбой ИИ (Ниша): {str(e)}")
 
-def calculate_hard_facts(data):
+def calculate_hard_facts(data, niche_key="OTHER"):
     scores = {}
     now = datetime.now(timezone.utc)
     title = str(data.get('title') or '')
@@ -200,9 +200,24 @@ def calculate_hard_facts(data):
     if isinstance(schedule, list) and len(schedule) >= 7: scores['PROF-07.1'] = True
     elif isinstance(schedule, dict) and len(schedule.keys()) >= 7: scores['PROF-07.1'] = True
     
-    features = data.get('features')
+    features = data.get('features', {})
+    # Базовые атрибуты PROF-08.1
     if isinstance(features, dict) and len(features.keys()) > 0: scores['PROF-08.1'] = True
     elif isinstance(features, list) and len(features) > 0: scores['PROF-08.1'] = True
+
+    # Нишевые атрибуты PROF-08.2
+    NICHE_MAPPING = {
+        "DENTISTRY": ["dentist_services", "uni_medic_specialization"],
+        "AUTOSERVICES": ["car_wash_services", "auto_repair_features"],
+        "HORECA": ["restaurant_services", "cuisine_type"],
+    }
+    
+    if isinstance(features, dict):
+        expected_keys = NICHE_MAPPING.get(niche_key, [])
+        for key in expected_keys:
+            if features.get(key):
+                scores['PROF-08.2'] = True
+                break
     
     if len(desc) > 1500: scores['PROF-09.1'] = True
     if data.get('isVerifiedOwner'): scores['PROF-12.1'] = True
@@ -708,7 +723,7 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
             try: niche_key = determine_niche_by_expert(title, cat, prompts_data)
             except: niche_key = "OTHER"
             
-            raw_scores = calculate_hard_facts(data)
+            raw_scores = calculate_hard_facts(data, niche_key)
             exp_sc = calculate_dynamic_expert_rules(data, prompts_data)
             raw_scores.update(exp_sc)
             
