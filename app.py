@@ -107,7 +107,7 @@ def save_audit_to_sheets(url, title, niche, total_score, results_data):
         pass 
 
 # ==========================================
-# 3. ПАРСЕР APIFY
+# 3. ПАРСЕР APIFY (Обновлен: добавлены лимиты фото и постов)
 # ==========================================
 def fetch_apify_data(yandex_url):
     if "/-/" in yandex_url:
@@ -118,7 +118,17 @@ def fetch_apify_data(yandex_url):
             raise Exception(f"Не удалось расшифровать короткую ссылку Яндекса: {e}")
 
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
-    run_req = requests.post(run_url, json={"startUrls": [{"url": yandex_url}], "maxItems": 1}).json()
+    
+    # 🔴 ИСПРАВЛЕНИЕ БАГА С ФОТОГРАФИЯМИ И ПОСТАМИ ЗДЕСЬ
+    payload = {
+        "startUrls": [{"url": yandex_url}], 
+        "maxItems": 1,
+        "enrichBusinessData": True,
+        "maxPhotos": 150,
+        "maxPosts": 50
+    }
+    
+    run_req = requests.post(run_url, json=payload).json()
     if 'error' in run_req: 
         raise Exception(f"Ошибка Apify API: {run_req['error']}")
         
@@ -201,11 +211,12 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     elif isinstance(schedule, dict) and len(schedule.keys()) >= 7: scores['PROF-07.1'] = True
     
     features = data.get('features', {})
+    
     # Базовые атрибуты PROF-08.1
     if isinstance(features, dict) and len(features.keys()) > 0: scores['PROF-08.1'] = True
     elif isinstance(features, list) and len(features) > 0: scores['PROF-08.1'] = True
 
-    # Нишевые атрибуты PROF-08.2
+    # 🔴 ИСПРАВЛЕНИЕ БАГА С НИШЕВЫМИ АТРИБУТАМИ (PROF-08.2)
     NICHE_MAPPING = {
         "DENTISTRY": ["dentist_services", "uni_medic_specialization"],
         "AUTOSERVICES": ["car_wash_services", "auto_repair_features"],
@@ -225,7 +236,7 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     links_data = data.get('socialLinks') or data.get('links') or []
     owner_links = url + " " + desc + " " + " ".join([str(l) for l in links_data])
     if any(s in owner_links.lower() for s in ["t.me", "wa.me", "whatsapp", "viber"]): scores['PROF-13.1'] = True
-    if any(s in owner_links.lower() for s in ["vk.com", "youtube", "dzen", "instagram", "inst:"]): scores['PROF-13.2'] = True
+    if any(s in owner_links.lower() for s in ["vk.com", "vk.ru", "youtube", "dzen", "instagram", "inst:"]): scores['PROF-13.2'] = True
     
     prods = []
     if isinstance(data.get('menu'), dict): prods.extend(data['menu'].get('items', []))
