@@ -3,15 +3,11 @@ import requests
 import os
 import time
 import json
-import numpy as np
-import pandas as pd
 import re
 from datetime import datetime, timezone, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
-from concurrent.futures import ThreadPoolExecutor
-import base64
 import tempfile
 import typst
 
@@ -35,13 +31,16 @@ except Exception as e:
     expert_engine = None
 
 def send_telegram_alert(error_msg, target_url="Неизвестно"):
+    """Отправка уведомлений об ошибках разработчику"""
     tg_token = st.secrets.get("TG_BOT_TOKEN")
     tg_admin_id = st.secrets.get("TG_ADMIN_ID")
     if tg_token and tg_admin_id:
         tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-        text = f"🚨 *{PROJECT_NAME}: Сбой системы*\n\n*Цель:* {target_url}\n*Ошибка:* {error_msg}\n\n🛑 *Действие:* Записано в лог ошибок."
-        try: requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
-        except Exception: pass
+        text = f"🚨 *{PROJECT_NAME}: Сбой системы*\n\n*Цель:* {target_url}\n*Ошибка:* {error_msg}\n\n🛑 *Действие:* Остановлено."
+        try: 
+            requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
+        except Exception: 
+            pass
 
 # ==========================================
 # 2. БАЗЫ ДАННЫХ И GOOGLE SHEETS
@@ -104,10 +103,10 @@ def save_audit_to_sheets(url, title, niche, total_score, results_data):
         row_to_append = [row_dict.get(h, "") for h in headers]
         ws.append_row(row_to_append)
     except Exception as e:
-        pass 
+        print(f"Ошибка сохранения логов в Google Sheets: {e}") 
 
 # ==========================================
-# 3. ПАРСЕР APIFY (Обновлен: добавлены лимиты фото и постов)
+# 3. ПАРСЕР APIFY 
 # ==========================================
 def fetch_apify_data(yandex_url):
     if "/-/" in yandex_url:
@@ -119,7 +118,6 @@ def fetch_apify_data(yandex_url):
 
     run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
     
-    # 🔴 ИСПРАВЛЕНИЕ БАГА С ФОТОГРАФИЯМИ И ПОСТАМИ ЗДЕСЬ
     payload = {
         "startUrls": [{"url": yandex_url}], 
         "maxItems": 1,
@@ -216,7 +214,7 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     if isinstance(features, dict) and len(features.keys()) > 0: scores['PROF-08.1'] = True
     elif isinstance(features, list) and len(features) > 0: scores['PROF-08.1'] = True
 
-    # 🔴 ИСПРАВЛЕНИЕ БАГА С НИШЕВЫМИ АТРИБУТАМИ (PROF-08.2)
+    # Нишевые атрибуты (PROF-08.2)
     NICHE_MAPPING = {
         "DENTISTRY": ["dentist_services", "uni_medic_specialization"],
         "AUTOSERVICES": ["car_wash_services", "auto_repair_features"],
@@ -722,7 +720,8 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
             try: 
                 data = fetch_apify_data(url)
             except Exception as e:
-                st.error(f"⚠️ {str(e)}")
+                send_telegram_alert(str(e), url)
+                st.error(f"⚠️ Ошибка парсинга: {str(e)}")
                 st.stop()
                 
             title = data.get('title', 'Без названия')
@@ -731,8 +730,11 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
             client_reviews = int(data.get('reviewsCount') or data.get('ratingsCount') or len(data.get('reviews') or []) or 0)
             
         with st.spinner("Бизнес-оценка и расчет юнит-экономики..."):
-            try: niche_key = determine_niche_by_expert(title, cat, prompts_data)
-            except: niche_key = "OTHER"
+            try: 
+                niche_key = determine_niche_by_expert(title, cat, prompts_data)
+            except Exception as e:
+                send_telegram_alert(str(e), url)
+                niche_key = "OTHER"
             
             raw_scores = calculate_hard_facts(data, niche_key)
             exp_sc = calculate_dynamic_expert_rules(data, prompts_data)
