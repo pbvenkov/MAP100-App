@@ -300,7 +300,8 @@ def calculate_dynamic_expert_rules(data, prompts_data):
 # 5. ТИПОГРАФИКА И PDF (ПРЕМИУМ BIG4 СТИЛЬ)
 # ==========================================
 def clean_typography(text):
-    t = str(text).replace(" - ", " — ").replace('\\', r'\\').replace('[', r'\[').replace(']', r'\]').replace('{', r'\{').replace('}', r'\}').replace('$', r'\$').replace('*', r'\*').replace('_', r'\_').replace('#', r'\#')
+    # Жесткое экранирование ВСЕХ потенциально опасных для Typst символов
+    t = str(text).replace(" - ", " — ").replace('\\', r'\\').replace('[', r'\[').replace(']', r'\]').replace('{', r'\{').replace('}', r'\}').replace('$', r'\$').replace('*', r'\*').replace('_', r'\_').replace('#', r'\#').replace('@', r'\@')
     return t
 
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, client_ltv, competitors_text=""):
@@ -313,8 +314,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     cc_fmt = f"{client_check:,}".replace(',', ' ')
     ltv_loss_fmt = f"{revenue_loss * client_ltv:,}".replace(',', ' ')
     
-    # ЖЕСТКАЯ ФИЛЬТРАЦИЯ КАВЫЧЕК И ДВОЕТОЧИЙ В НАЗВАНИИ (Именно это ломало компилятор Typst)
-    title_safe = str(title).replace('"', '').replace("'", '').replace(':', '').replace('[', '').replace(']', '').replace('{', '').replace('}', '').strip()
+    title_safe = clean_typography(title)
     comp_safe = clean_typography(competitors_text)
     
     package_name = "Интеграция Medical/B2B PRO" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else "Комплексная Бизнес-Упаковка"
@@ -322,7 +322,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     package_roi = f"1-2 закрытых клиента (при чеке {cc_fmt} ₽)" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else f"3-5 новых клиентов (при чеке {cc_fmt} ₽)"
 
     typ_source = f"""
-#set document(title: "Аналитический Отчет", author: "PIN100 Analytics")
+#set document(title: "Аналитический Отчет - {title_safe}", author: "PIN100 Analytics")
 
 #set page(
   paper: "a4",
@@ -390,7 +390,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   ]
 )
 #v(30pt)
-#block(stroke: (left: 3pt + rgb("8B7355")), inset: 15pt, fill: rgb("F8FAFC"))[
+#block(stroke: (left: 3pt + rgb("8B7355"),), inset: 15pt, fill: rgb("F8FAFC"))[
   #text(12pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("0F172A"))[Критическое резюме:]
   #v(8pt)
   #text(10.5pt, fill: rgb("1E293B"))[Прямо сейчас компания фактически невидима для *{dev}% целевых клиентов* в поисковой выдаче Яндекс Карт. Из-за алгоритмических уязвимостей вы ежемесячно уступаете конкурентам около *{lost_leads} горячих сделок*. Дальнейшие инвестиции в рекламный бюджет без устранения технических ошибок приведут к отрицательному возврату инвестиций (ROI).]
@@ -504,7 +504,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
                 c_reason = clean_typography(f_item['Обоснование'])
                 failed_typst += f"""
 #v(10pt)
-#block(stroke: (left: 2pt + rgb("9F1239")), inset: 10pt)[
+#block(stroke: (left: 2pt + rgb("9F1239"),), inset: 10pt)[
   #text(10.5pt, weight: "bold", fill: rgb("0F172A"))[{c_name}] #linebreak()
   #v(4pt)
   #text(10pt, fill: rgb("475569"))[{c_reason}]
@@ -560,7 +560,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     columns: (100pt, 1fr), 
     gutter: 15pt,
     [#text(12pt, fill: rgb("64748B"))[Telegram:]], 
-    [#text(12pt, weight: "bold", fill: rgb("0F172A"))[@paulvenkov]],
+    [#text(12pt, weight: "bold", fill: rgb("0F172A"))[\\@paulvenkov]],
     [#text(12pt, fill: rgb("64748B"))[Сайт:]], 
     [#text(12pt, weight: "bold", fill: rgb("0F172A"))[pin100.ru]]
   )
