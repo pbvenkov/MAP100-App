@@ -337,20 +337,20 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   ]
 )
 
-#set text(font: ("Arial", "Helvetica Neue", "sans-serif"), size: 10.5pt, fill: rgb("1E293B"), lang: "ru", hyphenate: false)
+#set text(font: ("Arial", "Helvetica Neue"), size: 10.5pt, fill: rgb("1E293B"), lang: "ru")
 #set par(leading: 0.7em)
 
-#show heading: set text(font: ("Georgia", "serif"), fill: rgb("0F172A"))
+#show heading: set text(font: "Georgia", fill: rgb("0F172A"))
 
 // --- ОБЛОЖКА ---
 #v(100pt)
-#text(12pt, fill: rgb("9A6A38"), weight: "bold", tracking: 3pt)[PIN100 ANALYTICS]
+#text(size: 12pt, fill: rgb("9A6A38"), weight: "bold")[PIN100 ANALYTICS]
 #v(12pt)
-#text(24pt, weight: "bold", font: ("Georgia", "serif"), fill: rgb("0F172A"))[Аналитический Отчет:#linebreak()Оцифровка упущенной выручки]
+#text(size: 24pt, weight: "bold", font: "Georgia", fill: rgb("0F172A"))[Аналитический Отчет:#linebreak()Оцифровка упущенной выручки]
 #v(15pt)
 #line(length: 60mm, stroke: 1.5pt + rgb("9A6A38"))
 #v(35pt)
-#text(12pt, fill: rgb("475569"))[
+#text(size: 12pt, fill: rgb("475569"))[
   *Субъект аудита:* {title_safe} #linebreak()
   *Отраслевой сегмент:* {clean_typography(niche)} #linebreak()
   *Дата формирования:* {current_date}
@@ -363,7 +363,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(15pt)
 #line(length: 100%, stroke: 0.5pt + rgb("CBD5E1"))
 #v(15pt)
-#text(10.5pt, fill: rgb("475569"))[
+#text(size: 10.5pt, fill: rgb("475569"))[
   Настоящий аналитический отчет подготовлен центром PIN100 Analytics исключительно в информационных целях для внутреннего использования руководством компании. 
   
   Все выводы базируются на автоматизированном сборе открытых данных (алгоритмический парсинг) из геосервисов по состоянию на дату формирования документа. Данные о финансовых потерях и упущенной выручке являются расчетными (Predictive Analytics) и опираются на усредненные бенчмарки вашей ниши (среднерыночная конверсия, стоимость лида, средний чек, жизненный цикл клиента — LTV).
@@ -378,125 +378,135 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #grid(
   columns: (1fr, 1fr),
   gutter: 20pt,
-  rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 18pt)[
-    #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 1pt)[ИНДЕКС ГОТОВНОСТИ]
-    #v(8pt)
-    #text(28pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)}] #text(12pt, fill: rgb("94A3B8"))[/ 100]
-    #v(4pt)
-    #text(8.5pt, fill: rgb("64748B"), style: "italic")[Оценка по 79 параметрам алгоритмов]
+  [
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 18pt)[
+      #text(size: 9pt, fill: rgb("64748B"), weight: "bold")[ИНДЕКС ГОТОВНОСТИ]
+      #v(8pt)
+      #text(size: 28pt, font: "Georgia", weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)}] #text(size: 12pt, fill: rgb("94A3B8"))[/ 100]
+      #v(4pt)
+      #text(size: 8.5pt, fill: rgb("64748B"), style: "italic")[Оценка по 79 параметрам алгоритмов]
+    ]
   ],
-  rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 18pt)[
-    #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 1pt)[ФИНАНСОВЫЙ РИСК]
-    #v(8pt)
-    #text(26pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("9F1239"))[- {rev_loss_fmt} ₽]
-    #v(4pt)
-    #text(8.5pt, fill: rgb("64748B"), style: "italic")[Ежемесячная упущенная выручка]
+  [
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 18pt)[
+      #text(size: 9pt, fill: rgb("64748B"), weight: "bold")[ФИНАНСОВЫЙ РИСК]
+      #v(8pt)
+      #text(size: 26pt, font: "Georgia", weight: "bold", fill: rgb("9F1239"))[- {rev_loss_fmt} ₽]
+      #v(4pt)
+      #text(size: 8.5pt, fill: rgb("64748B"), style: "italic")[Ежемесячная упущенная выручка]
+    ]
   ]
 )
 #v(25pt)
 #rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 16pt)[
-  #text(12pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[Критический вывод аналитики:]
+  #text(size: 12pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[Критический вывод аналитики:]
   #v(8pt)
-  #text(10.5pt, fill: rgb("334155"))[Прямо сейчас ваша компания фактически невидима для *{dev}% целевых клиентов* в поисковой выдаче Яндекс Карт. Из-за алгоритмических ошибок вы ежемесячно уступаете конкурентам около *{lost_leads} горячих сделок*. Попытки заливать рекламный бюджет в текущий профиль приведут к прямому финансовому убытку.]
+  #text(size: 10.5pt, fill: rgb("334155"))[Прямо сейчас ваша компания фактически невидима для *{dev}% целевых клиентов* в поисковой выдаче Яндекс Карт. Из-за алгоритмических ошибок вы ежемесячно уступаете конкурентам около *{lost_leads} горячих сделок*. Попытки заливать рекламный бюджет в текущий профиль приведут к прямому финансовому убытку.]
 ]
 #pagebreak()
 
 // --- 3 ГЛАВНЫЕ ТОЧКИ СЛИВА ---
 #heading(level: 2)[Три ключевые точки потери выручки]
 #v(10pt)
-#text(10.5pt, fill: rgb("475569"))[Мы не будем утомлять вас техническими терминами. Вот три главных бизнес-фактора, из-за которых компания теряет клиентов прямо сейчас:]
+#text(size: 10.5pt, fill: rgb("475569"))[Мы не будем утомлять вас техническими терминами. Вот три главных бизнес-фактора, из-за которых компания теряет клиентов прямо сейчас:]
 #v(20pt)
 
 #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 16pt)[
-  #text(12pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[1. «Слепая витрина» и потеря поискового трафика]
+  #text(size: 12pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[1. «Слепая витрина» и потеря поискового трафика]
   #v(6pt)
-  #text(10pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие процедуры или программы. Этот самый горячий трафик забирают конкуренты{comp_safe} с правильно настроенными каталогами.]
+  #text(size: 10pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие процедуры или программы. Этот самый горячий трафик забирают конкуренты{comp_safe} с правильно настроенными каталогами.]
 ]
 #v(12pt)
 
 #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 16pt)[
-  #text(12pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[2. Барьер первого контакта (Обрыв конверсии)]
+  #text(size: 12pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[2. Барьер первого контакта (Обрыв конверсии)]
   #v(6pt)
-  #text(10pt, fill: rgb("475569"))[Ваша карточка заставляет клиента совершать лишние усилия. Сегодня отсутствие виджетов прямой онлайн-записи и ярких кнопок действия (CTA) приводит к тому, что клиенты закрывают ваш профиль. Вы безвозвратно теряете огромный пласт «вечернего» трафика и аудиторию, которая предпочитает мессенджеры звонкам.]
+  #text(size: 10pt, fill: rgb("475569"))[Ваша карточка заставляет клиента совершать лишние усилия. Сегодня отсутствие виджетов прямой онлайн-записи и ярких кнопок действия (CTA) приводит к тому, что клиенты закрывают ваш профиль. Вы безвозвратно теряете огромный пласт «вечернего» трафика и аудиторию, которая предпочитает мессенджеры звонкам.]
 ]
 #v(12pt)
 
 #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 16pt)[
-  #text(12pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[3. Скрытые репутационные угрозы]
+  #text(size: 12pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[3. Скрытые репутационные угрозы]
   #v(6pt)
-  #text(10pt, fill: rgb("475569"))[Даже один оставленный без грамотного ответа негативный отзыв работает как токсичный якорь. Для новых клиентов, готовых оставить у вас крупную сумму, отсутствие эмпатичного ответа руководства на проблему равносильно признанию вины. Это рушит конверсию на самом финальном этапе принятия решения.]
+  #text(size: 10pt, fill: rgb("475569"))[Даже один оставленный без грамотного ответа негативный отзыв работает как токсичный якорь. Для новых клиентов, готовых оставить у вас крупную сумму, отсутствие эмпатичного ответа руководства на проблему равносильно признанию вины. Это рушит конверсию на самом финальном этапе принятия решения.]
 ]
 #pagebreak()
 
 // --- ROADMAP & MAFIA OFFER ---
 #heading(level: 2)[Инвестиционное предложение и окупаемость]
 #v(10pt)
-#text(10.5pt, fill: rgb("475569"))[Мы предлагаем вам не покупку «маркетинговых услуг», а системную остановку кассового разрыва. План интеграции под ключ:]
+#text(size: 10.5pt, fill: rgb("475569"))[Мы предлагаем вам не покупку «маркетинговых услуг», а системную остановку кассового разрыва. План интеграции под ключ:]
 #v(20pt)
 
 #grid(
   columns: (1fr, 1fr, 1fr),
   gutter: 12pt,
-  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 12pt)[
-    #text(9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 1]
-    #v(4pt)
-    #text(11pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[SEO-Архитектура]
-    #v(4pt)
-    #text(9pt, fill: rgb("475569"))[Интеграция всех услуг в поисковые алгоритмы для захвата органического трафика.]
+  [
+    #rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 12pt)[
+      #text(size: 9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 1]
+      #v(4pt)
+      #text(size: 11pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[SEO-Архитектура]
+      #v(4pt)
+      #text(size: 9pt, fill: rgb("475569"))[Интеграция всех услуг в поисковые алгоритмы для захвата органического трафика.]
+    ]
   ],
-  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 12pt)[
-    #text(9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 2]
-    #v(4pt)
-    #text(11pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[Снятие барьеров]
-    #v(4pt)
-    #text(9pt, fill: rgb("475569"))[Внедрение систем бронирования и триггеров для захвата обращений 24/7.]
+  [
+    #rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 12pt)[
+      #text(size: 9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 2]
+      #v(4pt)
+      #text(size: 11pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[Снятие барьеров]
+      #v(4pt)
+      #text(size: 9pt, fill: rgb("475569"))[Внедрение систем бронирования и триггеров для захвата обращений 24/7.]
+    ]
   ],
-  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 12pt)[
-    #text(9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 3]
-    #v(4pt)
-    #text(11pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[Защита бренда]
-    #v(4pt)
-    #text(9pt, fill: rgb("475569"))[Антикризисная зачистка негатива и формирование образа надежного лидера.]
+  [
+    #rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 12pt)[
+      #text(size: 9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 3]
+      #v(4pt)
+      #text(size: 11pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[Защита бренда]
+      #v(4pt)
+      #text(size: 9pt, fill: rgb("475569"))[Антикризисная зачистка негатива и формирование образа надежного лидера.]
+    ]
   ]
 )
 
 #v(25pt)
 #rect(width: 100%, fill: rgb("FAFAFA"), stroke: 1pt + rgb("0F172A"), radius: 3pt, inset: 20pt)[
-  #text(14pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[Экономика решения: «{package_name}»]
+  #text(size: 14pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[Экономика решения: «{package_name}»]
   #v(16pt)
   #grid(
     columns: (1fr, 1fr),
     gutter: 20pt,
     [
-      #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ТЕКУЩИЕ УБЫТКИ]
+      #text(size: 9pt, fill: rgb("64748B"), weight: "bold")[ТЕКУЩИЕ УБЫТКИ]
       #v(4pt)
-      #text(16pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("9F1239"))[{rev_loss_fmt} ₽/мес]
+      #text(size: 16pt, font: "Georgia", weight: "bold", fill: rgb("9F1239"))[{rev_loss_fmt} ₽/мес]
       #v(12pt)
-      #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[УПУЩЕННЫЙ LTV]
+      #text(size: 9pt, fill: rgb("64748B"), weight: "bold")[УПУЩЕННЫЙ LTV]
       #v(4pt)
-      #text(13pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[> {ltv_loss_fmt} ₽]
+      #text(size: 13pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[> {ltv_loss_fmt} ₽]
     ],
     [
-      #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ИНВЕСТИЦИЯ ПОД КЛЮЧ]
+      #text(size: 9pt, fill: rgb("64748B"), weight: "bold")[ИНВЕСТИЦИЯ ПОД КЛЮЧ]
       #v(4pt)
-      #text(16pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("9A6A38"))[{package_price}]
+      #text(size: 16pt, font: "Georgia", weight: "bold", fill: rgb("9A6A38"))[{package_price}]
       #v(12pt)
-      #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ТОЧКА ОКУПАЕМОСТИ]
+      #text(size: 9pt, fill: rgb("64748B"), weight: "bold")[ТОЧКА ОКУПАЕМОСТИ]
       #v(4pt)
-      #text(11pt, weight: "bold", fill: rgb("166534"))[{package_roi}]
+      #text(size: 11pt, weight: "bold", fill: rgb("166534"))[{package_roi}]
     ]
   )
   #v(14pt)
   #line(length: 100%, stroke: 0.5pt + rgb("CBD5E1"))
   #v(10pt)
-  #text(9.5pt, fill: rgb("0F172A"), weight: "bold")[Мы забираем 100% рутины на себя. Вам не придется разбираться в лимитах Яндекса или SEO-разметке — ваше время останется для управления бизнесом.]
+  #text(size: 9.5pt, fill: rgb("0F172A"), weight: "bold")[Мы забираем 100% рутины на себя. Вам не придется разбираться в лимитах Яндекса или SEO-разметке — ваше время останется для управления бизнесом.]
 ]
 #pagebreak()
 
 // --- ДЕТАЛИЗАЦИЯ ---
 #heading(level: 2)[Техническое приложение (Детализация аудита)]
 #v(8pt)
-#text(9.5pt, fill: rgb("64748B"))[Развернутая диагностика карточки компании по 79 скрытым алгоритмическим параметрам Яндекса.]
+#text(size: 9.5pt, fill: rgb("64748B"))[Развернутая диагностика карточки компании по 79 скрытым алгоритмическим параметрам Яндекса.]
 #v(15pt)
 """
     blocks = [
@@ -527,15 +537,15 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
                 failed_typst += f"""
 #v(6pt)
 #rect(width: 100%, fill: rgb("FFF1F2"), stroke: 0.5pt + rgb("FECDD3"), radius: 2pt, inset: 8pt)[
-  #text(9.5pt, weight: "bold", fill: rgb("9F1239"))[{c_name}] #linebreak()
+  #text(size: 9.5pt, weight: "bold", fill: rgb("9F1239"))[{c_name}] #linebreak()
   #v(2pt)
-  #text(8.5pt, fill: rgb("475569"))[{c_reason}]
+  #text(size: 8.5pt, fill: rgb("475569"))[{c_reason}]
 ]
 """
         else:
             failed_typst = """
 #v(6pt)
-#text(9pt, fill: rgb("166534"))[Уязвимостей не обнаружено. Отличный результат.]
+#text(size: 9pt, fill: rgb("166534"))[Уязвимостей не обнаружено. Отличный результат.]
 """
 
         typ_source += f"""
@@ -543,17 +553,17 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 12pt)[
   #grid(
     columns: (1fr, auto),
-    text(11pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[{block['title']}],
-    text(11pt, weight: "bold", fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}]
+    [#text(size: 11pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[{block['title']} ]],
+    [#text(size: 11pt, weight: "bold", fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}]]
   )
   #v(6pt)
-  #text(8pt, weight: "bold", fill: rgb("166534"), tracking: 0.5pt)[В НОРМЕ:]
+  #text(size: 8pt, weight: "bold", fill: rgb("166534"))[В НОРМЕ:]
   #v(2pt)
-  #text(8.5pt, fill: rgb("475569"))[{passed_text}]
+  #text(size: 8.5pt, fill: rgb("475569"))[{passed_text}]
   #v(8pt)
   #line(length: 100%, stroke: 0.5pt + rgb("E2E8F0"))
   #v(6pt)
-  #text(8pt, weight: "bold", fill: rgb("9F1239"), tracking: 0.5pt)[ЗОНЫ УЯЗВИМОСТИ (ОШИБКИ):]
+  #text(size: 8pt, weight: "bold", fill: rgb("9F1239"))[ЗОНЫ УЯЗВИМОСТИ (ОШИБКИ):]
   {failed_typst}
 ]
 """
@@ -566,7 +576,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(15pt)
 #line(length: 50mm, stroke: 1.5pt + rgb("9A6A38"))
 #v(20pt)
-#text(10.5pt, fill: rgb("475569"))[
+#text(size: 10.5pt, fill: rgb("475569"))[
   Надеемся, этот отчет помог вам взглянуть на цифровой маркетинг вашей компании под новым углом. Наша цель — не просто указать на ошибки, а помочь вам выстроить надежный фундамент, который будет приносить качественные лиды годами.
 
   Если вы готовы остановить кассовый разрыв и вернуть упущенный трафик, давайте обсудим результаты этого отчета в удобном для вас формате. 
@@ -576,15 +586,15 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(35pt)
 
 #rect(width: 100%, stroke: 0.5pt + rgb("CBD5E1"), fill: rgb("F8FAFC"), radius: 3pt, inset: 20pt)[
-  #text(13pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[Свяжитесь с нами:]
+  #text(size: 13pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[Свяжитесь с нами:]
   #v(15pt)
   #grid(
     columns: (80pt, 1fr), 
     gutter: 12pt,
-    text(11pt, fill: rgb("64748B"))[Telegram:], 
-    text(11pt, weight: "bold", fill: rgb("0F172A"))[\@paulvenkov],
-    text(11pt, fill: rgb("64748B"))[Сайт:], 
-    text(11pt, weight: "bold", fill: rgb("0F172A"))[pin100.ru]
+    [#text(size: 11pt, fill: rgb("64748B"))[Telegram:]], 
+    [#text(size: 11pt, weight: "bold", fill: rgb("0F172A"))[\@paulvenkov]],
+    [#text(size: 11pt, fill: rgb("64748B"))[Сайт:]], 
+    [#text(size: 11pt, weight: "bold", fill: rgb("0F172A"))[pin100.ru]]
   )
 ]
 """
