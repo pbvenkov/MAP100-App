@@ -300,8 +300,7 @@ def calculate_dynamic_expert_rules(data, prompts_data):
 # 5. ТИПОГРАФИКА И PDF (ПРЕМИУМ BIG4 СТИЛЬ)
 # ==========================================
 def clean_typography(text):
-    # Очистка и экранирование спецсимволов для безопасности Typst
-    t = str(text).replace(" - ", " — ").replace('\\', r'\\').replace('[', r'\[').replace(']', r'\]').replace('{', r'\{').replace('}', r'\}').replace('$', r'\$').replace('*', r'\*').replace('_', r'\_').replace('#', r'\#').replace('@', r'\@')
+    t = str(text).replace(" - ", " — ").replace('\\', r'\\').replace('[', r'\[').replace(']', r'\]').replace('{', r'\{').replace('}', r'\}').replace('$', r'\$').replace('*', r'\*').replace('_', r'\_').replace('#', r'\#')
     return t
 
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, client_ltv, competitors_text=""):
@@ -314,6 +313,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     cc_fmt = f"{client_check:,}".replace(',', ' ')
     ltv_loss_fmt = f"{revenue_loss * client_ltv:,}".replace(',', ' ')
     title_safe = clean_typography(title)
+    comp_safe = clean_typography(competitors_text)
     
     package_name = "Интеграция Medical/B2B PRO" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else "Комплексная Бизнес-Упаковка"
     package_price = "85 000 ₽" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else "35 000 ₽"
@@ -326,10 +326,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   paper: "a4",
   margin: (x: 20mm, y: 25mm),
   footer: [
-    #set text(size: 8pt, fill: rgb("94A3B8"))
-    PIN100 Analytics | Строго конфиденциально
-    #h(1fr)
-    Стр. #context counter(page).display()
+    #text(size: 8pt, fill: rgb("94A3B8"))[PIN100 Analytics | Строго конфиденциально #h(1fr) Стр. #counter(page).display()]
   ]
 )
 
@@ -404,7 +401,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 
 #text(14pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("0F172A"))[1. «Слепая витрина» и потеря поискового трафика]
 #v(8pt)
-#text(10.5pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие процедуры или товары. Этот самый горячий трафик забирают конкуренты{clean_typography(competitors_text)} с правильно настроенными каталогами.]
+#text(10.5pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие процедуры или товары. Этот самый горячий трафик забирают конкуренты{comp_safe} с правильно настроенными каталогами.]
 #v(20pt)
 
 #text(14pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("0F172A"))[2. Барьер первого контакта (Обрыв конверсии)]
@@ -424,24 +421,24 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #grid(
   columns: (25pt, 1fr),
   gutter: 10pt,
-  text(12pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("8B7355"))[01.],
-  block[
+  [#text(12pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("8B7355"))[01.]],
+  [#block[
     #text(11pt, weight: "bold", fill: rgb("0F172A"))[SEO-Архитектура] #linebreak()
     #v(4pt)
     #text(10pt, fill: rgb("475569"))[Интеграция всех услуг в поисковые алгоритмы Яндекса для захвата органического трафика.]
-  ],
-  text(12pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("8B7355"))[02.],
-  block[
+  ]],
+  [#text(12pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("8B7355"))[02.]],
+  [#block[
     #text(11pt, weight: "bold", fill: rgb("0F172A"))[Конверсионный слой (UX)] #linebreak()
     #v(4pt)
     #text(10pt, fill: rgb("475569"))[Внедрение систем онлайн-бронирования и маркетинговых триггеров для захвата лидов 24/7.]
-  ],
-  text(12pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("8B7355"))[03.],
-  block[
+  ]],
+  [#text(12pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("8B7355"))[03.]],
+  [#block[
     #text(11pt, weight: "bold", fill: rgb("0F172A"))[Защита бренда] #linebreak()
     #v(4pt)
     #text(10pt, fill: rgb("475569"))[Антикризисная зачистка негатива и формирование образа премиального партнера.]
-  ]
+  ]]
 )
 
 #v(30pt)
@@ -522,8 +519,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 2pt, inset: 15pt)[
   #grid(
     columns: (1fr, auto),
-    text(12pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("0F172A"))[{block['title']}],
-    text(12pt, weight: "bold", fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}]
+    [#text(12pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("0F172A"))[{block['title']}]],
+    [#text(12pt, weight: "bold", fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}]]
   )
   #v(10pt)
   #text(8pt, weight: "bold", fill: rgb("3F6212"), tracking: 1pt)[В НОРМЕ:]
@@ -560,10 +557,10 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   #grid(
     columns: (100pt, 1fr), 
     gutter: 15pt,
-    text(12pt, fill: rgb("64748B"))[Telegram:], 
-    text(12pt, weight: "bold", fill: rgb("0F172A"))[\@paulvenkov],
-    text(12pt, fill: rgb("64748B"))[Сайт:], 
-    text(12pt, weight: "bold", fill: rgb("0F172A"))[pin100.ru]
+    [#text(12pt, fill: rgb("64748B"))[Telegram:]], 
+    [#text(12pt, weight: "bold", fill: rgb("0F172A"))[\\@paulvenkov]],
+    [#text(12pt, fill: rgb("64748B"))[Сайт:]], 
+    [#text(12pt, weight: "bold", fill: rgb("0F172A"))[pin100.ru]]
   )
 ]
 """
