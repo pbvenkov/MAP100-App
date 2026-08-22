@@ -22,7 +22,7 @@ EXPERT_TITLE = "Генератор B2B Воронки (Аналитически�
 # ==========================================
 APIFY_API_TOKEN = st.secrets.get("APIFY_API_TOKEN", "")
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
-VK_API_TOKEN = st.secrets.get("VK_API_TOKEN", "") # <--- НОВЫЙ ТОКЕН VK
+VK_API_TOKEN = st.secrets.get("VK_API_TOKEN", "")
 
 try:
     genai.configure(api_key=st.secrets.get("GEMINI_API_KEY", ""))
@@ -43,6 +43,36 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
         except Exception: 
             pass
 
+def send_telegram_business_alert(title, category, unique_keys):
+    """Умный радар: Отправка уведомлений о новой перспективной нише"""
+    tg_token = st.secrets.get("TG_BOT_TOKEN")
+    tg_admin_id = st.secrets.get("TG_ADMIN_ID")
+    if not (tg_token and tg_admin_id): return
+
+    # ИИ-оценка привлекательности новой ниши
+    ai_reasoning = ""
+    if expert_engine:
+        try:
+            prompt = f"Кратко (в 2-3 предложениях) оцени нишу '{category}' (на примере '{title}'). Почему продажа B2B-консалтинга за 85 000 руб. может быть интересна этой нише? Оцени примерный LTV и средний чек клиента в этом бизнесе."
+            response = expert_engine.generate_content(prompt)
+            ai_reasoning = response.text.strip()
+        except:
+            ai_reasoning = "Потенциально высокий LTV. Требует ручной бизнес-оценки."
+
+    tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+    text = (
+        f"🚨 *Обнаружена новая ниша, которой еще нет в нашей программе!*\n\n"
+        f"🏢 *Компания:* {title}\n"
+        f"🏷 *Категория:* {category}\n"
+        f"🔑 *Скрытые ключи Яндекса:* {', '.join(unique_keys)}\n\n"
+        f"💡 *Почему это может быть нам интересно:*\n_{ai_reasoning}_\n\n"
+        f"❓ *Действие:* Передайте эти ключи разработчику для добавления в NICHE_MAPPING."
+    )
+    try: 
+        requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
+    except Exception: 
+        pass
+
 # ==========================================
 # 2. БАЗЫ ДАННЫХ И GOOGLE SHEETS
 # ==========================================
@@ -55,6 +85,7 @@ NICHE_ECONOMICS = {
     "AUTO": {"leads": 100, "check": 12000, "label": "Авто", "ltv_months": 6},
     "SERVICES": {"leads": 60, "check": 7000, "label": "Услуги B2C", "ltv_months": 6},
     "BEAUTY_MEDICAL": {"leads": 80, "check": 6000, "label": "Медицина / Бьюти", "ltv_months": 12},
+    "EDUCATION": {"leads": 30, "check": 50000, "label": "Образование", "ltv_months": 12},
     "OTHER": {"leads": 50, "check": 5000, "label": "Прочее", "ltv_months": 6}
 }
 
@@ -96,8 +127,7 @@ def save_audit_to_sheets(url, title, niche, total_score, results_data, lpr_data=
             "Общий балл": str(round(total_score, 1)).replace('.', ',')
         }
         
-        # 🔴 ЗАПИСЬ КОНТАКТОВ ЛПР В ТАБЛИЦУ
-        if lpr_data:
+        if lpr_data and lpr_data.get("name"):
             row_dict["ФИО ЛПР"] = lpr_data.get("name", "")
             row_dict["Должность"] = lpr_data.get("role", "")
             row_dict["Личный контакт"] = lpr_data.get("link", "")
@@ -158,22 +188,17 @@ def fetch_apify_data(yandex_url):
     return data
 
 def enrich_lpr_contacts_from_vk(social_links):
-    """
-    Парсит блок контактов группы ВКонтакте по API
-    """
+    """ Парсит блок контактов группы ВКонтакте """
     if not VK_API_TOKEN or not social_links:
         return {}
         
-    # Ищем ссылку на ВК
     vk_url = next((link.get('url', '') for link in social_links if 'vk.com' in link.get('url', '') or 'vk.ru' in link.get('url', '')), None)
     if not vk_url:
         return {}
         
-    # Вытаскиваем короткое имя (screen_name)
     screen_name = vk_url.rstrip('/').split('/')[-1]
     
     try:
-        # Запрос к API ВК (Информация о группе)
         res = requests.get("https://api.vk.com/method/groups.getById", params={
             "group_id": screen_name,
             "fields": "contacts",
@@ -185,35 +210,36 @@ def enrich_lpr_contacts_from_vk(social_links):
             group_info = res['response'][0]
             contacts = group_info.get('contacts', [])
             
-            if contacts:
-                contact = contacts[0] # Берем первого (главного) контактного лица
-                lpr_data = {
-                    "name": "",
-                    "role": contact.get('desc', 'Администратор'),
-                    "link": "",
-                    "email": contact.get('email', '')
-                }
+            if not contacts:
+                return {"status": "hidden", "vk_url": vk_url} # Контакты скрыты настройками ВК
                 
-                # Если привязан конкретный профиль пользователя
-                if 'user_id' in contact:
-                    user_id = contact['user_id']
-                    lpr_data["link"] = f"https://vk.com/id{user_id}"
+            contact = contacts[0] 
+            lpr_data = {
+                "name": "",
+                "role": contact.get('desc', 'Администратор'),
+                "link": "",
+                "email": contact.get('email', ''),
+                "status": "found"
+            }
+            
+            if 'user_id' in contact:
+                user_id = contact['user_id']
+                lpr_data["link"] = f"https://vk.com/id{user_id}"
+                
+                user_res = requests.get("https://api.vk.com/method/users.get", params={
+                    "user_ids": user_id,
+                    "access_token": VK_API_TOKEN,
+                    "v": "5.199"
+                }).json()
+                
+                if 'response' in user_res and user_res['response']:
+                    u = user_res['response'][0]
+                    lpr_data["name"] = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip()
                     
-                    # Делаем микро-запрос чтобы вытянуть Имя и Фамилию
-                    user_res = requests.get("https://api.vk.com/method/users.get", params={
-                        "user_ids": user_id,
-                        "access_token": VK_API_TOKEN,
-                        "v": "5.199"
-                    }).json()
-                    
-                    if 'response' in user_res and user_res['response']:
-                        u = user_res['response'][0]
-                        lpr_data["name"] = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip()
-                        
-                return lpr_data
+            return lpr_data
                 
     except Exception as e:
-        print(f"Ошибка при обращении к API ВКонтакте: {e}")
+        print(f"Ошибка ВК: {e}")
         
     return {}
 
@@ -242,14 +268,14 @@ def determine_niche_by_expert(title, category, prompts_data):
     if not niche_prompt:
         niche_prompt = """Проведи экспертную оценку бизнеса по названию "{title}" и категории "{category}".
 ВНИМАНИЕ: Если в категории есть слова "завод", "производство", "опт", "промышленный" - это СТРОГО B2B_HEAVY.
-Определи ОДИН наиболее подходящий сегмент: HORECA, B2B, B2B_HEAVY, RETAIL, AUTO, SERVICES, BEAUTY_MEDICAL, DENTISTRY, OTHER.
+Определи ОДИН наиболее подходящий сегмент: HORECA, B2B, B2B_HEAVY, RETAIL, AUTO, SERVICES, BEAUTY_MEDICAL, DENTISTRY, EDUCATION, OTHER.
 Верни ТОЛЬКО ОДНО СЛОВО - ключ на английском."""
     
     prompt = niche_prompt.replace("{title}", title).replace("{category}", category)
     try:
         response = expert_engine.generate_content(prompt)
         key = response.text.strip().upper()
-        for v in ["B2B_HEAVY", "BEAUTY_MEDICAL", "DENTISTRY", "HORECA", "B2B", "RETAIL", "AUTO", "SERVICES", "OTHER"]:
+        for v in ["B2B_HEAVY", "BEAUTY_MEDICAL", "DENTISTRY", "HORECA", "B2B", "RETAIL", "AUTO", "EDUCATION", "SERVICES", "OTHER"]:
             if v in key: return v
         return "OTHER"
     except Exception as e:
@@ -260,6 +286,8 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     now = datetime.now(timezone.utc)
     title = str(data.get('title') or '')
     desc = str(data.get('description') or '')
+    cat_list = data.get('categories', [''])
+    cat_name = cat_list[0].get('name', cat_list[0]) if isinstance(cat_list[0], dict) else str(cat_list[0])
     
     if data.get('isVerifiedOwner') or len(title) > 2: scores['PROF-01.1'] = True
     if data.get('categories'): scores['PROF-03.1'] = True
@@ -282,11 +310,12 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     if isinstance(features, dict) and len(features.keys()) > 0: scores['PROF-08.1'] = True
     elif isinstance(features, list) and len(features) > 0: scores['PROF-08.1'] = True
 
-    # Нишевые атрибуты (PROF-08.2)
+    # Нишевые атрибуты (PROF-08.2) + добавлены школы
     NICHE_MAPPING = {
         "DENTISTRY": ["dentist_services", "uni_medic_specialization"],
         "AUTOSERVICES": ["car_wash_services", "auto_repair_features"],
         "HORECA": ["restaurant_services", "cuisine_type"],
+        "EDUCATION": ["school_direction", "specialized_schools", "classes for children"]
     }
     
     if isinstance(features, dict):
@@ -295,6 +324,14 @@ def calculate_hard_facts(data, niche_key="OTHER"):
             if features.get(key):
                 scores['PROF-08.2'] = True
                 break
+                
+        # 🔴 УМНЫЙ РАДАР НИШ
+        if niche_key in ["OTHER", "SERVICES"]:
+            standard_keys = {'payment_method', 'wi_fi', 'toilet', 'parking', 'street_entrance', 'parking_disabled', 'promotions', 'wheelchair_access'}
+            client_unique_keys = [k for k in features.keys() if k not in standard_keys]
+            
+            if len(client_unique_keys) >= 2:
+                send_telegram_business_alert(title, cat_name, client_unique_keys[:5])
     
     if len(desc) > 1500: scores['PROF-09.1'] = True
     if data.get('isVerifiedOwner'): scores['PROF-12.1'] = True
@@ -436,7 +473,7 @@ def calculate_dynamic_expert_rules(data, prompts_data):
     return scores
 
 # ==========================================
-# 5. ТИПОГРАФИКА И PDF (TYPST) - КОНСАЛТИНГ-ВЕРСИЯ (BIG4 STYLE)
+# 5. ТИПОГРАФИКА И PDF (TYPST) - КОНСАЛТИНГ-ВЕРСИЯ
 # ==========================================
 def clean_typography(text):
     t = str(text)
@@ -466,7 +503,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     title_safe = str(title).replace('"', '').replace('[', '').replace(']', '').replace('\\', '').replace('#', '').replace('*', '').replace('$', '')
     doc_title = "Аналитический Отчет:#linebreak()Оцифровка упущенной выручки"
 
-    if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "DENTISTRY", "BEAUTY_MEDICAL", "B2B_HEAVY"]:
+    if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"]:
         package_name = "Интеграция Medical/B2B PRO"
         package_price = "85 000 ₽"
         package_roi = f"1-2 закрытых клиента (при чеке {cc_fmt} ₽)"
@@ -661,7 +698,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 ]
 """
 
-    # --- ТЕХНИЧЕСКОЕ ПРИЛОЖЕНИЕ (ДЛЯ МАРКЕТОЛОГОВ) ---
+    # --- ТЕХНИЧЕСКОЕ ПРИЛОЖЕНИЕ ---
     typ_source += """
 #pagebreak()
 #heading(level: 2)[Техническое приложение (Детализация аудита)]
@@ -724,7 +761,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(10pt)
 """
     
-    # --- FINAL CTA PAGE (МЯГКИЙ ПРИЗЫВ К ДЕЙСТВИЮ) ---
+    # --- FINAL CTA PAGE ---
     typ_source += """
 #pagebreak()
 #v(40pt)
@@ -797,7 +834,6 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
             cat = c_list[0].get('name', '') if c_list and isinstance(c_list[0], dict) else (str(c_list[0]) if c_list else '')
             client_reviews = int(data.get('reviewsCount') or data.get('ratingsCount') or len(data.get('reviews') or []) or 0)
             
-            # 🔴 ИЩЕМ ЛПР ЧЕРЕЗ API ВКОНТАКТЕ
             social_links = data.get('socialLinks') or data.get('links') or []
             lpr_data = enrich_lpr_contacts_from_vk(social_links)
             
@@ -863,7 +899,6 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
                         "Max": max_s
                     })
 
-            # 🔴 СОХРАНЯЕМ ОТЧЕТ И КОНТАКТЫ В ТАБЛИЦУ
             save_audit_to_sheets(url, title, niche_key, final_total_score, results, lpr_data)
 
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
@@ -885,11 +920,11 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
                 st.subheader(f"🏢 {title}")
                 st.caption(f"🧠 Сегмент: **{niche_label}** | 📍 Фактических отзывов: {client_reviews}")
                 
-                # 🔴 ВЫВОДИМ НАЙДЕННЫЕ КОНТАКТЫ В ИНТЕРФЕЙС
-                if lpr_data and lpr_data.get('name'):
+                # 🔴 ВЫВОДИМ НАЙДЕННЫЕ КОНТАКТЫ (С ПРЕДУПРЕЖДЕНИЕМ)
+                if lpr_data and lpr_data.get('status') == 'found':
                     st.success(f"🕵️‍♂️ **Найден ЛПР:** {lpr_data.get('name')} ({lpr_data.get('role')})\n\n🔗 {lpr_data.get('link')}")
-                elif lpr_data:
-                    st.info("🕵️‍♂️ Контакты скрыты настройками приватности группы ВК.")
+                elif lpr_data and lpr_data.get('status') == 'hidden':
+                    st.warning("⚠️ **Группа ВК найдена, но блок «Контакты» скрыт настройками приватности.** Ищите ЛПР через сайт!")
                 
             with col2: 
                 delta = "Отличный результат" if final_total_score >= 80 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
