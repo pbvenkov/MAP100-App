@@ -297,7 +297,7 @@ def calculate_dynamic_expert_rules(data, prompts_data):
     return {}
 
 # ==========================================
-# 5. ТИПОГРАФИКА И PDF (ПРЕМИУМ BIG4 ЧЕРЕЗ JSON)
+# 5. ТИПОГРАФИКА И PDF (СТАТИЧНЫЙ ШАБЛОН TYPST)
 # ==========================================
 TYPST_STATIC_TEMPLATE = r"""
 #let data = json("report_data.json")
@@ -359,19 +359,23 @@ TYPST_STATIC_TEMPLATE = r"""
 #grid(
   columns: (1fr, 1fr),
   gutter: 20pt,
-  rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 15pt)[
-    #text(size: 9pt, fill: rgb("64748B"), weight: "bold")[ИНДЕКС ГОТОВНОСТИ] \
-    #v(6pt)
-    #text(size: 26pt, font: "Georgia", weight: "bold", fill: rgb(data.score_color))[#str(data.score)] #text(size: 12pt, fill: rgb("94A3B8"))[/ 100] \
-    #v(4pt)
-    #text(size: 8.5pt, fill: rgb("64748B"))[_Оценка по 79 параметрам алгоритмов_]
+  [
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 15pt)[
+      #text(size: 9pt, fill: rgb("64748B"), weight: "bold")[ИНДЕКС ГОТОВНОСТИ] \
+      #v(6pt)
+      #text(size: 26pt, font: "Georgia", weight: "bold", fill: rgb(data.score_color))[#str(data.score)] #text(size: 12pt, fill: rgb("94A3B8"))[/ 100] \
+      #v(4pt)
+      #text(size: 8.5pt, fill: rgb("64748B"))[_Оценка по 79 параметрам алгоритмов_]
+    ]
   ],
-  rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 15pt)[
-    #text(size: 9pt, fill: rgb("64748B"), weight: "bold")[ФИНАНСОВЫЙ РИСК] \
-    #v(6pt)
-    #text(size: 24pt, font: "Georgia", weight: "bold", fill: rgb("9F1239"))[- #data.revenue_loss_fmt ₽] \
-    #v(4pt)
-    #text(size: 8.5pt, fill: rgb("64748B"))[_Ежемесячная упущенная выручка_]
+  [
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 15pt)[
+      #text(size: 9pt, fill: rgb("64748B"), weight: "bold")[ФИНАНСОВЫЙ РИСК] \
+      #v(6pt)
+      #text(size: 24pt, font: "Georgia", weight: "bold", fill: rgb("9F1239"))[- #data.revenue_loss_fmt ₽] \
+      #v(4pt)
+      #text(size: 8.5pt, fill: rgb("64748B"))[_Ежемесячная упущенная выручка_]
+    ]
   ]
 )
 #v(20pt)
@@ -418,26 +422,32 @@ TYPST_STATIC_TEMPLATE = r"""
 #grid(
   columns: (1fr, 1fr, 1fr),
   gutter: 10pt,
-  rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 10pt)[
-    #text(size: 9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 1] \
-    #v(4pt)
-    #text(size: 11pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[SEO-Архитектура] \
-    #v(4pt)
-    #text(size: 9pt, fill: rgb("475569"))[Интеграция всех услуг в поисковые алгоритмы для захвата органического трафика.]
+  [
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 10pt)[
+      #text(size: 9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 1] \
+      #v(4pt)
+      #text(size: 11pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[SEO-Архитектура] \
+      #v(4pt)
+      #text(size: 9pt, fill: rgb("475569"))[Интеграция всех услуг в поисковые алгоритмы для захвата органического трафика.]
+    ]
   ],
-  rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 10pt)[
-    #text(size: 9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 2] \
-    #v(4pt)
-    #text(size: 11pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[Снятие барьеров] \
-    #v(4pt)
-    #text(size: 9pt, fill: rgb("475569"))[Внедрение систем бронирования и триггеров для захвата обращений 24/7.]
+  [
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 10pt)[
+      #text(size: 9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 2] \
+      #v(4pt)
+      #text(size: 11pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[Снятие барьеров] \
+      #v(4pt)
+      #text(size: 9pt, fill: rgb("475569"))[Внедрение систем бронирования и триггеров для захвата обращений 24/7.]
+    ]
   ],
-  rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 10pt)[
-    #text(size: 9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 3] \
-    #v(4pt)
-    #text(size: 11pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[Защита бренда] \
-    #v(4pt)
-    #text(size: 9pt, fill: rgb("475569"))[Антикризисная зачистка негатива и формирование образа надежного лидера.]
+  [
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 3pt, inset: 10pt)[
+      #text(size: 9pt, weight: "bold", fill: rgb("9A6A38"))[ЭТАП 3] \
+      #v(4pt)
+      #text(size: 11pt, font: "Georgia", weight: "bold", fill: rgb("0F172A"))[Защита бренда] \
+      #v(4pt)
+      #text(size: 9pt, fill: rgb("475569"))[Антикризисная зачистка негатива и формирование образа надежного лидера.]
+    ]
   ]
 )
 
