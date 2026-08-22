@@ -49,7 +49,6 @@ def send_telegram_business_alert(title, category, unique_keys):
     tg_admin_id = st.secrets.get("TG_ADMIN_ID")
     if not (tg_token and tg_admin_id): return
 
-    # ИИ-оценка привлекательности новой ниши
     ai_reasoning = ""
     if expert_engine:
         try:
@@ -244,7 +243,7 @@ def enrich_lpr_contacts_from_vk(social_links):
     return {}
 
 # ==========================================
-# 4. АЛГОРИТМЫ ОЦЕНКИ И ИИ
+# 4. АЛГОРИТМЫ ОЦЕНКИ И ИИ-РЕРАЙТИНГ
 # ==========================================
 def get_safe_list(data, keys):
     res = []
@@ -281,6 +280,44 @@ def determine_niche_by_expert(title, category, prompts_data):
     except Exception as e:
         raise Exception(f"Сбой ИИ (Ниша): {str(e)}")
 
+def rewrite_errors_by_ai(niche_label, company_name, failed_rules, expert_engine):
+    """ ИИ-рерайтинг стандартных текстов ошибок под боли конкретной ниши """
+    if not expert_engine or not failed_rules:
+        return failed_rules
+        
+    payload_text = ""
+    for r in failed_rules:
+        payload_text += f"ID: {r['Код']} | Ошибка: {r['Критерий']} | Стандартный текст: {r['Обоснование']}\n"
+        
+    prompt = f"""
+    Ты — премиальный B2B-маркетолог. Ниша текущего клиента: {niche_label}. Название компании: {company_name}.
+    Ниже приведен список технических ошибок их профиля в Яндекс Картах.
+    Твоя задача: переписать "Стандартный текст" каждой ошибки так, чтобы он бил точно в боли этой ниши. 
+    Используй правильную терминологию (например, "пациенты", "ученики", "гости" вместо общих "клиентов", если это уместно). 
+    Текст должен звучать экспертно, емко (без воды), показывая упущенную выгоду.
+    
+    Ошибки для переработки:
+    {payload_text}
+    
+    Верни результат СТРОГО в формате чистого JSON:
+    {{
+        "Код_ошибки": "Твой переписанный текст",
+        "Код_ошибки": "Твой переписанный текст"
+    }}
+    """
+    try:
+        response = expert_engine.generate_content(prompt)
+        match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        if match:
+            new_texts = json.loads(match.group(0))
+            for r in failed_rules:
+                if r['Код'] in new_texts and str(new_texts[r['Код']]).strip():
+                    r['Обоснование'] = new_texts[r['Код']]
+    except Exception as e:
+        print(f"Ошибка ИИ-рерайтинга: {e}")
+        
+    return failed_rules
+
 def calculate_hard_facts(data, niche_key="OTHER"):
     scores = {}
     now = datetime.now(timezone.utc)
@@ -306,11 +343,9 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     
     features = data.get('features', {})
     
-    # Базовые атрибуты PROF-08.1
     if isinstance(features, dict) and len(features.keys()) > 0: scores['PROF-08.1'] = True
     elif isinstance(features, list) and len(features) > 0: scores['PROF-08.1'] = True
 
-    # Нишевые атрибуты (PROF-08.2) + добавлены школы
     NICHE_MAPPING = {
         "DENTISTRY": ["dentist_services", "uni_medic_specialization"],
         "AUTOSERVICES": ["car_wash_services", "auto_repair_features"],
@@ -325,7 +360,6 @@ def calculate_hard_facts(data, niche_key="OTHER"):
                 scores['PROF-08.2'] = True
                 break
                 
-        # 🔴 УМНЫЙ РАДАР НИШ
         if niche_key in ["OTHER", "SERVICES"]:
             standard_keys = {'payment_method', 'wi_fi', 'toilet', 'parking', 'street_entrance', 'parking_disabled', 'promotions', 'wheelchair_access'}
             client_unique_keys = [k for k in features.keys() if k not in standard_keys]
@@ -488,7 +522,7 @@ def clean_typography(text):
     t = t.replace('#', r'\#')
     return t
 
-def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, client_ltv):
+def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, client_ltv, competitors_text=""):
     current_date = datetime.now().strftime("%d.%m.%Y")
     
     score_color = "16A34A" if score >= 80 else ("C5A880" if score >= 50 else "DC2626")
@@ -601,7 +635,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #text(14pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[1. «Слепая витрина» и потеря поискового трафика]
     #v(10pt)
     #set par(leading: 0.6em)
-    #text(11pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие процедуры или товары. Этот самый горячий трафик забирают конкуренты с правильно настроенными каталогами.]
+    #text(11pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие процедуры или товары. Этот самый горячий трафик забирают конкуренты{competitors_text} с правильно настроенными каталогами.]
   ]
 ]
 #v(15pt)
@@ -837,6 +871,11 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
             social_links = data.get('socialLinks') or data.get('links') or []
             lpr_data = enrich_lpr_contacts_from_vk(social_links)
             
+            # Неймдроппинг конкурентов
+            related_places = data.get('relatedPlaces', [])
+            competitors_list = [str(c.get('name')) for c in related_places if c.get('name')][:2]
+            competitors_text = f" (например, {', '.join(competitors_list)})" if competitors_list else ""
+            
         with st.spinner("Бизнес-оценка и расчет юнит-экономики..."):
             try: 
                 niche_key = determine_niche_by_expert(title, cat, prompts_data)
@@ -899,10 +938,17 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
                         "Max": max_s
                     })
 
-            save_audit_to_sheets(url, title, niche_key, final_total_score, results, lpr_data)
-
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
             niche_label = eco.get("label", "Прочее")
+
+            # 🔴 ИИ-РЕРАЙТИНГ ОШИБОК ПОД НИШУ КЛИЕНТА
+            failed_items = [r for r in results if r['Результат'] == 'НЕТ' and r['Max'] > 0]
+            if failed_items:
+                with st.spinner("ИИ адаптирует смыслы отчета под нишу клиента..."):
+                    results = rewrite_errors_by_ai(niche_label, title, results, expert_engine)
+
+            # Сохранение после рерайтинга
+            save_audit_to_sheets(url, title, niche_key, final_total_score, results, lpr_data)
             
             with st.sidebar:
                 st.divider()
@@ -920,7 +966,6 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
                 st.subheader(f"🏢 {title}")
                 st.caption(f"🧠 Сегмент: **{niche_label}** | 📍 Фактических отзывов: {client_reviews}")
                 
-                # 🔴 ВЫВОДИМ НАЙДЕННЫЕ КОНТАКТЫ (С ПРЕДУПРЕЖДЕНИЕМ)
                 if lpr_data and lpr_data.get('status') == 'found':
                     st.success(f"🕵️‍♂️ **Найден ЛПР:** {lpr_data.get('name')} ({lpr_data.get('role')})\n\n🔗 {lpr_data.get('link')}")
                 elif lpr_data and lpr_data.get('status') == 'hidden':
@@ -939,7 +984,8 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
             st.divider()
             st.markdown("### 📥 Выгрузка отчетов")
             
-            pdf_business_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check, client_ltv)
+            # Передаем конкурентов в генератор PDF
+            pdf_business_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check, client_ltv, competitors_text)
             
             if pdf_business_bytes:
                 st.download_button(
