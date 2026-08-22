@@ -22,6 +22,7 @@ EXPERT_TITLE = "Генератор B2B Воронки (Аналитически�
 # ==========================================
 APIFY_API_TOKEN = st.secrets.get("APIFY_API_TOKEN", "")
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
+VK_API_TOKEN = st.secrets.get("VK_API_TOKEN", "") # <--- НОВЫЙ ТОКЕН VK
 
 try:
     genai.configure(api_key=st.secrets.get("GEMINI_API_KEY", ""))
@@ -80,7 +81,7 @@ def fetch_cached_database():
         st.error(f"Ошибка чтения Google Sheets: {e}")
         return [], []
 
-def save_audit_to_sheets(url, title, niche, total_score, results_data):
+def save_audit_to_sheets(url, title, niche, total_score, results_data, lpr_data=None):
     try:
         client = gspread.authorize(get_google_credentials())
         doc = client.open_by_url(st.secrets["SPREADSHEET_URL"])
@@ -95,6 +96,13 @@ def save_audit_to_sheets(url, title, niche, total_score, results_data):
             "Общий балл": str(round(total_score, 1)).replace('.', ',')
         }
         
+        # 🔴 ЗАПИСЬ КОНТАКТОВ ЛПР В ТАБЛИЦУ
+        if lpr_data:
+            row_dict["ФИО ЛПР"] = lpr_data.get("name", "")
+            row_dict["Должность"] = lpr_data.get("role", "")
+            row_dict["Личный контакт"] = lpr_data.get("link", "")
+            row_dict["Прямой Email"] = lpr_data.get("email", "")
+        
         for r in results_data:
             code = r.get("Код")
             if code:
@@ -106,7 +114,7 @@ def save_audit_to_sheets(url, title, niche, total_score, results_data):
         print(f"Ошибка сохранения логов в Google Sheets: {e}") 
 
 # ==========================================
-# 3. ПАРСЕР APIFY 
+# 3. ПАРСЕРЫ И СБОР ДАННЫХ
 # ==========================================
 def fetch_apify_data(yandex_url):
     if "/-/" in yandex_url:
@@ -148,6 +156,66 @@ def fetch_apify_data(yandex_url):
     if not data.get('title') or len(str(data.get('title'))) < 2:
         raise Exception("Яндекс вернул пустую заглушку вместо карточки.")
     return data
+
+def enrich_lpr_contacts_from_vk(social_links):
+    """
+    Парсит блок контактов группы ВКонтакте по API
+    """
+    if not VK_API_TOKEN or not social_links:
+        return {}
+        
+    # Ищем ссылку на ВК
+    vk_url = next((link.get('url', '') for link in social_links if 'vk.com' in link.get('url', '') or 'vk.ru' in link.get('url', '')), None)
+    if not vk_url:
+        return {}
+        
+    # Вытаскиваем короткое имя (screen_name)
+    screen_name = vk_url.rstrip('/').split('/')[-1]
+    
+    try:
+        # Запрос к API ВК (Информация о группе)
+        res = requests.get("https://api.vk.com/method/groups.getById", params={
+            "group_id": screen_name,
+            "fields": "contacts",
+            "access_token": VK_API_TOKEN,
+            "v": "5.199"
+        }, timeout=5).json()
+        
+        if 'response' in res and res['response']:
+            group_info = res['response'][0]
+            contacts = group_info.get('contacts', [])
+            
+            if contacts:
+                contact = contacts[0] # Берем первого (главного) контактного лица
+                lpr_data = {
+                    "name": "",
+                    "role": contact.get('desc', 'Администратор'),
+                    "link": "",
+                    "email": contact.get('email', '')
+                }
+                
+                # Если привязан конкретный профиль пользователя
+                if 'user_id' in contact:
+                    user_id = contact['user_id']
+                    lpr_data["link"] = f"https://vk.com/id{user_id}"
+                    
+                    # Делаем микро-запрос чтобы вытянуть Имя и Фамилию
+                    user_res = requests.get("https://api.vk.com/method/users.get", params={
+                        "user_ids": user_id,
+                        "access_token": VK_API_TOKEN,
+                        "v": "5.199"
+                    }).json()
+                    
+                    if 'response' in user_res and user_res['response']:
+                        u = user_res['response'][0]
+                        lpr_data["name"] = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip()
+                        
+                return lpr_data
+                
+    except Exception as e:
+        print(f"Ошибка при обращении к API ВКонтакте: {e}")
+        
+    return {}
 
 # ==========================================
 # 4. АЛГОРИТМЫ ОЦЕНКИ И ИИ
@@ -729,6 +797,10 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
             cat = c_list[0].get('name', '') if c_list and isinstance(c_list[0], dict) else (str(c_list[0]) if c_list else '')
             client_reviews = int(data.get('reviewsCount') or data.get('ratingsCount') or len(data.get('reviews') or []) or 0)
             
+            # 🔴 ИЩЕМ ЛПР ЧЕРЕЗ API ВКОНТАКТЕ
+            social_links = data.get('socialLinks') or data.get('links') or []
+            lpr_data = enrich_lpr_contacts_from_vk(social_links)
+            
         with st.spinner("Бизнес-оценка и расчет юнит-экономики..."):
             try: 
                 niche_key = determine_niche_by_expert(title, cat, prompts_data)
@@ -791,7 +863,8 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
                         "Max": max_s
                     })
 
-            save_audit_to_sheets(url, title, niche_key, final_total_score, results)
+            # 🔴 СОХРАНЯЕМ ОТЧЕТ И КОНТАКТЫ В ТАБЛИЦУ
+            save_audit_to_sheets(url, title, niche_key, final_total_score, results, lpr_data)
 
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
             niche_label = eco.get("label", "Прочее")
@@ -811,6 +884,13 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
             with col1: 
                 st.subheader(f"🏢 {title}")
                 st.caption(f"🧠 Сегмент: **{niche_label}** | 📍 Фактических отзывов: {client_reviews}")
+                
+                # 🔴 ВЫВОДИМ НАЙДЕННЫЕ КОНТАКТЫ В ИНТЕРФЕЙС
+                if lpr_data and lpr_data.get('name'):
+                    st.success(f"🕵️‍♂️ **Найден ЛПР:** {lpr_data.get('name')} ({lpr_data.get('role')})\n\n🔗 {lpr_data.get('link')}")
+                elif lpr_data:
+                    st.info("🕵️‍♂️ Контакты скрыты настройками приватности группы ВК.")
+                
             with col2: 
                 delta = "Отличный результат" if final_total_score >= 80 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
                 st.metric(f"Индекс {PROJECT_NAME}", f"{round(final_total_score, 1)} / 100", delta=delta, delta_color="normal" if final_total_score>=80 else "inverse")
