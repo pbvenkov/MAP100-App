@@ -32,7 +32,6 @@ except Exception as e:
     expert_engine = None
 
 def send_telegram_alert(error_msg, target_url="Неизвестно"):
-    """Отправка уведомлений об ошибках разработчику"""
     tg_token = st.secrets.get("TG_BOT_TOKEN")
     tg_admin_id = st.secrets.get("TG_ADMIN_ID")
     if tg_token and tg_admin_id:
@@ -44,7 +43,6 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
             pass
 
 def send_telegram_business_alert(title, category, unique_keys):
-    """Умный радар: Отправка уведомлений о новой перспективной нише"""
     tg_token = st.secrets.get("TG_BOT_TOKEN")
     tg_admin_id = st.secrets.get("TG_ADMIN_ID")
     if not (tg_token and tg_admin_id): return
@@ -99,13 +97,8 @@ def fetch_cached_database():
     try:
         client = gspread.authorize(get_google_credentials())
         doc = client.open_by_url(st.secrets["SPREADSHEET_URL"])
-        
-        raw_rules = doc.worksheet("Rules").get_all_values()
-        rules = [dict(zip(raw_rules[0], row)) for row in raw_rules[1:] if any(row)]
-        
-        raw_prompts = doc.worksheet("Prompts").get_all_values()
-        prompts = [dict(zip(raw_prompts[0], row)) for row in raw_prompts[1:] if any(row)]
-        
+        rules = [dict(zip(doc.worksheet("Rules").get_all_values()[0], row)) for row in doc.worksheet("Rules").get_all_values()[1:] if any(row)]
+        prompts = [dict(zip(doc.worksheet("Prompts").get_all_values()[0], row)) for row in doc.worksheet("Prompts").get_all_values()[1:] if any(row)]
         return rules, prompts
     except Exception as e:
         st.error(f"Ошибка чтения Google Sheets: {e}")
@@ -114,286 +107,141 @@ def fetch_cached_database():
 def save_audit_to_sheets(url, title, niche, total_score, results_data, lpr_data=None):
     try:
         client = gspread.authorize(get_google_credentials())
-        doc = client.open_by_url(st.secrets["SPREADSHEET_URL"])
-        ws = doc.worksheet("Results")
+        ws = client.open_by_url(st.secrets["SPREADSHEET_URL"]).worksheet("Results")
         headers = ws.row_values(1)
-        
         row_dict = {
             "Дата": datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M:%S"),
-            "Ссылка": url,
-            "Компания": title,
-            "Ниша": niche,
+            "Ссылка": url, "Компания": title, "Ниша": niche,
             "Общий балл": str(round(total_score, 1)).replace('.', ',')
         }
-        
         if lpr_data and lpr_data.get("name"):
-            row_dict["ФИО ЛПР"] = lpr_data.get("name", "")
-            row_dict["Должность"] = lpr_data.get("role", "")
-            row_dict["Личный контакт"] = lpr_data.get("link", "")
-            row_dict["Прямой Email"] = lpr_data.get("email", "")
-        
+            row_dict.update({"ФИО ЛПР": lpr_data.get("name", ""), "Должность": lpr_data.get("role", ""), "Личный контакт": lpr_data.get("link", ""), "Прямой Email": lpr_data.get("email", "")})
         for r in results_data:
-            code = r.get("Код")
-            if code:
-                row_dict[code] = str(round(r.get("Earned", 0), 1)).replace('.', ',')
-                
-        row_to_append = [row_dict.get(h, "") for h in headers]
-        ws.append_row(row_to_append)
-    except Exception as e:
-        print(f"Ошибка сохранения логов в Google Sheets: {e}") 
+            if r.get("Код"): row_dict[r.get("Код")] = str(round(r.get("Earned", 0), 1)).replace('.', ',')
+        ws.append_row([row_dict.get(h, "") for h in headers])
+    except Exception: pass 
 
 # ==========================================
 # 3. ПАРСЕРЫ И СБОР ДАННЫХ
 # ==========================================
 def fetch_apify_data(yandex_url):
     if "/-/" in yandex_url:
-        try:
-            r = requests.get(yandex_url, allow_redirects=True, timeout=10)
-            yandex_url = r.url
-        except Exception as e:
-            raise Exception(f"Не удалось расшифровать короткую ссылку Яндекса: {e}")
-
-    run_url = f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
-    
-    payload = {
-        "startUrls": [{"url": yandex_url}], 
-        "maxItems": 1,
-        "enrichBusinessData": True,
-        "maxPhotos": 150,
-        "maxPosts": 50
-    }
-    
-    run_req = requests.post(run_url, json=payload).json()
-    if 'error' in run_req: 
-        raise Exception(f"Ошибка Apify API: {run_req['error']}")
-        
+        try: yandex_url = requests.get(yandex_url, allow_redirects=True, timeout=10).url
+        except Exception as e: raise Exception(f"Не удалось расшифровать ссылку: {e}")
+    run_req = requests.post(f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}", json={"startUrls": [{"url": yandex_url}], "maxItems": 1, "enrichBusinessData": True, "maxPhotos": 150, "maxPosts": 50}).json()
+    if 'error' in run_req: raise Exception(f"Ошибка Apify API: {run_req['error']}")
     run_id, dataset_id = run_req['data']['id'], run_req['data']['defaultDatasetId']
     status, retries = "RUNNING", 0
-    
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
-        if retries >= 35: raise Exception("Таймаут парсера Apify (Яндекс слишком долго отвечает).")
+        if retries >= 35: raise Exception("Таймаут парсера.")
         time.sleep(5)
         status = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}").json()['data']['status']
         retries += 1
-        
     if status != "SUCCEEDED": raise Exception(f"Парсер упал со статусом {status}.")
-        
     dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}").json()
-    if not dataset: raise Exception("Яндекс отдал пустой результат (вероятна капча).")
-    
-    data = dataset[0]
-    if not data.get('title') or len(str(data.get('title'))) < 2:
-        raise Exception("Яндекс вернул пустую заглушку вместо карточки.")
-    return data
+    if not dataset or not dataset[0].get('title'): raise Exception("Пустой результат.")
+    return dataset[0]
 
 def enrich_lpr_contacts_from_vk(social_links):
-    """ Парсит блок контактов группы ВКонтакте """
-    if not VK_API_TOKEN or not social_links:
-        return {}
-        
+    if not VK_API_TOKEN or not social_links: return {}
     vk_url = next((link.get('url', '') for link in social_links if 'vk.com' in link.get('url', '') or 'vk.ru' in link.get('url', '')), None)
-    if not vk_url:
-        return {}
-        
-    screen_name = vk_url.rstrip('/').split('/')[-1]
-    
+    if not vk_url: return {}
     try:
-        res = requests.get("https://api.vk.com/method/groups.getById", params={
-            "group_id": screen_name,
-            "fields": "contacts",
-            "access_token": VK_API_TOKEN,
-            "v": "5.199"
-        }, timeout=5).json()
-        
+        res = requests.get("https://api.vk.com/method/groups.getById", params={"group_id": vk_url.rstrip('/').split('/')[-1], "fields": "contacts", "access_token": VK_API_TOKEN, "v": "5.199"}, timeout=5).json()
         if 'response' in res and res['response']:
-            group_info = res['response'][0]
-            contacts = group_info.get('contacts', [])
-            
-            if not contacts:
-                return {"status": "hidden", "vk_url": vk_url} # Контакты скрыты настройками ВК
-                
+            contacts = res['response'][0].get('contacts', [])
+            if not contacts: return {"status": "hidden", "vk_url": vk_url}
             contact = contacts[0] 
-            lpr_data = {
-                "name": "",
-                "role": contact.get('desc', 'Администратор'),
-                "link": "",
-                "email": contact.get('email', ''),
-                "status": "found"
-            }
-            
+            lpr_data = {"name": "", "role": contact.get('desc', 'Администратор'), "link": "", "email": contact.get('email', ''), "status": "found"}
             if 'user_id' in contact:
-                user_id = contact['user_id']
-                lpr_data["link"] = f"https://vk.com/id{user_id}"
-                
-                user_res = requests.get("https://api.vk.com/method/users.get", params={
-                    "user_ids": user_id,
-                    "access_token": VK_API_TOKEN,
-                    "v": "5.199"
-                }).json()
-                
-                if 'response' in user_res and user_res['response']:
-                    u = user_res['response'][0]
-                    lpr_data["name"] = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip()
-                    
+                lpr_data["link"] = f"https://vk.com/id{contact['user_id']}"
+                u_res = requests.get("https://api.vk.com/method/users.get", params={"user_ids": contact['user_id'], "access_token": VK_API_TOKEN, "v": "5.199"}).json()
+                if 'response' in u_res and u_res['response']: lpr_data["name"] = f"{u_res['response'][0].get('first_name', '')} {u_res['response'][0].get('last_name', '')}".strip()
             return lpr_data
-                
-    except Exception as e:
-        print(f"Ошибка ВК: {e}")
-        
+    except Exception: pass
     return {}
 
 # ==========================================
-# 4. АЛГОРИТМЫ ОЦЕНКИ И ИИ-РЕРАЙТИНГ
+# 4. АЛГОРИТМЫ И ИИ
 # ==========================================
-def get_safe_list(data, keys):
-    res = []
-    for k in keys:
-        if isinstance(data.get(k), list): res.extend(data[k])
-        elif isinstance(data.get(k), dict): res.append(data[k])
-    return res
-
 def parse_yandex_date(date_val):
     if not date_val: return None
     try:
-        if isinstance(date_val, (int, float)) or (isinstance(date_val, str) and str(date_val).isdigit()):
-            return datetime.fromtimestamp(int(date_val)/1000, tz=timezone.utc)
+        if isinstance(date_val, (int, float)) or (isinstance(date_val, str) and str(date_val).isdigit()): return datetime.fromtimestamp(int(date_val)/1000, tz=timezone.utc)
         return datetime.fromisoformat(str(date_val).replace('Z', '+00:00'))
     except: return None
 
 def determine_niche_by_expert(title, category, prompts_data):
-    if not expert_engine: raise Exception("ИИ не инициализирован.")
-    
-    niche_prompt = next((p.get("Промпт для ИИ") for p in prompts_data if p.get("Код") == "NICHE_PROMPT"), None)
-    if not niche_prompt:
-        niche_prompt = """Проведи экспертную оценку бизнеса по названию "{title}" и категории "{category}".
-ВНИМАНИЕ: Если в категории есть слова "завод", "производство", "опт", "промышленный" - это СТРОГО B2B_HEAVY.
-Определи ОДИН наиболее подходящий сегмент: HORECA, B2B, B2B_HEAVY, RETAIL, AUTO, SERVICES, BEAUTY_MEDICAL, DENTISTRY, EDUCATION, OTHER.
-Верни ТОЛЬКО ОДНО СЛОВО - ключ на английском."""
-    
-    prompt = niche_prompt.replace("{title}", title).replace("{category}", category)
+    if not expert_engine: return "OTHER"
+    prompt = next((p.get("Промпт для ИИ") for p in prompts_data if p.get("Код") == "NICHE_PROMPT"), "").replace("{title}", title).replace("{category}", category)
     try:
-        response = expert_engine.generate_content(prompt)
-        key = response.text.strip().upper()
+        key = expert_engine.generate_content(prompt).text.strip().upper()
         for v in ["B2B_HEAVY", "BEAUTY_MEDICAL", "DENTISTRY", "HORECA", "B2B", "RETAIL", "AUTO", "EDUCATION", "SERVICES", "OTHER"]:
             if v in key: return v
-        return "OTHER"
-    except Exception as e:
-        raise Exception(f"Сбой ИИ (Ниша): {str(e)}")
+    except: pass
+    return "OTHER"
 
 def rewrite_errors_by_ai(niche_label, company_name, failed_rules, expert_engine):
-    """ ИИ-рерайтинг стандартных текстов ошибок под боли конкретной ниши """
-    if not expert_engine or not failed_rules:
-        return failed_rules
-        
-    payload_text = ""
-    for r in failed_rules:
-        payload_text += f"ID: {r['Код']} | Ошибка: {r['Критерий']} | Стандартный текст: {r['Обоснование']}\n"
-        
-    prompt = f"""
-    Ты — премиальный B2B-маркетолог. Ниша текущего клиента: {niche_label}. Название компании: {company_name}.
-    Ниже приведен список технических ошибок их профиля в Яндекс Картах.
-    Твоя задача: переписать "Стандартный текст" каждой ошибки так, чтобы он бил точно в боли этой ниши. 
-    Используй правильную терминологию (например, "пациенты", "ученики", "гости" вместо общих "клиентов", если это уместно). 
-    Текст должен звучать экспертно, емко (без воды), показывая упущенную выгоду.
-    
-    Ошибки для переработки:
-    {payload_text}
-    
-    Верни результат СТРОГО в формате чистого JSON:
-    {{
-        "Код_ошибки": "Твой переписанный текст",
-        "Код_ошибки": "Твой переписанный текст"
-    }}
-    """
+    if not expert_engine or not failed_rules: return failed_rules
+    payload_text = "".join([f"ID: {r['Код']} | Ошибка: {r['Критерий']} | Стандартный текст: {r['Обоснование']}\n" for r in failed_rules])
+    prompt = f"""Ты — премиальный B2B-маркетолог. Ниша клиента: {niche_label}. Компания: {company_name}.
+Перепиши "Стандартный текст" каждой ошибки под боли этой ниши. Используй правильную терминологию (например, "пациенты", "ученики" вместо "клиентов"). Текст должен быть экспертным, строгим, без воды, показывать упущенную выгоду.
+Ошибки:
+{payload_text}
+Верни строго JSON: {{"Код_ошибки": "Твой переписанный текст"}}"""
     try:
-        response = expert_engine.generate_content(prompt)
-        match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        match = re.search(r'\{.*\}', expert_engine.generate_content(prompt).text, re.DOTALL)
         if match:
             new_texts = json.loads(match.group(0))
             for r in failed_rules:
-                if r['Код'] in new_texts and str(new_texts[r['Код']]).strip():
-                    r['Обоснование'] = new_texts[r['Код']]
-    except Exception as e:
-        print(f"Ошибка ИИ-рерайтинга: {e}")
-        
+                if r['Код'] in new_texts and str(new_texts[r['Код']]).strip(): r['Обоснование'] = new_texts[r['Код']]
+    except Exception: pass
     return failed_rules
 
 def calculate_hard_facts(data, niche_key="OTHER"):
     scores = {}
     now = datetime.now(timezone.utc)
-    title = str(data.get('title') or '')
-    desc = str(data.get('description') or '')
+    title, desc, url = str(data.get('title') or ''), str(data.get('description') or ''), str(data.get('url') or data.get('website') or '').lower()
     cat_list = data.get('categories', [''])
     cat_name = cat_list[0].get('name', cat_list[0]) if isinstance(cat_list[0], dict) else str(cat_list[0])
     
     if data.get('isVerifiedOwner') or len(title) > 2: scores['PROF-01.1'] = True
     if data.get('categories'): scores['PROF-03.1'] = True
-    url = str(data.get('url') or data.get('website') or '').lower()
     if url: scores['PROF-04.1'] = True
-    
     phones = data.get('phones') or []
     if phones: 
         scores['PROF-05.1'] = True
-        if any(str(p).startswith('+7') or str(p).startswith('8') for p in phones):
-            scores['PROF-05.2'] = True
-        
+        if any(str(p).startswith('+7') or str(p).startswith('8') for p in phones): scores['PROF-05.2'] = True
     schedule = data.get('schedule') or data.get('workingHours') or []
-    if isinstance(schedule, list) and len(schedule) >= 7: scores['PROF-07.1'] = True
-    elif isinstance(schedule, dict) and len(schedule.keys()) >= 7: scores['PROF-07.1'] = True
+    if (isinstance(schedule, list) and len(schedule) >= 7) or (isinstance(schedule, dict) and len(schedule.keys()) >= 7): scores['PROF-07.1'] = True
     
     features = data.get('features', {})
-    
     if isinstance(features, dict) and len(features.keys()) > 0: scores['PROF-08.1'] = True
     elif isinstance(features, list) and len(features) > 0: scores['PROF-08.1'] = True
 
-    NICHE_MAPPING = {
-        "DENTISTRY": ["dentist_services", "uni_medic_specialization"],
-        "AUTOSERVICES": ["car_wash_services", "auto_repair_features"],
-        "HORECA": ["restaurant_services", "cuisine_type"],
-        "EDUCATION": ["school_direction", "specialized_schools", "classes for children"]
-    }
-    
+    NICHE_MAPPING = {"DENTISTRY": ["dentist_services", "uni_medic_specialization"], "AUTOSERVICES": ["car_wash_services", "auto_repair_features"], "HORECA": ["restaurant_services", "cuisine_type"], "EDUCATION": ["school_direction", "specialized_schools", "classes for children"]}
     if isinstance(features, dict):
-        expected_keys = NICHE_MAPPING.get(niche_key, [])
-        for key in expected_keys:
-            if features.get(key):
-                scores['PROF-08.2'] = True
-                break
-                
+        if any(features.get(key) for key in NICHE_MAPPING.get(niche_key, [])): scores['PROF-08.2'] = True
         if niche_key in ["OTHER", "SERVICES"]:
-            standard_keys = {'payment_method', 'wi_fi', 'toilet', 'parking', 'street_entrance', 'parking_disabled', 'promotions', 'wheelchair_access'}
-            client_unique_keys = [k for k in features.keys() if k not in standard_keys]
-            
-            if len(client_unique_keys) >= 2:
-                send_telegram_business_alert(title, cat_name, client_unique_keys[:5])
+            client_unique_keys = [k for k in features.keys() if k not in {'payment_method', 'wi_fi', 'toilet', 'parking', 'street_entrance', 'parking_disabled', 'promotions', 'wheelchair_access'}]
+            if len(client_unique_keys) >= 2: send_telegram_business_alert(title, cat_name, client_unique_keys[:5])
     
     if len(desc) > 1500: scores['PROF-09.1'] = True
     if data.get('isVerifiedOwner'): scores['PROF-12.1'] = True
     
-    links_data = data.get('socialLinks') or data.get('links') or []
-    owner_links = url + " " + desc + " " + " ".join([str(l) for l in links_data])
+    owner_links = url + " " + desc + " " + " ".join([str(l) for l in (data.get('socialLinks') or data.get('links') or [])])
     if any(s in owner_links.lower() for s in ["t.me", "wa.me", "whatsapp", "viber"]): scores['PROF-13.1'] = True
     if any(s in owner_links.lower() for s in ["vk.com", "vk.ru", "youtube", "dzen", "instagram", "inst:"]): scores['PROF-13.2'] = True
     
-    prods = []
-    if isinstance(data.get('menu'), dict): prods.extend(data['menu'].get('items', []))
-    if isinstance(data.get('productCatalog'), list): prods.extend(data['productCatalog'])
-        
-    valid_prods = [p for p in prods if isinstance(p, dict)]
+    valid_prods = [p for p in (data.get('menu', {}).get('items', []) if isinstance(data.get('menu'), dict) else []) + (data.get('productCatalog') or []) if isinstance(p, dict)]
     if valid_prods:
         if len(valid_prods) >= 10: scores['PROF-11.1'] = True
-        photos_count = sum(1 for p in valid_prods if p.get('photoUrl') or p.get('photo'))
-        if photos_count / len(valid_prods) >= 0.8: scores['PROF-11.2'] = True
-        prices_count = sum(1 for p in valid_prods if any(char.isdigit() for char in str(p.get('price') or '')))
-        if prices_count / len(valid_prods) >= 0.8: scores['PROF-11.3'] = True
-        desc_count = sum(1 for p in valid_prods if len(str(p.get('description') or '')) > 50)
-        if desc_count / len(valid_prods) >= 0.8: scores['PROF-11.4'] = True
-        cats = set([p.get('category') for p in valid_prods if p.get('category')])
-        if len(cats) >= 2: scores['PROF-11.5'] = True
+        if sum(1 for p in valid_prods if p.get('photoUrl') or p.get('photo')) / len(valid_prods) >= 0.8: scores['PROF-11.2'] = True
+        if sum(1 for p in valid_prods if any(char.isdigit() for char in str(p.get('price') or ''))) / len(valid_prods) >= 0.8: scores['PROF-11.3'] = True
+        if sum(1 for p in valid_prods if len(str(p.get('description') or '')) > 50) / len(valid_prods) >= 0.8: scores['PROF-11.4'] = True
+        if len(set([p.get('category') for p in valid_prods if p.get('category')])) >= 2: scores['PROF-11.5'] = True
         
-    addr = str(data.get('address') or '')
-    if len(addr) > 5: scores['SEO-18.1'] = True
-    
+    if len(str(data.get('address') or '')) > 5: scores['SEO-18.1'] = True
     if data.get('videoCount', 0) > 0 or data.get('videos') or data.get('mobileVideos'): scores['CONT-42.1'] = True
     photo_count = int(data.get('photoCount') or len(data.get('photos') or []) or 0)
     if photo_count >= 15: scores['CONT-36.1'] = True
@@ -410,181 +258,92 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     rating = float(data.get('rating') or 0.0)
     if rating >= 4.5: scores['REP-27.1'] = True
     if rating >= 4.8: scores['REP-27.2'] = True
+    if int(data.get('reviewsCount') or data.get('ratingsCount') or data.get('reviewCount') or 0) >= 50: scores['REP-28.1'] = True
     
-    rev_count = int(data.get('reviewsCount') or data.get('ratingsCount') or data.get('reviewCount') or 0)
-    if rev_count >= 50: scores['REP-28.1'] = True
-    
-    reviews_raw = data.get('reviews') or []
-    six_months_ago = now - timedelta(days=180)
-    recent_reviews = []
-    for r in reviews_raw:
-        if not isinstance(r, dict): continue
-        r_date = parse_yandex_date(r.get('date') or r.get('time'))
-        if r_date and r_date >= six_months_ago:
-            recent_reviews.append(r)
-            
-    if not recent_reviews:
-        scores['META_NO_RECENT_REVIEWS'] = True
+    recent_reviews = [r for r in (data.get('reviews') or []) if isinstance(r, dict) and parse_yandex_date(r.get('date') or r.get('time')) and parse_yandex_date(r.get('date') or r.get('time')) >= now - timedelta(days=180)]
+    if not recent_reviews: scores['META_NO_RECENT_REVIEWS'] = True
     else:
-        replied = 0
-        has_positive_replied = False
-        has_unanswered_negative = False
-        
-        latest_date = parse_yandex_date(recent_reviews[0].get('date'))
-        if latest_date and (now - latest_date).days <= 14: scores['REP-29.1'] = True
-            
-        for r in recent_reviews[:20]:
-            r_rating = float(r.get('rating') or 0.0)
-            reply_text = str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip()
-            
-            if reply_text:
-                replied += 1
-                if r_rating >= 4.0: has_positive_replied = True
-                bc_date = parse_yandex_date(r.get('businessCommentDate'))
-                rev_date = parse_yandex_date(r.get('date'))
-                if bc_date and rev_date and (bc_date - rev_date).days <= 3: scores['REP-30.2'] = True
-            else:
-                if r_rating <= 3.0: has_unanswered_negative = True
-                
+        replied = sum(1 for r in recent_reviews[:20] if str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip())
+        if parse_yandex_date(recent_reviews[0].get('date')) and (now - parse_yandex_date(recent_reviews[0].get('date'))).days <= 14: scores['REP-29.1'] = True
         if len(recent_reviews[:20]) > 0:
             if replied / len(recent_reviews[:20]) >= 0.9: scores['REP-30.1'] = True
-            photos_in_revs = sum(1 for r in recent_reviews[:20] if r.get('photos') or r.get('photoDetails'))
-            if photos_in_revs / len(recent_reviews[:20]) >= 0.1: scores['REP-35.1'] = True
-            
-        if has_positive_replied: scores['REP-30.3'] = True
-        if not has_unanswered_negative: scores['REP-32.1'] = True
-        
+            if sum(1 for r in recent_reviews[:20] if r.get('photos') or r.get('photoDetails')) / len(recent_reviews[:20]) >= 0.1: scores['REP-35.1'] = True
+        if any(float(r.get('rating') or 0.0) >= 4.0 and str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip() for r in recent_reviews[:20]): scores['REP-30.3'] = True
+        if not any(float(r.get('rating') or 0.0) <= 3.0 and not str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip() for r in recent_reviews[:20]): scores['REP-32.1'] = True
+        for r in recent_reviews[:20]:
+            bc_date, rev_date = parse_yandex_date(r.get('businessCommentDate')), parse_yandex_date(r.get('date'))
+            if str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip() and bc_date and rev_date and (bc_date - rev_date).days <= 3: 
+                scores['REP-30.2'] = True
+                break
     return scores
 
 def calculate_dynamic_expert_rules(data, prompts_data):
-    scores = {}
-    if not expert_engine or not prompts_data: return scores
-    
-    title = str(data.get('title') or '')
-    desc = str(data.get('description') or '')[:1000]
-    
-    now = datetime.now(timezone.utc)
-    six_months_ago = now - timedelta(days=180)
-    recent_reviews = []
-    for r in data.get('reviews') or []:
-        r_date = parse_yandex_date(r.get('date'))
-        if r_date and r_date >= six_months_ago: recent_reviews.append(r)
-            
-    reviews_text = ""
-    for r in recent_reviews[:10]:
-        if isinstance(r, dict):
-            u_text = r.get('text', '')
-            o_reply = r.get('businessComment') or r.get('reply', {}).get('text') if isinstance(r.get('reply'), dict) else ''
-            reviews_text += f"Отзыв: {u_text}\nОтвет владельца: {o_reply}\n---\n"
-            
-    prods = get_safe_list(data.get('menu') or {}, ['items']) + get_safe_list(data, ['productCatalog'])
-    prods_text = ", ".join([str(p.get('name')) for p in prods if isinstance(p, dict)][:20])
-
+    if not expert_engine or not prompts_data: return {}
+    title, desc = str(data.get('title') or ''), str(data.get('description') or '')[:1000]
+    recent_reviews = [r for r in data.get('reviews', []) if parse_yandex_date(r.get('date')) and parse_yandex_date(r.get('date')) >= datetime.now(timezone.utc) - timedelta(days=180)][:10]
+    reviews_text = "".join([f"Отзыв: {r.get('text', '')}\nОтвет: {r.get('businessComment') or r.get('reply', {}).get('text') if isinstance(r.get('reply'), dict) else ''}\n" for r in recent_reviews if isinstance(r, dict)])
+    prods = [p for p in (data.get('menu', {}).get('items', []) if isinstance(data.get('menu'), dict) else []) + (data.get('productCatalog') or []) if isinstance(p, dict)][:20]
+    prods_text = ", ".join([str(p.get('name')) for p in prods])
     rules_list = [f'"{p.get("Код", "").strip()}": {p.get("Промпт для ИИ", "").strip()}' for p in prompts_data if p.get('Код', '').strip() and p.get('Код') != 'NICHE_PROMPT']
-    if not rules_list: return scores
-
-    batch_prompt = f"""
-Контекст о бизнесе:
-Название: {title}
-Описание: {desc}
-Товары/Услуги: {prods_text}
-Последние отзывы и ответы:
-{reviews_text[:2000]} 
-
-Критерии для оценки:
-{chr(10).join(rules_list)}
-
-ВНИМАНИЕ! Верни строго JSON формата {{"CODE": true/false}}. В ответе ОБЯЗАТЕЛЬНО должны присутствовать абсолютно все кодов из списка критериев.
-"""
+    
+    if not rules_list: return {}
+    prompt = f"Контекст:\nНазвание: {title}\nОписание: {desc}\nТовары/Услуги: {prods_text}\nОтзывы:\n{reviews_text[:2000]}\nКритерии:\n{chr(10).join(rules_list)}\nВерни JSON {{CODE: true/false}}."
     try:
-        response = expert_engine.generate_content(batch_prompt)
-        match = re.search(r'\{.*\}', response.text, re.DOTALL)
-        if match:
-            res_json = json.loads(match.group(0))
-            for code, result in res_json.items():
-                if str(result).lower() in ["1", "true"]: scores[code] = True
+        match = re.search(r'\{.*\}', expert_engine.generate_content(prompt).text, re.DOTALL)
+        if match: return {k: True for k, v in json.loads(match.group(0)).items() if str(v).lower() in ["1", "true"]}
     except: pass
-    return scores
+    return {}
 
 # ==========================================
-# 5. ТИПОГРАФИКА И PDF (TYPST) - КОНСАЛТИНГ-ВЕРСИЯ
+# 5. ТИПОГРАФИКА И PDF (ПРЕМИУМ BIG4 СТИЛЬ)
 # ==========================================
 def clean_typography(text):
-    t = str(text)
-    t = re.sub(r'[-—]\s*[-—]', '—', t)
-    t = t.replace(" - ", " — ")
-    t = t.replace(" это ", " — это ")
-    t = t.replace('\\', r'\\')
-    t = t.replace('[', r'\[').replace(']', r'\]')
-    t = t.replace('{', r'\{').replace('}', r'\}')
-    t = t.replace('$', r'\$')
-    t = t.replace('*', r'\*').replace('_', r'\_')
-    t = t.replace('#', r'\#')
+    t = str(text).replace(" - ", " — ").replace('\\', r'\\').replace('[', r'\[').replace(']', r'\]').replace('{', r'\{').replace('}', r'\}').replace('$', r'\$').replace('*', r'\*').replace('_', r'\_').replace('#', r'\#')
     return t
 
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, client_ltv, competitors_text=""):
     current_date = datetime.now().strftime("%d.%m.%Y")
-    
-    score_color = "16A34A" if score >= 80 else ("C5A880" if score >= 50 else "DC2626")
+    score_color = "3F6212" if score >= 80 else ("8B7355" if score >= 50 else "9F1239")
     dev = round(100 - score, 1)
     lost_leads = int(client_leads * (dev / 100))
     
-    rev_loss_fmt = f"{revenue_loss:,}".replace(',', ' ')
-    cc_fmt = f"{client_check:,}".replace(',', ' ')
-    ltv_loss = revenue_loss * client_ltv
-    ltv_loss_fmt = f"{ltv_loss:,}".replace(',', ' ')
-    
+    rev_loss_fmt, cc_fmt, ltv_loss_fmt = f"{revenue_loss:,}".replace(',', ' '), f"{client_check:,}".replace(',', ' '), f"{revenue_loss * client_ltv:,}".replace(',', ' ')
     title_safe = str(title).replace('"', '').replace('[', '').replace(']', '').replace('\\', '').replace('#', '').replace('*', '').replace('$', '')
-    doc_title = "Аналитический Отчет:#linebreak()Оцифровка упущенной выручки"
-
-    if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"]:
-        package_name = "Интеграция Medical/B2B PRO"
-        package_price = "85 000 ₽"
-        package_roi = f"1-2 закрытых клиента (при чеке {cc_fmt} ₽)"
-    else:
-        package_name = "Комплексная Бизнес-Упаковка"
-        package_price = "35 000 ₽"
-        package_roi = f"3-5 новых клиентов (при чеке {cc_fmt} ₽)"
+    
+    package_name = "Интеграция Medical/B2B PRO" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else "Комплексная Бизнес-Упаковка"
+    package_price = "85 000 ₽" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else "35 000 ₽"
+    package_roi = f"1-2 закрытых клиента (при чеке {cc_fmt} ₽)" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else f"3-5 новых клиентов (при чеке {cc_fmt} ₽)"
 
     typ_source = f"""
 #set document(title: "Аналитический Отчет - {title_safe}", author: "PIN100 Analytics")
-#set page(
-  paper: "a4",
-  margin: (x: 20mm, y: 25mm),
-  footer: [
-    #set text(size: 8pt, fill: rgb("94A3B8"))
-    PIN100 Analytics | Строго конфиденциально
-    #h(1fr)
-    Стр. #context counter(page).display()
-  ]
-)
-
-#set text(font: ("Inter", "Arial", "sans-serif"), size: 11pt, fill: rgb("334155"), lang: "ru")
-#show heading: set text(font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))
+#set page(paper: "a4", margin: (x: 20mm, y: 25mm), footer: [#set text(size: 8pt, fill: rgb("94A3B8")); PIN100 Analytics | Строго конфиденциально #h(1fr) Стр. #context counter(page).display()])
+#set text(font: ("Arial", "Helvetica Neue", "sans-serif"), size: 10.5pt, fill: rgb("1E293B"), lang: "ru", hyphenate: false)
+#set par(leading: 0.7em, justify: false)
+#show heading: set text(font: ("Georgia", "Times New Roman", "serif"), fill: rgb("0F172A"))
+#show strong: set text(weight: "bold", fill: rgb("0F172A"))
 
 // --- ОБЛОЖКА ---
 #v(100pt)
-#text(16pt, fill: rgb("C5A880"), weight: "bold", tracking: 2pt)[PIN100 ANALYTICS]
-#v(10pt)
-#text(28pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[{doc_title}]
-#v(10pt)
-#line(length: 80mm, stroke: 1.5pt + rgb("C5A880"))
-#v(30pt)
-#text(14pt, fill: rgb("475569"))[
-  Подготовлено для: #strong(text(fill: rgb("0A1128"))[{title_safe}]) #linebreak()
-  Ниша: #strong[{clean_typography(niche)}] #linebreak()
-  Дата расчета: #strong[{current_date}]
+#text(12pt, fill: rgb("8B7355"), weight: "bold", tracking: 3pt)[PIN100 ANALYTICS]
+#v(15pt)
+#text(26pt, weight: "bold", font: ("Georgia", "Times New Roman", "serif"), fill: rgb("0F172A"), leading: 0.8em)[Аналитический Отчет:#linebreak()Оцифровка упущенной выручки]
+#v(20pt)
+#line(length: 50mm, stroke: 2pt + rgb("8B7355"))
+#v(40pt)
+#text(12pt, fill: rgb("475569"), leading: 0.8em)[
+  #strong[Субъект аудита:] {title_safe} #linebreak()
+  #strong[Отраслевой сегмент:] {clean_typography(niche)} #linebreak()
+  #strong[Дата формирования:] {current_date}
 ]
 #pagebreak()
 
-// --- ДИСКЛЕЙМЕР И МЕТОДОЛОГИЯ (PAGE 2) ---
+// --- ДИСКЛЕЙМЕР ---
 #v(30pt)
 #heading(level: 2)[Ограничение ответственности и методология]
 #v(15pt)
 #line(length: 100%, stroke: 0.5pt + rgb("CBD5E1"))
 #v(15pt)
-#set par(leading: 0.7em)
-#text(11pt, fill: rgb("475569"))[
+#text(10.5pt, fill: rgb("475569"))[
   Настоящий аналитический отчет подготовлен центром PIN100 Analytics исключительно в информационных целях для внутреннего использования руководством компании. 
   
   Все выводы базируются на автоматизированном сборе открытых данных (алгоритмический парсинг) из геосервисов по состоянию на дату формирования документа. Данные о финансовых потерях и упущенной выручке являются расчетными (Predictive Analytics) и опираются на усредненные бенчмарки вашей ниши (среднерыночная конверсия, стоимость лида, средний чек, жизненный цикл клиента — LTV).
@@ -595,145 +354,107 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 
 // --- РЕЗЮМЕ ДЛЯ РУКОВОДИТЕЛЯ ---
 #heading(level: 2)[Executive Summary (Резюме для руководителя)]
-#v(15pt)
+#v(20pt)
 #grid(
   columns: (1fr, 1fr),
-  gutter: 20pt,
-  rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 20pt)[
-    #text(10pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ИНДЕКС ГОТОВНОСТИ ПРОФИЛЯ]
-    #linebreak()
-    #v(8pt)
-    #text(28pt, weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)} / 100]
-    #v(4pt)
-    #text(9pt, fill: rgb("94A3B8"), style: "italic")[Оценка по 79 параметрам алгоритмов]
+  gutter: 30pt,
+  [
+    #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 1pt)[ИНДЕКС ГОТОВНОСТИ]
+    #v(5pt)
+    #text(32pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)}] #text(14pt, fill: rgb("94A3B8"))[/ 100]
+    #v(5pt)
+    #text(9pt, fill: rgb("64748B"))[Анализ по 79 параметрам алгоритмов]
   ],
-  rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 20pt)[
-    #text(10pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[УПУЩЕННАЯ ВЫРУЧКА]
-    #linebreak()
-    #v(8pt)
-    #text(28pt, weight: "bold", fill: rgb("DC2626"))[- {rev_loss_fmt} ₽/мес]
+  [
+    #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 1pt)[ФИНАНСОВЫЙ РИСК]
+    #v(5pt)
+    #text(32pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("9F1239"))[- {rev_loss_fmt} ₽]
+    #v(5pt)
+    #text(9pt, fill: rgb("64748B"))[Ежемесячная упущенная выручка]
   ]
 )
-#v(20pt)
-
-#rect(width: 100%, fill: rgb("FFFFFF"), stroke: (left: 3pt + rgb("E11D48")), inset: 15pt)[
-  #text(14pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Критический вывод аналитики:]
-  #v(10pt)
-  #set par(leading: 0.6em)
-  #text(11.5pt, fill: rgb("334155"))[Прямо сейчас ваша компания фактически невидима для *{dev}% целевых клиентов* в поисковой выдаче Яндекс Карт. Из-за алгоритмических ошибок вы ежемесячно уступаете конкурентам около *{lost_leads} горячих сделок*. Попытки заливать рекламный бюджет в текущий профиль приведут к прямому финансовому убытку.]
+#v(30pt)
+#block(stroke: (left: 3pt + rgb("8B7355")), inset: (left: 15pt, top: 5pt, bottom: 5pt), fill: rgb("F8FAFC"))[
+  #text(12pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("0F172A"))[Критическое резюме:]
+  #v(8pt)
+  #text(10.5pt, fill: rgb("1E293B"), leading: 0.7em)[Прямо сейчас компания фактически невидима для *{dev}% целевых клиентов* в поисковой выдаче Яндекс Карт. Из-за алгоритмических уязвимостей вы ежемесячно уступаете конкурентам около *{lost_leads} горячих сделок*. Дальнейшие инвестиции в рекламный бюджет без устранения технических ошибок приведут к отрицательному возврату инвестиций (ROI).]
 ]
-
 #pagebreak()
+
 // --- 3 ГЛАВНЫЕ ТОЧКИ СЛИВА ---
-#heading(level: 2)[Три главные пробоины в воронке продаж]
-#v(10pt)
-#text(11.5pt, fill: rgb("475569"))[Мы не будем утомлять вас техническими терминами. Вот три главных бизнес-смысла, из-за которых компания теряет деньги прямо сегодня:]
+#heading(level: 2)[Ключевые точки потери выручки]
+#v(15pt)
+
+#text(14pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("0F172A"))[1. «Слепая витрина» и потеря поискового трафика]
+#v(8pt)
+#text(10.5pt, fill: rgb("475569"), leading: 0.7em)[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие процедуры или товары. Этот самый горячий трафик забирают конкуренты{competitors_text} с правильно настроенными каталогами.]
 #v(20pt)
 
-#block(breakable: false)[
-  #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 20pt)[
-    #text(14pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[1. «Слепая витрина» и потеря поискового трафика]
-    #v(10pt)
-    #set par(leading: 0.6em)
-    #text(11pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие процедуры или товары. Этот самый горячий трафик забирают конкуренты{competitors_text} с правильно настроенными каталогами.]
-  ]
-]
-#v(15pt)
+#text(14pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("0F172A"))[2. Барьер первого контакта (Обрыв конверсии)]
+#v(8pt)
+#text(10.5pt, fill: rgb("475569"), leading: 0.7em)[Ваша карточка заставляет клиента совершать лишние усилия. Сегодня отсутствие виджетов прямой онлайн-записи и ярких кнопок действия (CTA) приводит к тому, что клиенты закрывают ваш профиль. Вы безвозвратно теряете огромный пласт «вечернего» трафика и миллениалов, которые не любят звонить.]
+#v(20pt)
 
-#block(breakable: false)[
-  #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 20pt)[
-    #text(14pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[2. Барьер первого контакта (Обрыв конверсии)]
-    #v(10pt)
-    #set par(leading: 0.6em)
-    #text(11pt, fill: rgb("475569"))[Ваша карточка заставляет клиента совершать лишние усилия. Сегодня отсутствие виджетов прямой онлайн-записи и ярких кнопок действия (CTA) приводит к тому, что клиенты закрывают ваш профиль. Вы безвозвратно теряете огромный пласт «вечернего» трафика и миллениалов, которые не любят звонить.]
-  ]
-]
-#v(15pt)
-
-#block(breakable: false)[
-  #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 20pt)[
-    #text(14pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[3. Скрытые репутационные угрозы]
-    #v(10pt)
-    #set par(leading: 0.6em)
-    #text(11pt, fill: rgb("475569"))[Даже один оставленный без грамотного ответа негативный отзыв работает как токсичный якорь. Для новых клиентов, готовых оставить у вас крупную сумму, отсутствие эмпатичного ответа руководства на проблему равносильно признанию вины. Это рушит конверсию на самом финальном этапе принятия решения.]
-  ]
-]
-
+#text(14pt, font: ("Georgia", "Times New Roman", "serif"), weight: "bold", fill: rgb("0F172A"))[3. Скрытые репутационные угрозы]
+#v(8pt)
+#text(10.5pt, fill: rgb("475569"), leading: 0.7em)[Даже один оставленный без грамотного ответа негативный отзыв работает как токсичный якорь. Для новых клиентов, готовых оставить у вас крупную сумму, отсутствие эмпатичного ответа руководства на проблему равносильно признанию вины. Это рушит конверсию на самом финальном этапе принятия решения.]
 #pagebreak()
-// --- ROADMAP & MAFIA OFFER ---
-#heading(level: 2)[Инвестиционное предложение и Окупаемость]
-#v(10pt)
 
-#text(11.5pt, fill: rgb("475569"))[Мы предлагаем вам не покупку "маркетинговых услуг", а остановку вашего кассового разрыва. Вот объем работ, который мы реализуем под ключ:]
-#v(20pt)
+// --- ROADMAP & MAFIA OFFER ---
+#heading(level: 2)[План интеграции и окупаемость]
+#v(15pt)
 
 #grid(
-  columns: (1fr, 1fr, 1fr),
-  gutter: 15pt,
-  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 15pt)[
-    #text(10pt, weight: "bold", fill: rgb("C5A880"))[ЭТАП 1]
-    #v(5pt)
-    #text(12pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[SEO-перепрошивка]
-    #v(5pt)
-    #set par(leading: 0.5em)
-    #text(10pt, fill: rgb("475569"))[Интеграция всех ваших услуг в поисковые алгоритмы Яндекса. Вы начнете собирать органический трафик по сотням целевых запросов.]
+  columns: (25pt, 1fr),
+  gutter: 10pt,
+  text(12pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("8B7355"))[01.],
+  block[
+    #text(11pt, weight: "bold", fill: rgb("0F172A"))[SEO-Архитектура] #linebreak()
+    #v(4pt)
+    #text(10pt, fill: rgb("475569"))[Интеграция всех услуг в поисковые алгоритмы Яндекса для захвата органического трафика.]
   ],
-  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 15pt)[
-    #text(10pt, weight: "bold", fill: rgb("C5A880"))[ЭТАП 2]
-    #v(5pt)
-    #text(12pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Снятие барьеров]
-    #v(5pt)
-    #set par(leading: 0.5em)
-    #text(10pt, fill: rgb("475569"))[Внедрение систем онлайн-бронирования и маркетинговых триггеров. Превращаем обычные просмотры профиля в реальные сделки 24/7.]
+  text(12pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("8B7355"))[02.],
+  block[
+    #text(11pt, weight: "bold", fill: rgb("0F172A"))[Конверсионный слой (UX)] #linebreak()
+    #v(4pt)
+    #text(10pt, fill: rgb("475569"))[Внедрение систем онлайн-бронирования и маркетинговых триггеров для захвата лидов 24/7.]
   ],
-  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 15pt)[
-    #text(10pt, weight: "bold", fill: rgb("C5A880"))[ЭТАП 3]
-    #v(5pt)
-    #text(12pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Защита бренда]
-    #v(5pt)
-    #set par(leading: 0.5em)
-    #text(10pt, fill: rgb("475569"))[Антикризисная юридическая зачистка негатива и формирование образа премиального, надежного партнера в глазах новых клиентов.]
+  text(12pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("8B7355"))[03.],
+  block[
+    #text(11pt, weight: "bold", fill: rgb("0F172A"))[Защита бренда] #linebreak()
+    #v(4pt)
+    #text(10pt, fill: rgb("475569"))[Антикризисная зачистка негатива и формирование образа премиального партнера.]
   ]
 )
 
 #v(30pt)
-#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 1pt + rgb("0A1128"), radius: 4pt, inset: 25pt)[
-  #text(16pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Экономика решения: Программа «{package_name}»]
+#block(stroke: 1pt + rgb("0F172A"), inset: 25pt, fill: rgb("FAFAFA"))[
+  #text(14pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[Экономика решения: «{package_name}»]
   #v(20pt)
   #grid(
     columns: (1fr, 1fr),
-    gutter: 20pt,
+    gutter: 30pt,
     [
-      #text(11pt, fill: rgb("64748B"))[Текущие убытки бизнеса:]
+      #text(9pt, fill: rgb("64748B"), tracking: 1pt)[ЕЖЕМЕСЯЧНЫЕ ПОТЕРИ]
       #v(5pt)
-      #text(16pt, weight: "bold", fill: rgb("DC2626"))[{rev_loss_fmt} ₽ / мес]
+      #text(16pt, weight: "bold", fill: rgb("9F1239"))[{rev_loss_fmt} ₽]
       #v(15pt)
-      #text(11pt, fill: rgb("64748B"))[Упущенный LTV (Жизненный цикл):]
+      #text(9pt, fill: rgb("64748B"), tracking: 1pt)[УПУЩЕННЫЙ LTV]
       #v(5pt)
-      #text(14pt, weight: "bold", fill: rgb("0A1128"))[> {ltv_loss_fmt} ₽]
+      #text(12pt, weight: "bold", fill: rgb("1E293B"))[> {ltv_loss_fmt} ₽]
     ],
     [
-      #text(11pt, fill: rgb("64748B"))[Стоимость внедрения под ключ:]
+      #text(9pt, fill: rgb("64748B"), tracking: 1pt)[ИНВЕСТИЦИЯ ПОД КЛЮЧ]
       #v(5pt)
-      #text(20pt, weight: "bold", fill: rgb("C5A880"))[{package_price}]
-      #v(5pt)
-      #text(9pt, fill: rgb("94A3B8"), style: "italic")[\*Единоразовая инвестиция]
+      #text(16pt, weight: "bold", fill: rgb("8B7355"))[{package_price}]
       #v(15pt)
-      #text(11pt, fill: rgb("64748B"))[Точка окупаемости (ROI):]
+      #text(9pt, fill: rgb("64748B"), tracking: 1pt)[ТОЧКА ОКУПАЕМОСТИ]
       #v(5pt)
-      #text(12pt, weight: "bold", fill: rgb("16A34A"))[{package_roi}]
+      #text(12pt, weight: "bold", fill: rgb("3F6212"))[{package_roi}]
     ]
   )
-  #v(20pt)
-  #line(length: 100%, stroke: 0.5pt + rgb("CBD5E1"))
-  #v(15pt)
-  #set par(leading: 0.6em)
-  #text(11pt, fill: rgb("0A1128"), weight: "bold")[Главное преимущество: Мы забираем 100% рутины на себя. Вам не придется разбираться в лимитах Яндекса или SEO-разметке — ваше время останется для управления бизнесом.]
 ]
-"""
 
-    # --- ТЕХНИЧЕСКОЕ ПРИЛОЖЕНИЕ ---
-    typ_source += """
 #pagebreak()
 #heading(level: 2)[Техническое приложение (Детализация аудита)]
 #v(10pt)
@@ -741,7 +462,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(20pt)
 """
     blocks = [
-        {"title": "Блок 1. Видимость и Охваты (Алгоритмическое SEO)", "groups": ['SEO и Трафик', 'Активность']},
+        {"title": "Блок 1. Видимость и Охваты (SEO)", "groups": ['SEO и Трафик', 'Активность']},
         {"title": "Блок 2. Упаковка и Конверсия (UX)", "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал']},
         {"title": "Блок 3. Репутационный капитал", "groups": ['Репутация']},
         {"title": "Блок 4. Нейросети и Скрытые данные", "groups": ['Технологии и ИИ']}
@@ -753,47 +474,48 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         earned_score = sum(r.get('Earned', 0.0) for r in block_items)
         max_score = sum(r.get('Max', 0.0) for r in block_items)
         percentage = (earned_score / max_score * 100) if max_score > 0 else 100
-        bar_color = "16A34A" if percentage >= 80 else ("C5A880" if percentage >= 50 else "DC2626")
+        bar_color = "3F6212" if percentage >= 80 else ("8B7355" if percentage >= 50 else "9F1239")
         
         passed_items = [clean_typography(r['Критерий']) for r in block_items if r['Результат'] == 'ДА']
-        failed_items_block = [clean_typography(r['Критерий']) for r in block_items if r['Результат'] == 'НЕТ']
+        passed_text = ", ".join(passed_items) if passed_items else "Нет данных"
+
+        failed_items_list = [r for r in block_items if r['Результат'] == 'НЕТ']
+        failed_typst = ""
         
-        passed_list = "\n".join([f"  - {item}" for item in passed_items]) if passed_items else "  - Нет данных"
-        failed_list = "\n".join([f"  - {item}" for item in failed_items_block]) if failed_items_block else "  - Ошибок не найдено"
+        if failed_items_list:
+            for f_item in failed_items_list:
+                c_name = clean_typography(f_item['Критерий'])
+                c_reason = clean_typography(f_item['Обоснование'])
+                failed_typst += f"""
+                #v(10pt)
+                #block(stroke: (left: 2pt + rgb("9F1239")), inset: (left: 10pt, top: 2pt, bottom: 2pt))[
+                    #text(10.5pt, weight: "bold", fill: rgb("0F172A"))[{c_name}] #linebreak()
+                    #v(4pt)
+                    #text(10pt, fill: rgb("475569"), leading: 0.6em)[{c_reason}]
+                ]
+                """
+        else:
+            failed_typst = "#v(10pt) #text(10pt, fill: rgb(\"475569\"))[Уязвимостей не обнаружено. Отличный результат.]"
 
         typ_source += f"""
-#block(breakable: false)[
-    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 15pt)[
-        #grid(
-            columns: (1fr, auto),
-            text(12pt, weight: "bold", fill: rgb("0A1128"))[{block['title']}],
-            text(12pt, weight: "bold", fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}]
-        )
-        #v(10pt)
-        #line(length: 100%, stroke: 0.5pt + rgb("E2E8F0"))
-        #v(10pt)
-        #grid(
-            columns: (1fr, 1fr),
-            gutter: 15pt,
-            [
-                #text(9pt, weight: "bold", fill: rgb("16A34A"), tracking: 0.5pt)[В НОРМЕ:]
-                #v(6pt)
-                #set text(size: 8pt, fill: rgb("475569"))
-                #set list(marker: text(fill: rgb("16A34A"))[✓])
-{passed_list}
-            ],
-            [
-                #text(9pt, weight: "bold", fill: rgb("DC2626"), tracking: 0.5pt)[ОШИБКИ:]
-                #v(6pt)
-                #set text(size: 8pt, fill: rgb("475569"))
-                #set list(marker: text(fill: rgb("DC2626"))[×])
-{failed_list}
-            ]
-        )
-    ]
-]
-#v(10pt)
-"""
+        #v(15pt)
+        #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 2pt, inset: 15pt)[
+            #grid(
+                columns: (1fr, auto),
+                text(12pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[{block['title']}],
+                text(12pt, weight: "bold", fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}]
+            )
+            #v(10pt)
+            #text(8pt, weight: "bold", fill: rgb("3F6212"), tracking: 1pt)[В НОРМЕ:]
+            #v(5pt)
+            #text(10pt, fill: rgb("475569"), leading: 0.6em)[{passed_text}]
+            #v(15pt)
+            #line(length: 100%, stroke: 0.5pt + rgb("E2E8F0"))
+            #v(10pt)
+            #text(8pt, weight: "bold", fill: rgb("9F1239"), tracking: 1pt)[ЗОНЫ УЯЗВИМОСТИ (ОШИБКИ):]
+            {failed_typst}
+        ]
+        """
     
     # --- FINAL CTA PAGE ---
     typ_source += """
@@ -801,10 +523,9 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(40pt)
 #heading(level: 2)[Следующие шаги]
 #v(15pt)
-#line(length: 40mm, stroke: 1.5pt + rgb("C5A880"))
+#line(length: 40mm, stroke: 1.5pt + rgb("8B7355"))
 #v(20pt)
-#set par(leading: 0.7em)
-#text(11.5pt, fill: rgb("475569"))[
+#text(11pt, fill: rgb("475569"))[
   Надеемся, этот отчет помог вам взглянуть на цифровой маркетинг вашей компании под новым углом. Наша цель — не просто указать на ошибки, а помочь вам выстроить надежный фундамент, который будет приносить качественные лиды годами.
 
   Если вы готовы остановить кассовый разрыв и вернуть упущенный трафик, давайте обсудим результаты этого отчета в удобном для вас формате. 
@@ -813,12 +534,12 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 ]
 #v(40pt)
 
-#rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 25pt)[
-  #text(14pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Свяжитесь с нами:]
+#block(stroke: 0.5pt + rgb("CBD5E1"), fill: rgb("F8FAFC"), radius: 2pt, inset: 25pt)[
+  #text(14pt, font: ("Georgia", "serif"), weight: "bold", fill: rgb("0F172A"))[Свяжитесь с нами:]
   #v(20pt)
   #grid(columns: (100pt, 1fr), gutter: 15pt,
-    text(12pt, fill: rgb("64748B"))[Telegram:], text(12pt, weight: "bold", fill: rgb("0A1128"))[\@paulvenkov],
-    text(12pt, fill: rgb("64748B"))[Сайт:], text(12pt, weight: "bold", fill: rgb("0A1128"))[pin100.ru]
+    text(12pt, fill: rgb("64748B"))[Telegram:], text(12pt, weight: "bold", fill: rgb("0F172A"))[\@paulvenkov],
+    text(12pt, fill: rgb("64748B"))[Сайт:], text(12pt, weight: "bold", fill: rgb("0F172A"))[pin100.ru]
   )
 ]
 """
@@ -871,7 +592,6 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
             social_links = data.get('socialLinks') or data.get('links') or []
             lpr_data = enrich_lpr_contacts_from_vk(social_links)
             
-            # Неймдроппинг конкурентов
             related_places = data.get('relatedPlaces', [])
             competitors_list = [str(c.get('name')) for c in related_places if c.get('name')][:2]
             competitors_text = f" (например, {', '.join(competitors_list)})" if competitors_list else ""
@@ -941,13 +661,11 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
             eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
             niche_label = eco.get("label", "Прочее")
 
-            # 🔴 ИИ-РЕРАЙТИНГ ОШИБОК ПОД НИШУ КЛИЕНТА
             failed_items = [r for r in results if r['Результат'] == 'НЕТ' and r['Max'] > 0]
             if failed_items:
                 with st.spinner("ИИ адаптирует смыслы отчета под нишу клиента..."):
                     results = rewrite_errors_by_ai(niche_label, title, results, expert_engine)
 
-            # Сохранение после рерайтинга
             save_audit_to_sheets(url, title, niche_key, final_total_score, results, lpr_data)
             
             with st.sidebar:
@@ -984,7 +702,6 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
             st.divider()
             st.markdown("### 📥 Выгрузка отчетов")
             
-            # Передаем конкурентов в генератор PDF
             pdf_business_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check, client_ltv, competitors_text)
             
             if pdf_business_bytes:
