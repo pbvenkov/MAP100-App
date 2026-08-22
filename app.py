@@ -316,11 +316,24 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     package_price = "85 000 ₽" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else "35 000 ₽"
     package_roi = f"1-2 закрытых клиента (при чеке {cc_fmt} ₽)" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else f"3-5 новых клиентов (при чеке {cc_fmt} ₽)"
 
+    # ВАЖНО: Никаких комментариев или инструкций без переноса строк в блоках #set
     typ_source = f"""
 #set document(title: "Аналитический Отчет - {title_safe}", author: "PIN100 Analytics")
-#set page(paper: "a4", margin: (x: 20mm, y: 25mm), footer: [#set text(size: 8pt, fill: rgb("94A3B8")) PIN100 Analytics | Строго конфиденциально #h(1fr) Стр. #context counter(page).display()])
+
+#set page(
+  paper: "a4",
+  margin: (x: 20mm, y: 25mm),
+  footer: [
+    #set text(size: 8pt, fill: rgb("94A3B8"))
+    PIN100 Analytics | Строго конфиденциально
+    #h(1fr)
+    Стр. #context counter(page).display()
+  ]
+)
+
 #set text(font: ("Arial", "Helvetica Neue", "sans-serif"), size: 10.5pt, fill: rgb("1E293B"), lang: "ru", hyphenate: false)
 #set par(leading: 0.7em, justify: false)
+
 #show heading: set text(font: ("Georgia", "Times New Roman", "serif"), fill: rgb("0F172A"))
 #show strong: set text(weight: "bold", fill: rgb("0F172A"))
 
