@@ -535,7 +535,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     ],
     [
       #align(center + horizon)[
-        #text(9.5pt, weight: "bold", fill: rgb("8B7355"))[Telegram:\ @paulvenkov]
+        #text(9.5pt, weight: "bold", fill: rgb("8B7355"))[Telegram:\ t.me/paulvenkov]
       ]
     ]
   )
@@ -633,7 +633,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   #line(length: 100%, stroke: 0.5pt + rgb("CBD5E1"))
   #v(8pt)
   #grid(columns: (80pt, 1fr), gutter: 10pt,
-    text(10.5pt, fill: rgb("64748B"))[Telegram:], text(10.5pt, weight: "bold", fill: rgb("0A1128"))[\@paulvenkov],
+    text(10.5pt, fill: rgb("64748B"))[Telegram:], text(10.5pt, weight: "bold", fill: rgb("0A1128"))[t.me/paulvenkov],
     text(10.5pt, fill: rgb("64748B"))[Сайт:], text(10.5pt, weight: "bold", fill: rgb("0A1128"))[pin100.ru]
   )
 ]
