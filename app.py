@@ -245,9 +245,19 @@ def calculate_hard_facts(data, niche_key="OTHER"):
         
     if len(str(data.get('address') or '')) > 5: scores['SEO-18.1'] = True
     if data.get('videoCount', 0) > 0 or data.get('videos') or data.get('mobileVideos'): scores['CONT-42.1'] = True
-    photo_count = int(data.get('photoCount') or len(data.get('photos') or []) or 0)
+    
+    # Фотографии и проверка тегов интерьера
+    photos = data.get('photos', [])
+    photo_count = int(data.get('photoCount') or len(photos) or 0)
     if photo_count >= 15: scores['CONT-36.1'] = True
     if photo_count >= 30: scores['CONT-36.2'] = True
+    
+    tags = [tag.get('id', '') for p in photos for tag in p.get('tags', []) if isinstance(tag, dict)]
+    if "Interior" in tags or any(p.get('tag') == 'interior' for p in photos):
+        scores['CONT-38.1'] = True
+    if photo_count >= 30:
+        scores['CONT-37.2'] = True
+        scores['CONT-37.3'] = True
     
     posts = data.get('mobilePosts') or data.get('posts') or []
     if posts: scores['CONV-51.1'] = True
@@ -262,17 +272,17 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     if rating >= 4.8: scores['REP-27.2'] = True
     if int(data.get('reviewsCount') or data.get('ratingsCount') or data.get('reviewCount') or 0) >= 50: scores['REP-28.1'] = True
     
-    recent_reviews = [r for r in (data.get('reviews') or []) if isinstance(r, dict) and parse_yandex_date(r.get('date') or r.get('time')) and parse_yandex_date(r.get('date') or r.get('time')) >= now - timedelta(days=180)]
-    if not recent_reviews: scores['META_NO_RECENT_REVIEWS'] = True
+    all_reviews = [r for r in (data.get('reviews') or []) if isinstance(r, dict)]
+    if not all_reviews: scores['META_NO_RECENT_REVIEWS'] = True
     else:
-        replied = sum(1 for r in recent_reviews[:20] if str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip())
-        if parse_yandex_date(recent_reviews[0].get('date')) and (now - parse_yandex_date(recent_reviews[0].get('date'))).days <= 14: scores['REP-29.1'] = True
-        if len(recent_reviews[:20]) > 0:
-            if replied / len(recent_reviews[:20]) >= 0.9: scores['REP-30.1'] = True
-            if sum(1 for r in recent_reviews[:20] if r.get('photos') or r.get('photoDetails')) / len(recent_reviews[:20]) >= 0.1: scores['REP-35.1'] = True
-        if any(float(r.get('rating') or 0.0) >= 4.0 and str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip() for r in recent_reviews[:20]): scores['REP-30.3'] = True
-        if not any(float(r.get('rating') or 0.0) <= 3.0 and not str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip() for r in recent_reviews[:20]): scores['REP-32.1'] = True
-        for r in recent_reviews[:20]:
+        replied = sum(1 for r in all_reviews[:20] if str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip())
+        if parse_yandex_date(all_reviews[0].get('date')) and (now - parse_yandex_date(all_reviews[0].get('date'))).days <= 14: scores['REP-29.1'] = True
+        if len(all_reviews[:20]) > 0:
+            if replied / len(all_reviews[:20]) >= 0.7: scores['REP-30.1'] = True
+            if sum(1 for r in all_reviews[:20] if r.get('photos') or r.get('photoDetails')) / len(all_reviews[:20]) >= 0.05: scores['REP-35.1'] = True
+        if any(float(r.get('rating') or 0.0) >= 4.0 and str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip() for r in all_reviews[:20]): scores['REP-30.3'] = True
+        scores['REP-32.2'] = True  # Без агрессии по умолчанию
+        for r in all_reviews[:20]:
             bc_date, rev_date = parse_yandex_date(r.get('businessCommentDate')), parse_yandex_date(r.get('date'))
             if str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip() and bc_date and rev_date and (bc_date - rev_date).days <= 3: 
                 scores['REP-30.2'] = True
@@ -282,8 +292,8 @@ def calculate_hard_facts(data, niche_key="OTHER"):
 def calculate_dynamic_expert_rules(data, prompts_data):
     if not expert_engine or not prompts_data: return {}
     title, desc = str(data.get('title') or ''), str(data.get('description') or '')[:1000]
-    recent_reviews = [r for r in data.get('reviews', []) if parse_yandex_date(r.get('date')) and parse_yandex_date(r.get('date')) >= datetime.now(timezone.utc) - timedelta(days=180)][:10]
-    reviews_text = "".join([f"Отзыв: {r.get('text', '')}\nОтвет: {r.get('businessComment') or r.get('reply', {}).get('text') if isinstance(r.get('reply'), dict) else ''}\n" for r in recent_reviews if isinstance(r, dict)])
+    recent_reviews = [r for r in data.get('reviews', []) if isinstance(r, dict)][:10]
+    reviews_text = "".join([f"Отзыв: {r.get('text', '')}\nОтвет: {r.get('businessComment') or r.get('reply', {}).get('text') if isinstance(r.get('reply'), dict) else ''}\n" for r in recent_reviews])
     prods = [p for p in (data.get('menu', {}).get('items', []) if isinstance(data.get('menu'), dict) else []) + (data.get('productCatalog') or []) if isinstance(p, dict)][:20]
     prods_text = ", ".join([str(p.get('name')) for p in prods])
     rules_list = [f'"{p.get("Код", "").strip()}": {p.get("Промпт для ИИ", "").strip()}' for p in prompts_data if p.get('Код', '').strip() and p.get('Код') != 'NICHE_PROMPT']
@@ -297,13 +307,14 @@ def calculate_dynamic_expert_rules(data, prompts_data):
     return {}
 
 # ==========================================
-# 5. ТИПОГРАФИКА И PDF (БЕЗ СБОЕВ И НАЛОЖЕНИЙ)
+# 5. ТИПОГРАФИКА И PDF (ПРЕМИУМ BIG4 ВЕРСТКА)
 # ==========================================
 def clean_typography(text):
     if not text: return ""
     t = str(text).replace(" - ", " — ")
-    # Удаление артефактов и значков, ломающих верстку
-    for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '<', '>', '✓', '✔', '×', '✖']:
+    t = t.replace(">=", "≥").replace("<=", "≤")
+    t = t.replace(">", ">").replace("<", "<")
+    for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`', '✓', '✔', '×', '✖']:
         t = t.replace(c, ' ')
     return " ".join(t.split())
 
@@ -368,23 +379,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 ]
 #pagebreak()
 
-// --- ДИСКЛЕЙМЕР ---
-#v(30pt)
-#heading(level: 2)[Ограничение ответственности и методология]
-#v(15pt)
-#line(length: 100%, stroke: 0.5pt + rgb("CBD5E1"))
-#v(15pt)
-#set par(leading: 0.7em)
-#text(10.5pt, fill: rgb("475569"))[
-  Настоящий аналитический отчет подготовлен центром PIN100 Analytics исключительно в информационных целях для внутреннего использования руководством компании. 
-  
-  Все выводы базируются на автоматизированном сборе открытых данных (алгоритмический парсинг) из геосервисов по состоянию на дату формирования документа. Данные о финансовых потерях и упущенной выручке являются расчетными (Predictive Analytics) и опираются на усредненные бенчмарки вашей ниши (среднерыночная конверсия, стоимость лида, средний чек, жизненный цикл клиента — LTV).
-  
-  Отчет не является финансовой гарантией, однако с высокой точностью отражает текущие алгоритмические уязвимости цифрового профиля компании и их прямое влияние на потерю органического (бесплатного) трафика.
-]
-#pagebreak()
-
-// --- РЕЗЮМЕ ДЛЯ РУКОВОДИТЕЛЯ ---
+// --- РЕЗЮМЕ ДЛЯ РУКОВОДИТЕЛЯ (СРАЗУ НА СТР. 2) ---
 #heading(level: 2)[Executive Summary (Резюме для руководителя)]
 #v(15pt)
 #grid(
@@ -405,13 +400,20 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #text(24pt, weight: "bold", fill: rgb("9F1239"))[- {rev_loss_fmt} ₽/мес]
   ]
 )
-#v(20pt)
+#v(15pt)
 
 #rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 15pt)[
   #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Критический вывод аналитики:]
   #v(8pt)
   #set par(leading: 0.6em)
   #text(10.5pt, fill: rgb("334155"))[Прямо сейчас ваша компания фактически невидима для *{dev}% целевых клиентов* в поисковой выдаче Яндекс Карт. Из-за алгоритмических ошибок вы ежемесячно уступаете конкурентам около *{lost_leads} горячих сделок*. Попытки заливать рекламный бюджет в текущий профиль приведут к прямому финансовому убытку.]
+]
+
+#v(12pt)
+#rect(width: 100%, fill: rgb("EFF6FF"), stroke: 0.5pt + rgb("BFDBFE"), radius: 4pt, inset: 10pt)[
+  #text(8.5pt, fill: rgb("1E40AF"))[
+    *Важное примечание:* Оценка #strong[{round(score, 1)} / 100] отражает исключительно техническую видимость профиля для поисковых роботов Яндекса и конверсионную готовность витрины, а не реальное высокое качество образовательного процесса вашей компании.
+  ]
 ]
 
 #pagebreak()
@@ -445,76 +447,102 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 ]
 
 #pagebreak()
-// --- ROADMAP & MAFIA OFFER ---
+// --- ROADMAP, ЭКОНОМИКА И 3-УРОВНЕВЫЙ ТАРИФ ---
 #heading(level: 2)[Инвестиционное предложение и Окупаемость]
-#v(10pt)
-#text(10.5pt, fill: rgb("475569"))[Мы предлагаем вам не покупку «маркетинговых услуг», а остановку вашего кассового разрыва. Вот объем работ, который мы реализуем под ключ:]
-#v(15pt)
+#v(8pt)
+#text(10pt, fill: rgb("475569"))[Мы предлагаем вам не покупку «маркетинговых услуг», а остановку вашего кассового разрыва. Вот объем работ, который мы реализуем под ключ:]
+#v(12pt)
 
 #grid(
   columns: (1fr, 1fr, 1fr),
-  gutter: 12pt,
-  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 12pt)[
+  gutter: 10pt,
+  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
     #text(9pt, weight: "bold", fill: rgb("8B7355"))[ЭТАП 1]
-    #v(4pt)
-    #text(11pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[SEO-перепрошивка]
-    #v(4pt)
+    #v(3pt)
+    #text(10.5pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[SEO-перепрошивка]
+    #v(3pt)
     #set par(leading: 0.5em)
-    #text(9pt, fill: rgb("475569"))[Интеграция всех ваших услуг в поисковые алгоритмы Яндекса для захвата органического трафика.]
+    #text(8.5pt, fill: rgb("475569"))[Интеграция всех ваших услуг в поисковые алгоритмы Яндекса для захвата органики.]
   ],
-  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 12pt)[
+  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
     #text(9pt, weight: "bold", fill: rgb("8B7355"))[ЭТАП 2]
-    #v(4pt)
-    #text(11pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Снятие барьеров]
-    #v(4pt)
+    #v(3pt)
+    #text(10.5pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Снятие барьеров]
+    #v(3pt)
     #set par(leading: 0.5em)
-    #text(9pt, fill: rgb("475569"))[Внедрение систем онлайн-бронирования и маркетинговых триггеров для захвата лидов 24/7.]
+    #text(8.5pt, fill: rgb("475569"))[Внедрение систем онлайн-бронирования и триггеров для захвата лидов 24/7.]
   ],
-  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 12pt)[
+  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
     #text(9pt, weight: "bold", fill: rgb("8B7355"))[ЭТАП 3]
-    #v(4pt)
-    #text(11pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Защита бренда]
-    #v(4pt)
+    #v(3pt)
+    #text(10.5pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Защита бренда]
+    #v(3pt)
     #set par(leading: 0.5em)
-    #text(9pt, fill: rgb("475569"))[Антикризисная зачистка негатива и формирование образа надежного партнера.]
+    #text(8.5pt, fill: rgb("475569"))[Антикризисная зачистка негатива и формирование образа надежного партнера.]
   ]
 )
 
-#v(20pt)
-#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 1pt + rgb("0A1128"), radius: 4pt, inset: 20pt)[
-  #text(14pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Экономика решения: Программа «{package_name}»]
-  #v(15pt)
+#v(10pt)
+#text(11pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Тарифная сетка внедрения:]
+#v(6pt)
+#grid(
+  columns: (1fr, 1.15fr, 1fr),
+  gutter: 8pt,
+  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
+    #text(8.5pt, weight: "bold", fill: rgb("64748B"))[БАЗОВЫЙ (Quick Fix)]
+    #v(3pt)
+    #text(12pt, weight: "bold", fill: rgb("0A1128"))[35 000 ₽]
+    #v(3pt)
+    #set par(leading: 0.5em)
+    #text(8pt, fill: rgb("475569"))[Базовое SEO, устранение ошибок витрины, чистка дублей.]
+  ],
+  rect(fill: rgb("F8FAFC"), stroke: 1.5pt + rgb("8B7355"), radius: 4pt, inset: 10pt)[
+    #text(8.5pt, weight: "bold", fill: rgb("8B7355"))[★ {package_name}]
+    #v(3pt)
+    #text(13pt, weight: "bold", fill: rgb("8B7355"))[{package_price}]
+    #v(3pt)
+    #set par(leading: 0.5em)
+    #text(8pt, fill: rgb("0A1128"), weight: "bold")[Комплекс под ключ: SEO + UX-конверсия + Защита бренда + XML-фиды.]
+  ],
+  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
+    #text(8.5pt, weight: "bold", fill: rgb("64748B"))[ENTERPRISE (ГОД)]
+    #v(3pt)
+    #text(12pt, weight: "bold", fill: rgb("0A1128"))[150 000 ₽]
+    #v(3pt)
+    #set par(leading: 0.5em)
+    #text(8pt, fill: rgb("475569"))[Полное сопровождение воронки на 6 месяцев + реклама.]
+  ]
+)
+
+#v(8pt)
+#rect(width: 100%, fill: rgb("F0FDF4"), stroke: 0.5pt + rgb("BBF7D0"), radius: 4pt, inset: 8pt)[
+  #set par(leading: 0.55em)
+  #text(8.5pt, fill: rgb("166534"))[
+    *💡 Вечный органический трафик:* Пакет настраивается разово, после чего карточка стабильно собирает бесплатные целевые обращения годами — без постоянных затрат на клики в платной рекламе.
+  ]
+]
+
+#v(8pt)
+#rect(width: 100%, fill: rgb("0A1128"), radius: 4pt, inset: 10pt)[
   #grid(
-    columns: (1fr, 1fr),
-    gutter: 20pt,
+    columns: (1fr, auto),
+    gutter: 10pt,
     [
-      #text(10pt, fill: rgb("64748B"))[Текущие убытки бизнеса:]
-      #v(4pt)
-      #text(15pt, weight: "bold", fill: rgb("9F1239"))[{rev_loss_fmt} ₽ / мес]
-      #v(10pt)
-      #text(10pt, fill: rgb("64748B"))[Упущенный LTV (Жизненный цикл):]
-      #v(4pt)
-      #text(13pt, weight: "bold", fill: rgb("0A1128"))[> {ltv_loss_fmt} ₽]
+      #text(9.5pt, weight: "bold", fill: rgb("FFFFFF"))[Забронировать 20-минутный стратегический Zoom-разбор] #linebreak()
+      #v(2pt)
+      #set par(leading: 0.5em)
+      #text(8pt, fill: rgb("CBD5E1"))[Покажем экран вашего профиля в закрытой аналитике Яндекса и передадим пошаговый план устранения ТОП-5 ошибок.]
     ],
     [
-      #text(10pt, fill: rgb("64748B"))[Стоимость внедрения под ключ:]
-      #v(4pt)
-      #text(18pt, weight: "bold", fill: rgb("8B7355"))[{package_price}]
-      #v(10pt)
-      #text(10pt, fill: rgb("64748B"))[Точка окупаемости (ROI):]
-      #v(4pt)
-      #text(11pt, weight: "bold", fill: rgb("166534"))[{package_roi}]
+      #align(center + horizon)[
+        #text(9.5pt, weight: "bold", fill: rgb("8B7355"))[Telegram:\ @paulvenkov]
+      ]
     ]
   )
-  #v(15pt)
-  #line(length: 100%, stroke: 0.5pt + rgb("CBD5E1"))
-  #v(10pt)
-  #set par(leading: 0.6em)
-  #text(10pt, fill: rgb("0A1128"), weight: "bold")[Главное преимущество: Мы забираем 100% рутины на себя. Вам не придется разбираться в лимитах Яндекса или SEO-разметке — ваше время останется для управления бизнесом.]
 ]
 """
 
-    # --- ТЕХНИЧЕСКОЕ ПРИЛОЖЕНИЕ (РАЗРЕШЕН ЕСТЕСТВЕННЫЙ ПЕРЕНОС) ---
+    # --- ТЕХНИЧЕСКОЕ ПРИЛОЖЕНИЕ ---
     typ_source += """
 #pagebreak()
 #heading(level: 2)[Техническое приложение (Детализация аудита)]
@@ -547,10 +575,10 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
                 c_name = clean_typography(f.get('Критерий', ''))
                 c_reason = clean_typography(f.get('Обоснование', ''))
                 failed_cards += f"""
-#v(5pt)
+#v(4pt)
 #block(breakable: false)[
-  #rect(width: 100%, fill: rgb("FFF1F2"), stroke: 0.5pt + rgb("FECDD3"), radius: 3pt, inset: 8pt)[
-    #text(9.5pt, weight: "bold", fill: rgb("9F1239"))[× {c_name}] #linebreak()
+  #rect(width: 100%, fill: rgb("FFF1F2"), stroke: 0.5pt + rgb("FECDD3"), radius: 3pt, inset: 7pt)[
+    #text(9pt, weight: "bold", fill: rgb("9F1239"))[× {c_name}] #linebreak()
     #v(2pt)
     #set par(leading: 0.55em)
     #text(8.5pt, fill: rgb("475569"))[{c_reason}]
@@ -559,50 +587,63 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 """
         else:
             failed_cards = """
-#v(5pt)
+#v(4pt)
 #text(9pt, fill: rgb("166534"))[Уязвимостей не обнаружено. Отличный результат.]
 """
 
         typ_source += f"""
-#v(15pt)
+#v(12pt)
 #heading(level: 3)[{block['title']} (#text(fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}])]
-#v(6pt)
-#rect(width: 100%, fill: rgb("F0FDF4"), stroke: 0.5pt + rgb("BBF7D0"), radius: 3pt, inset: 8pt)[
+#v(4pt)
+#rect(width: 100%, fill: rgb("F0FDF4"), stroke: 0.5pt + rgb("BBF7D0"), radius: 3pt, inset: 7pt)[
   #text(8pt, weight: "bold", fill: rgb("166534"), tracking: 0.5pt)[В НОРМЕ:] #linebreak()
   #v(2pt)
   #set par(leading: 0.55em)
   #text(8.5pt, fill: rgb("475569"))[{passed_text}]
 ]
-#v(6pt)
+#v(4pt)
 #text(8pt, weight: "bold", fill: rgb("9F1239"), tracking: 0.5pt)[ЗОНЫ УЯЗВИМОСТИ (ОШИБКИ):]
 {failed_cards}
 """
     
-    # --- FINAL CTA PAGE ---
+    # --- FINAL CTA PAGE С ДИСКЛЕЙМЕРОМ В СНОСКЕ ---
     typ_source += """
 #pagebreak()
-#v(40pt)
-#heading(level: 2)[Следующие шаги]
-#v(15pt)
+#v(30pt)
+#heading(level: 2)[Следующие шаги и Стратегический разбор]
+#v(12pt)
 #line(length: 40mm, stroke: 1.5pt + rgb("8B7355"))
-#v(20pt)
+#v(15pt)
 #set par(leading: 0.7em)
 #text(10.5pt, fill: rgb("475569"))[
   Надеемся, этот отчет помог вам взглянуть на цифровой маркетинг вашей компании под новым углом. Наша цель — не просто указать на ошибки, а помочь вам выстроить надежный фундамент, который будет приносить качественные лиды годами.
 
-  Если вы готовы остановить кассовый разрыв и вернуть упущенный трафик, давайте обсудим результаты этого отчета в удобном для вас формате. 
-  
-  Напишите нам, чтобы задать вопросы по расчетам или согласовать план действий. Мы на связи и готовы предметно разобрать вашу ситуацию без давления и лишних обязательств.
+  Если вы готовы остановить кассовый разрыв и вернуть упущенный трафик, давайте обсудим результаты этого отчета в удобном для вас формате.
 ]
-#v(35pt)
+#v(25pt)
 
-#rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 20pt)[
-  #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Свяжитесь с нами:]
-  #v(15pt)
-  #grid(columns: (100pt, 1fr), gutter: 15pt,
-    text(11pt, fill: rgb("64748B"))[Telegram:], text(11pt, weight: "bold", fill: rgb("0A1128"))[\@paulvenkov],
-    text(11pt, fill: rgb("64748B"))[Сайт:], text(11pt, weight: "bold", fill: rgb("0A1128"))[pin100.ru]
+#rect(width: 100%, fill: rgb("F8FAFC"), stroke: 1pt + rgb("0A1128"), radius: 4pt, inset: 18pt)[
+  #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Бесплатный следующий шаг:]
+  #v(6pt)
+  #set par(leading: 0.6em)
+  #text(10pt, fill: rgb("334155"))[
+    *Забронировать 20-минутный стратегический Zoom-разбор:* покажем экран вашего профиля в закрытой аналитике Яндекса и передадим пошаговый план исправления ТОП-5 критических ошибок без давления и лишних обязательств.
+  ]
+  #v(12pt)
+  #line(length: 100%, stroke: 0.5pt + rgb("CBD5E1"))
+  #v(8pt)
+  #grid(columns: (80pt, 1fr), gutter: 10pt,
+    text(10.5pt, fill: rgb("64748B"))[Telegram:], text(10.5pt, weight: "bold", fill: rgb("0A1128"))[\@paulvenkov],
+    text(10.5pt, fill: rgb("64748B"))[Сайт:], text(10.5pt, weight: "bold", fill: rgb("0A1128"))[pin100.ru]
   )
+]
+
+#v(30pt)
+#heading(level: 3)[Ограничение ответственности и методология]
+#v(6pt)
+#set par(leading: 0.55em)
+#text(8pt, fill: rgb("94A3B8"))[
+  Настоящий аналитический отчет подготовлен центром PIN100 Analytics исключительно в информационных целях для руководства компании. Выводы базируются на алгоритмическом сборе открытых данных из геосервисов на дату формирования документа. Данные об упущенной выручке являются расчетными (Predictive Analytics) и опираются на отраслевые бенчмарки ниши. Отчет отражает алгоритмические уязвимости профиля и их прямое влияние на потерю органического поискового трафика.
 ]
 """
 
