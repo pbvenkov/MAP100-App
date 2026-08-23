@@ -297,14 +297,14 @@ def calculate_dynamic_expert_rules(data, prompts_data):
     return {}
 
 # ==========================================
-# 5. ТИПОГРАФИКА И PDF (СТАБИЛЬНАЯ ВЕРСИЯ BIG4)
+# 5. ТИПОГРАФИКА И PDF (БЕЗ СБОЕВ И НАЛОЖЕНИЙ)
 # ==========================================
 def clean_typography(text):
     if not text: return ""
     t = str(text).replace(" - ", " — ")
-    t = t.replace('\\', ' ').replace('[', '(').replace(']', ')').replace('{', '(').replace('}', ')')
-    t = t.replace('$', '').replace('*', '').replace('_', '').replace('#', '').replace('@', 'at ')
-    t = t.replace('"', '').replace("'", '').replace('<', '').replace('>', '')
+    # Удаление артефактов и значков, ломающих верстку
+    for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '<', '>', '✓', '✔', '×', '✖']:
+        t = t.replace(c, ' ')
     return " ".join(t.split())
 
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, client_ltv, competitors_text=""):
@@ -320,9 +320,22 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     title_safe = clean_typography(title)
     comp_safe = clean_typography(competitors_text)
     
-    package_name = "Интеграция Medical/B2B PRO" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else "Комплексная Бизнес-Упаковка"
-    package_price = "85 000 ₽" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else "35 000 ₽"
-    package_roi = f"1-2 закрытых клиента (при чеке {cc_fmt} ₽)" if niche in ["Стоматология", "Медицина / Бьюти", "Сложный B2B / Производство", "Образование"] else f"3-5 новых клиентов (при чеке {cc_fmt} ₽)"
+    if niche == "Образование":
+        package_name = "Интеграция Education PRO"
+        package_price = "85 000 ₽"
+        package_roi = f"1-2 закрытых договора (при чеке {cc_fmt} ₽)"
+    elif niche in ["Стоматология", "Медицина / Бьюти"]:
+        package_name = "Интеграция Medical PRO"
+        package_price = "85 000 ₽"
+        package_roi = f"1-2 первичных пациента (при чеке {cc_fmt} ₽)"
+    elif niche in ["Сложный B2B / Производство", "Легкий B2B / Опт"]:
+        package_name = "Интеграция B2B Enterprise"
+        package_price = "85 000 ₽"
+        package_roi = f"1 закрытая сделка (при чеке {cc_fmt} ₽)"
+    else:
+        package_name = "Комплексная Бизнес-Упаковка"
+        package_price = "35 000 ₽"
+        package_roi = f"3-5 новых клиентов (при чеке {cc_fmt} ₽)"
 
     typ_source = f"""
 #set document(title: "Аналитический Отчет - {title_safe}", author: "PIN100 Analytics")
@@ -412,7 +425,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[1. «Слепая витрина» и потеря поискового трафика]
   #v(8pt)
   #set par(leading: 0.6em)
-  #text(10pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие процедуры или товары. Этот самый горячий трафик забирают конкуренты{comp_safe} с правильно настроенными каталогами.]
+  #text(10pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие программы или услуги. Этот самый горячий трафик забирают конкуренты{comp_safe} с правильно настроенными каталогами.]
 ]
 #v(12pt)
 
@@ -420,7 +433,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[2. Барьер первого контакта (Обрыв конверсии)]
   #v(8pt)
   #set par(leading: 0.6em)
-  #text(10pt, fill: rgb("475569"))[Ваша карточка заставляет клиента совершать лишние усилия. Сегодня отсутствие виджетов прямой онлайн-записи и ярких кнопок действия (СТА) приводит к тому, что клиенты закрывают ваш профиль. Вы безвозвратно теряете огромный пласт «вечернего» трафика и миллениалов, которые не любят звонить.]
+  #text(10pt, fill: rgb("475569"))[Ваша карточка заставляет клиента совершать лишние усилия. Сегодня отсутствие виджетов прямой онлайн-записи и ярких кнопок действия (СТА) приводит к тому, что клиенты закрывают ваш профиль. Вы безвозвратно теряете огромный пласт «вечернего» трафика и аудиторию, которая не любит звонить.]
 ]
 #v(12pt)
 
@@ -501,7 +514,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 ]
 """
 
-    # --- ТЕХНИЧЕСКОЕ ПРИЛОЖЕНИЕ ---
+    # --- ТЕХНИЧЕСКОЕ ПРИЛОЖЕНИЕ (РАЗРЕШЕН ЕСТЕСТВЕННЫЙ ПЕРЕНОС) ---
     typ_source += """
 #pagebreak()
 #heading(level: 2)[Техническое приложение (Детализация аудита)]
@@ -510,7 +523,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(15pt)
 """
     blocks = [
-        {"title": "Блок 1. Видимость и Охваты (Алгоритмическое SEO)", "groups": ['SEO и Трафик', 'Активность']},
+        {"title": "Блок 1. Видимость и Охваты (SEO)", "groups": ['SEO и Трафик', 'Активность']},
         {"title": "Блок 2. Упаковка и Конверсия (UX)", "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал']},
         {"title": "Блок 3. Репутационный капитал", "groups": ['Репутация']},
         {"title": "Блок 4. Нейросети и Скрытые данные", "groups": ['Технологии и ИИ']}
@@ -525,42 +538,44 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         bar_color = "166534" if percentage >= 80 else ("8B7355" if percentage >= 50 else "9F1239")
         
         passed_items = [clean_typography(r['Критерий']) for r in block_items if r['Результат'] == 'ДА']
-        passed_list = "\n".join([f"  - {item}" for item in passed_items]) if passed_items else "  - Нет данных"
+        passed_text = ", ".join(passed_items) if passed_items else "Нет данных"
 
         failed_items_block = [r for r in block_items if r['Результат'] == 'НЕТ']
-        failed_list = ""
+        failed_cards = ""
         if failed_items_block:
             for f in failed_items_block:
                 c_name = clean_typography(f.get('Критерий', ''))
                 c_reason = clean_typography(f.get('Обоснование', ''))
-                failed_list += f"  - *{c_name}*: {c_reason}\n"
+                failed_cards += f"""
+#v(5pt)
+#block(breakable: false)[
+  #rect(width: 100%, fill: rgb("FFF1F2"), stroke: 0.5pt + rgb("FECDD3"), radius: 3pt, inset: 8pt)[
+    #text(9.5pt, weight: "bold", fill: rgb("9F1239"))[× {c_name}] #linebreak()
+    #v(2pt)
+    #set par(leading: 0.55em)
+    #text(8.5pt, fill: rgb("475569"))[{c_reason}]
+  ]
+]
+"""
         else:
-            failed_list = "  - Ошибок не найдено"
+            failed_cards = """
+#v(5pt)
+#text(9pt, fill: rgb("166534"))[Уязвимостей не обнаружено. Отличный результат.]
+"""
 
         typ_source += f"""
-#block(breakable: false)[
-    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 15pt)[
-        #grid(
-            columns: (1fr, auto),
-            text(12pt, weight: "bold", fill: rgb("0A1128"))[{block['title']}],
-            text(12pt, weight: "bold", fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}]
-        )
-        #v(8pt)
-        #line(length: 100%, stroke: 0.5pt + rgb("E2E8F0"))
-        #v(8pt)
-        #text(9pt, weight: "bold", fill: rgb("166534"), tracking: 0.5pt)[В НОРМЕ:]
-        #v(4pt)
-        #set text(size: 8.5pt, fill: rgb("475569"))
-        #set list(marker: text(fill: rgb("166534"))[✓])
-{passed_list}
-        #v(8pt)
-        #text(9pt, weight: "bold", fill: rgb("9F1239"), tracking: 0.5pt)[ЗОНЫ УЯЗВИМОСТИ И ТОЧКИ РОСТА:]
-        #v(4pt)
-        #set list(marker: text(fill: rgb("9F1239"))[×])
-{failed_list}
-    ]
+#v(15pt)
+#heading(level: 3)[{block['title']} (#text(fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}])]
+#v(6pt)
+#rect(width: 100%, fill: rgb("F0FDF4"), stroke: 0.5pt + rgb("BBF7D0"), radius: 3pt, inset: 8pt)[
+  #text(8pt, weight: "bold", fill: rgb("166534"), tracking: 0.5pt)[В НОРМЕ:] #linebreak()
+  #v(2pt)
+  #set par(leading: 0.55em)
+  #text(8.5pt, fill: rgb("475569"))[{passed_text}]
 ]
-#v(10pt)
+#v(6pt)
+#text(8pt, weight: "bold", fill: rgb("9F1239"), tracking: 0.5pt)[ЗОНЫ УЯЗВИМОСТИ (ОШИБКИ):]
+{failed_cards}
 """
     
     # --- FINAL CTA PAGE ---
