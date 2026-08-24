@@ -330,41 +330,49 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     title_safe = clean_typography(title)
     comp_safe = clean_typography(competitors_text)
     
-    if niche == "Образование":
+    niche_str = str(niche).lower()
+    if "образ" in niche_str:
         package_name = "Интеграция Education PRO"
         package_price = "85 000 ₽"
         package_roi = f"1-2 закрытых договора (при чеке {cc_fmt} ₽)"
-        quality_phrase = "образовательного процесса вашей компании"
-    elif niche in ["Стоматология", "Медицина / Бьюти"]:
+        quality_phrase = "образовательного процесса и уровень подготовки в вашей компании"
+        target_audience = "родителей и учеников"
+    elif "стом" in niche_str or "мед" in niche_str or "бьют" in niche_str:
         package_name = "Интеграция Medical PRO"
         package_price = "85 000 ₽"
         package_roi = f"1-2 первичных пациента (при чеке {cc_fmt} ₽)"
-        quality_phrase = "медицинских услуг и сервиса вашей клиники"
-    elif niche in ["Сложный B2B / Производство", "Легкий B2B / Опт"]:
+        quality_phrase = "медицинских услуг, квалификацию врачей и сервис клиники"
+        target_audience = "пациентов"
+    elif "b2b" in niche_str or "производ" in niche_str or "опт" in niche_str:
         package_name = "Интеграция B2B Enterprise"
         package_price = "85 000 ₽"
         package_roi = f"1 закрытая сделка (при чеке {cc_fmt} ₽)"
-        quality_phrase = "продукции и надежности вашего предприятия"
-    elif niche == "HORECA":
+        quality_phrase = "продукции и надежность вашего предприятия"
+        target_audience = "клиентов и партнеров"
+    elif "horeca" in niche_str or "ресторан" in niche_str or "кафе" in niche_str:
         package_name = "Комплексная Бизнес-Упаковка HoReCa"
         package_price = "35 000 ₽"
         package_roi = f"10-15 новых гостей (при чеке {cc_fmt} ₽)"
-        quality_phrase = "кухни, атмосферы и гостеприимства вашего заведения"
-    elif niche == "Авто":
+        quality_phrase = "кухни, атмосферу и гостеприимство вашего заведения"
+        target_audience = "гостей"
+    elif "авто" in niche_str:
         package_name = "Комплексная Бизнес-Упаковка Авто"
         package_price = "35 000 ₽"
         package_roi = f"2-3 новых заказ-наряда (при чеке {cc_fmt} ₽)"
-        quality_phrase = "качества ремонта и обслуживания в вашем автоцентре"
-    elif niche == "Ритейл":
+        quality_phrase = "ремонта, запчастей и обслуживания в вашем автоцентре"
+        target_audience = "автовладельцев"
+    elif "ритейл" in niche_str or "магаз" in niche_str:
         package_name = "Комплексная Бизнес-Упаковка Ритейл"
         package_price = "35 000 ₽"
         package_roi = f"15-20 новых покупателей (при чеке {cc_fmt} ₽)"
-        quality_phrase = "качества товаров, широты ассортимента и сервиса вашего магазина"
+        quality_phrase = "товаров, широту ассортимента и качество обслуживания в вашем магазине"
+        target_audience = "покупателей"
     else:
         package_name = "Комплексная Бизнес-Упаковка"
         package_price = "35 000 ₽"
         package_roi = f"3-5 новых клиентов (при чеке {cc_fmt} ₽)"
-        quality_phrase = "качества товаров, работ или услуг вашей компании"
+        quality_phrase = "товаров, услуг и высокий уровень клиентского сервиса"
+        target_audience = "клиентов"
 
     typ_source = f"""
 #set document(title: "Аналитический Отчет - {title_safe}", author: "PIN100 Analytics")
@@ -430,7 +438,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(12pt)
 #rect(width: 100%, fill: rgb("EFF6FF"), stroke: 0.5pt + rgb("BFDBFE"), radius: 4pt, inset: 10pt)[
   #text(8.5pt, fill: rgb("1E40AF"))[
-    *Важное примечание:* Оценка #strong[{round(score, 1)} / 100] отражает исключительно техническую видимость профиля для поисковых роботов Яндекса и конверсионную готовность витрины, а не реальное высокое {quality_phrase}.
+    *Важное примечание:* Оценка #strong[{round(score, 1)} / 100] отражает исключительно техническую видимость профиля для поисковых роботов Яндекса и конверсионную готовность витрины, а не реальное высокое качество {quality_phrase}.
   ]
 ]
 
@@ -445,7 +453,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[1. «Слепая витрина» и потеря поискового трафика]
   #v(8pt)
   #set par(leading: 0.6em)
-  #text(10pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги или позиции. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие программы, товары или услуги. Этот самый горячий трафик забирают конкуренты{comp_safe} с правильно настроенными каталогами.]
+  #text(10pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши ключевые позиции и услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь тем, кто ищет конкретные позиции или предложения в вашем сегменте. Этот самый горячий трафик забирают конкуренты{comp_safe} с правильно настроенными каталогами.]
 ]
 #v(12pt)
 
@@ -453,7 +461,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[2. Барьер первого контакта (Обрыв конверсии)]
   #v(8pt)
   #set par(leading: 0.6em)
-  #text(10pt, fill: rgb("475569"))[Ваша карточка заставляет клиента совершать лишние усилия. Сегодня отсутствие виджетов прямой онлайн-записи и ярких кнопок действия (СТА) приводит к тому, что клиенты закрывают ваш профиль. Вы безвозвратно теряете огромный пласт «вечернего» трафика и аудиторию, которая не любит звонить.]
+  #text(10pt, fill: rgb("475569"))[Ваша карточка заставляет {target_audience} совершать лишние усилия. Сегодня отсутствие виджетов прямого заказа/записи и ярких кнопок действия (СТА) приводит к тому, что клиенты закрывают ваш профиль. Вы безвозвратно теряете огромный пласт «вечернего» трафика и аудиторию, которая не любит звонить.]
 ]
 #v(12pt)
 
@@ -488,7 +496,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #text(10.5pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Снятие барьеров]
     #v(3pt)
     #set par(leading: 0.5em)
-    #text(8.5pt, fill: rgb("475569"))[Внедрение систем онлайн-бронирования и триггеров для захвата лидов 24/7.]
+    #text(8.5pt, fill: rgb("475569"))[Внедрение систем бронирования/заказа и триггеров для захвата обращений 24/7.]
   ],
   rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
     #text(9pt, weight: "bold", fill: rgb("8B7355"))[ЭТАП 3]
