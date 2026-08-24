@@ -106,22 +106,32 @@ def fetch_cached_database():
         st.error(f"Ошибка чтения Google Sheets: {e}")
         return [], []
 
-def save_audit_to_sheets(url, title, niche, total_score, results_data, lpr_data=None):
+def save_audit_to_sheets(url, title, niche, total_score, lost_revenue, lpr_data=None):
+    """Компактная запись лида в формате CRM (без раздувания таблицы на 90 колонок)"""
     try:
         client = gspread.authorize(get_google_credentials())
         ws = client.open_by_url(st.secrets["SPREADSHEET_URL"]).worksheet("Results")
-        headers = ws.row_values(1)
-        row_dict = {
-            "Дата": datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M:%S"),
-            "Ссылка": url, "Компания": title, "Ниша": niche,
-            "Общий балл": str(round(total_score, 1)).replace('.', ',')
-        }
-        if lpr_data and lpr_data.get("name"):
-            row_dict.update({"ФИО ЛПР": lpr_data.get("name", ""), "Должность": lpr_data.get("role", ""), "Личный контакт": lpr_data.get("link", ""), "Прямой Email": lpr_data.get("email", "")})
-        for r in results_data:
-            if r.get("Код"): row_dict[r.get("Код")] = str(round(r.get("Earned", 0), 1)).replace('.', ',')
-        ws.append_row([row_dict.get(h, "") for h in headers])
-    except Exception: pass 
+        
+        lpr_name = lpr_data.get("name", "") if lpr_data else ""
+        lpr_role = lpr_data.get("role", "") if lpr_data else ""
+        lpr_contact = lpr_data.get("link", "") or lpr_data.get("email", "") if lpr_data else ""
+        lpr_full = f"{lpr_name} ({lpr_role})".strip(" ()")
+        
+        row = [
+            datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M"),
+            title,
+            niche,
+            str(round(total_score, 1)).replace('.', ','),
+            f"{lost_revenue:,}".replace(',', ' ') + " ₽",
+            lpr_full,
+            lpr_contact,
+            url,
+            "1. Новый лид",
+            ""  # Пустое поле для заметок
+        ]
+        ws.append_row(row)
+    except Exception:
+        pass
 
 # ==========================================
 # 3. ПАРСЕРЫ И СБОР ДАННЫХ
@@ -306,7 +316,7 @@ def calculate_dynamic_expert_rules(data, prompts_data):
     return {}
 
 # ==========================================
-# 5. ТИПОГРАФИКА И PDF
+# 5. ТИПОГРАФИКА И PDF (ПРЕМИУМ BIG4 ВЕРСТКА)
 # ==========================================
 def clean_typography(text):
     if not text: return ""
@@ -797,8 +807,6 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
                 with st.spinner("ИИ адаптирует смыслы отчета под нишу клиента..."):
                     results = rewrite_errors_by_ai(niche_label, title, results, expert_engine)
 
-            save_audit_to_sheets(url, title, niche_key, final_total_score, results, lpr_data)
-            
             with st.sidebar:
                 st.divider()
                 st.markdown(f"### 🧮 Экономика: {niche_key}")
@@ -808,6 +816,9 @@ if st.button("🚀 Сгенерировать Аналитический Отч�
 
             lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
             lost_revenue = int(client_leads * lost_percentage * client_check)
+
+            # Сохранение в CRM-формате
+            save_audit_to_sheets(url, title, niche_key, final_total_score, lost_revenue, lpr_data)
             
             st.divider()
             col1, col2 = st.columns([2, 1])
