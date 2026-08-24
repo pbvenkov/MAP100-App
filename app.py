@@ -187,7 +187,7 @@ def rewrite_errors_by_ai(niche_label, company_name, failed_rules, expert_engine)
     if not expert_engine or not failed_rules: return failed_rules
     payload_text = "".join([f"ID: {r['Код']} | Ошибка: {r['Критерий']} | Текст: {r['Обоснование']}\n" for r in failed_rules])
     prompt = f"""Ты — премиальный B2B-маркетолог. Ниша: {niche_label}. Компания: {company_name}.
-Перепиши обоснование каждой ошибки под боли этой ниши. Используй точную терминологию (например, "родители", "пациенты", "ученики" вместо "клиентов"). Текст должен быть емким, деловым, без воды, показывающим упущенную прибыль.
+Перепиши обоснование каждой ошибки под боли этой ниши. Используй точную терминологию (например, "родители", "пациенты", "покупатели", "клиенты"). Текст должен быть емким, деловым, без воды, показывающим упущенную прибыль.
 Ошибки:
 {payload_text}
 Верни строго JSON: {{"Код_ошибки": "Переписанный текст"}}"""
@@ -246,7 +246,6 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     if len(str(data.get('address') or '')) > 5: scores['SEO-18.1'] = True
     if data.get('videoCount', 0) > 0 or data.get('videos') or data.get('mobileVideos'): scores['CONT-42.1'] = True
     
-    # Фотографии и проверка тегов интерьера
     photos = data.get('photos', [])
     photo_count = int(data.get('photoCount') or len(photos) or 0)
     if photo_count >= 15: scores['CONT-36.1'] = True
@@ -281,7 +280,7 @@ def calculate_hard_facts(data, niche_key="OTHER"):
             if replied / len(all_reviews[:20]) >= 0.7: scores['REP-30.1'] = True
             if sum(1 for r in all_reviews[:20] if r.get('photos') or r.get('photoDetails')) / len(all_reviews[:20]) >= 0.05: scores['REP-35.1'] = True
         if any(float(r.get('rating') or 0.0) >= 4.0 and str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip() for r in all_reviews[:20]): scores['REP-30.3'] = True
-        scores['REP-32.2'] = True  # Без агрессии по умолчанию
+        scores['REP-32.2'] = True
         for r in all_reviews[:20]:
             bc_date, rev_date = parse_yandex_date(r.get('businessCommentDate')), parse_yandex_date(r.get('date'))
             if str(r.get('businessComment') or r.get('reply', {}).get('text') or '').strip() and bc_date and rev_date and (bc_date - rev_date).days <= 3: 
@@ -307,7 +306,7 @@ def calculate_dynamic_expert_rules(data, prompts_data):
     return {}
 
 # ==========================================
-# 5. ТИПОГРАФИКА И PDF (ПРЕМИУМ BIG4 ВЕРСТКА)
+# 5. ТИПОГРАФИКА И PDF
 # ==========================================
 def clean_typography(text):
     if not text: return ""
@@ -335,18 +334,37 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         package_name = "Интеграция Education PRO"
         package_price = "85 000 ₽"
         package_roi = f"1-2 закрытых договора (при чеке {cc_fmt} ₽)"
+        quality_phrase = "образовательного процесса вашей компании"
     elif niche in ["Стоматология", "Медицина / Бьюти"]:
         package_name = "Интеграция Medical PRO"
         package_price = "85 000 ₽"
         package_roi = f"1-2 первичных пациента (при чеке {cc_fmt} ₽)"
+        quality_phrase = "медицинских услуг и сервиса вашей клиники"
     elif niche in ["Сложный B2B / Производство", "Легкий B2B / Опт"]:
         package_name = "Интеграция B2B Enterprise"
         package_price = "85 000 ₽"
         package_roi = f"1 закрытая сделка (при чеке {cc_fmt} ₽)"
+        quality_phrase = "продукции и надежности вашего предприятия"
+    elif niche == "HORECA":
+        package_name = "Комплексная Бизнес-Упаковка HoReCa"
+        package_price = "35 000 ₽"
+        package_roi = f"10-15 новых гостей (при чеке {cc_fmt} ₽)"
+        quality_phrase = "кухни, атмосферы и гостеприимства вашего заведения"
+    elif niche == "Авто":
+        package_name = "Комплексная Бизнес-Упаковка Авто"
+        package_price = "35 000 ₽"
+        package_roi = f"2-3 новых заказ-наряда (при чеке {cc_fmt} ₽)"
+        quality_phrase = "качества ремонта и обслуживания в вашем автоцентре"
+    elif niche == "Ритейл":
+        package_name = "Комплексная Бизнес-Упаковка Ритейл"
+        package_price = "35 000 ₽"
+        package_roi = f"15-20 новых покупателей (при чеке {cc_fmt} ₽)"
+        quality_phrase = "качества товаров, широты ассортимента и сервиса вашего магазина"
     else:
         package_name = "Комплексная Бизнес-Упаковка"
         package_price = "35 000 ₽"
         package_roi = f"3-5 новых клиентов (при чеке {cc_fmt} ₽)"
+        quality_phrase = "качества товаров, работ или услуг вашей компании"
 
     typ_source = f"""
 #set document(title: "Аналитический Отчет - {title_safe}", author: "PIN100 Analytics")
@@ -412,7 +430,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(12pt)
 #rect(width: 100%, fill: rgb("EFF6FF"), stroke: 0.5pt + rgb("BFDBFE"), radius: 4pt, inset: 10pt)[
   #text(8.5pt, fill: rgb("1E40AF"))[
-    *Важное примечание:* Оценка #strong[{round(score, 1)} / 100] отражает исключительно техническую видимость профиля для поисковых роботов Яндекса и конверсионную готовность витрины, а не реальное высокое качество образовательного процесса вашей компании.
+    *Важное примечание:* Оценка #strong[{round(score, 1)} / 100] отражает исключительно техническую видимость профиля для поисковых роботов Яндекса и конверсионную готовность витрины, а не реальное высокое {quality_phrase}.
   ]
 ]
 
@@ -427,7 +445,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[1. «Слепая витрина» и потеря поискового трафика]
   #v(8pt)
   #set par(leading: 0.6em)
-  #text(10pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие программы или услуги. Этот самый горячий трафик забирают конкуренты{comp_safe} с правильно настроенными каталогами.]
+  #text(10pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши высокомаржинальные услуги или позиции. Из-за отсутствия правильной LSI-разметки, продающих SEO-текстов и технических фидов, вы просто не показываетесь клиентам, которые ищут конкретные дорогие программы, товары или услуги. Этот самый горячий трафик забирают конкуренты{comp_safe} с правильно настроенными каталогами.]
 ]
 #v(12pt)
 
@@ -462,7 +480,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #text(10.5pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[SEO-перепрошивка]
     #v(3pt)
     #set par(leading: 0.5em)
-    #text(8.5pt, fill: rgb("475569"))[Интеграция всех ваших услуг в поисковые алгоритмы Яндекса для захвата органики.]
+    #text(8.5pt, fill: rgb("475569"))[Интеграция всех ваших позиций в поисковые алгоритмы Яндекса для захвата органики.]
   ],
   rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
     #text(9pt, weight: "bold", fill: rgb("8B7355"))[ЭТАП 2]
@@ -478,7 +496,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #text(10.5pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Защита бренда]
     #v(3pt)
     #set par(leading: 0.5em)
-    #text(8.5pt, fill: rgb("475569"))[Антикризисная зачистка негатива и формирование образа надежного партнера.]
+    #text(8.5pt, fill: rgb("475569"))[Антикризисная зачистка негатива и формирование образа надежного лидера.]
   ]
 )
 
