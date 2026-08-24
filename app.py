@@ -295,4 +295,52 @@ def rewrite_errors_by_ai(niche_label, company_name, failed_rules, expert_engine)
 Верни строго JSON объект вида: {{"Код_ошибки": "Новый текст обоснования"}}"""
     try:
         raw_resp = expert_engine.generate_content(prompt).text
-        cleaned_json = raw_resp.replace("```json", "").replace("
+        match = re.search(r'\{.*\}', raw_resp, re.DOTALL)
+        if match:
+            new_texts = json.loads(match.group(0))
+            for r in failed_rules:
+                if r['Код'] in new_texts and str(new_texts[r['Код']]).strip(): 
+                    r['Обоснование'] = new_texts[r['Код']]
+    except Exception: 
+        pass
+    return failed_rules
+
+def calculate_hard_facts(data, niche_key="OTHER"):
+    scores = {}
+    now = datetime.now(timezone.utc)
+    title = str(data.get('title') or '')
+    desc = str(data.get('description') or '')
+    url = str(data.get('url') or data.get('website') or '').lower()
+    
+    cat_list = data.get('categories', [''])
+    cat_name = cat_list[0].get('name', cat_list[0]) if isinstance(cat_list[0], dict) else str(cat_list[0])
+    
+    if data.get('isVerifiedOwner') or len(title) > 2: 
+        scores['PROF-01.1'] = True
+    if data.get('categories'): 
+        scores['PROF-03.1'] = True
+    if url: 
+        scores['PROF-04.1'] = True
+        
+    phones = data.get('phones') or []
+    if phones: 
+        scores['PROF-05.1'] = True
+        if any(str(p).startswith('+7') or str(p).startswith('8') for p in phones): 
+            scores['PROF-05.2'] = True
+            
+    schedule = data.get('schedule') or data.get('workingHours') or []
+    if (isinstance(schedule, list) and len(schedule) >= 5) or (isinstance(schedule, dict) and len(schedule.keys()) >= 5): 
+        scores['PROF-07.1'] = True
+    
+    features = data.get('features', {})
+    if isinstance(features, (dict, list)) and len(features) > 0: 
+        scores['PROF-08.1'] = True
+
+    NICHE_MAPPING = {
+        "DENTISTRY": ["dentist_services", "uni_medic_specialization"], 
+        "AUTO": ["car_wash_services", "auto_repair_features"], 
+        "HORECA": ["restaurant_services", "cuisine_type"], 
+        "EDUCATION": ["school_direction", "specialized_schools", "classes for children"]
+    }
+    if isinstance(features, dict):
+        if
