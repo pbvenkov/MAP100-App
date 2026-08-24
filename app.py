@@ -44,7 +44,7 @@ except Exception:
     expert_engine = None
 
 # ==========================================
-# 2. УВЕДОМЛЕНИЯ В TELEGRAM
+# 2. СИСТЕМНЫЕ УВЕДОМЛЕНИЯ В TELEGRAM
 # ==========================================
 def send_telegram_alert(error_msg, target_url="Неизвестно"):
     tg_token = st.secrets.get("TG_BOT_TOKEN")
@@ -184,15 +184,17 @@ def normalize_yandex_url(raw_url):
 def fetch_apify_data(yandex_url):
     cleaned_url = normalize_yandex_url(yandex_url)
     
+    payload = {
+        "startUrls": [{"url": cleaned_url}],
+        "enrichBusinessData": True,
+        "includeReviews": True,
+        "maxPhotos": 80,
+        "maxPosts": 30
+    }
+    
     run_req = requests.post(
         f"https://api.apify.com/v2/acts/{APIFY_ACTOR_ID}/runs?token={APIFY_API_TOKEN}",
-        json={
-            "startUrls": [{"url": cleaned_url}],
-            "maxItems": 1,
-            "enrichBusinessData": True,
-            "maxPhotos": 80,
-            "maxPosts": 30
-        },
+        json=payload,
         timeout=15
     ).json()
     
@@ -223,13 +225,7 @@ def fetch_apify_data(yandex_url):
     if not isinstance(first_item, dict):
         raise Exception("Некорректный формат данных ответа.")
         
-    resolved_title = first_item.get('title') or first_item.get('name') or first_item.get('companyName') or first_item.get('header')
-    
-    if not resolved_title:
-        if not (first_item.get('address') or first_item.get('phones') or first_item.get('url')):
-            raise Exception(f"Яндекс вернул пустую карточку по адресу: {cleaned_url}")
-        resolved_title = "Организация"
-        
+    resolved_title = first_item.get('title') or first_item.get('name') or first_item.get('companyName') or first_item.get('header') or "Организация"
     first_item['title'] = resolved_title
     return first_item
 
