@@ -28,7 +28,7 @@ PROJECT_NAME = "PIN100"
 EXPERT_TITLE = "Генератор B2B Воронки (Аналитический Отчет)"
 
 APIFY_API_TOKEN = st.secrets.get("APIFY_API_TOKEN", "")
-APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper" 
+APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper"
 VK_API_TOKEN = st.secrets.get("VK_API_TOKEN", "")
 
 # Инициализация ИИ Gemini
@@ -52,15 +52,15 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
     if tg_token and tg_admin_id:
         tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
         text = f"🚨 *{PROJECT_NAME}: Сбой системы*\n\n*Цель:* {target_url}\n*Ошибка:* {error_msg}"
-        try: 
+        try:
             requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
-        except Exception: 
+        except Exception:
             pass
 
 def send_telegram_business_alert(title, category, unique_keys):
     tg_token = st.secrets.get("TG_BOT_TOKEN")
     tg_admin_id = st.secrets.get("TG_ADMIN_ID")
-    if not (tg_token and tg_admin_id): 
+    if not (tg_token and tg_admin_id):
         return
 
     ai_reasoning = "Потенциально высокий LTV. Требует ручной бизнес-оценки."
@@ -80,9 +80,9 @@ def send_telegram_business_alert(title, category, unique_keys):
         f"🔑 *Скрытые ключи Яндекса:* {', '.join(unique_keys)}\n\n"
         f"💡 *Оценка ИИ:*\n_{ai_reasoning}_"
     )
-    try: 
+    try:
         requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
-    except Exception: 
+    except Exception:
         pass
 
 # ==========================================
@@ -107,7 +107,7 @@ def get_google_credentials():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     return Credentials.from_service_account_info(creds_dict, scopes=scopes)
 
-@st.cache_data(ttl=300) 
+@st.cache_data(ttl=300)
 def fetch_cached_database():
     try:
         client = gspread.authorize(get_google_credentials())
@@ -129,7 +129,7 @@ def save_audit_to_sheets(url, title, niche, total_score, lost_revenue, lpr_data=
         
         lpr_name = lpr_data.get("name", "") if lpr_data else ""
         lpr_role = lpr_data.get("role", "") if lpr_data else ""
-        lpr_contact = lpr_data.get("link", "") or lpr_data.get("email", "") if lpr_data else ""
+        lpr_contact = (lpr_data.get("link", "") or lpr_data.get("email", "")) if lpr_data else ""
         lpr_full = f"{lpr_name} ({lpr_role})".strip(" ()")
         
         row = [
@@ -198,7 +198,7 @@ def fetch_apify_data(yandex_url):
         timeout=15
     ).json()
     
-    if 'error' in run_req: 
+    if 'error' in run_req:
         raise Exception(f"Ошибка Apify API: {run_req['error']}")
         
     run_id = run_req['data']['id']
@@ -206,14 +206,14 @@ def fetch_apify_data(yandex_url):
     status, retries = "RUNNING", 0
     
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
-        if retries >= 35: 
+        if retries >= 35:
             raise Exception("Таймаут сбора данных. Яндекс долго отвечает.")
         time.sleep(4)
         status_req = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}", timeout=10).json()
         status = status_req['data']['status']
         retries += 1
         
-    if status != "SUCCEEDED": 
+    if status != "SUCCEEDED":
         raise Exception(f"Парсер завершился со статусом {status}.")
         
     dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}", timeout=15).json()
@@ -230,27 +230,27 @@ def fetch_apify_data(yandex_url):
     return first_item
 
 def enrich_lpr_contacts_from_vk(social_links):
-    if not VK_API_TOKEN or not social_links: 
+    if not VK_API_TOKEN or not social_links:
         return {}
-    vk_url = next((link.get('url', '') for link in social_links if 'vk.com' in link.get('url', '') or 'vk.ru' in link.get('url', '')), None)
-    if not vk_url: 
+    vk_url = next((link.get('url', '') for link in social_links if isinstance(link, dict) and ('vk.com' in link.get('url', '') or 'vk.ru' in link.get('url', ''))), None)
+    if not vk_url:
         return {}
     try:
         group_id = vk_url.rstrip('/').split('/')[-1]
         res = requests.get("https://api.vk.com/method/groups.getById", params={"group_id": group_id, "fields": "contacts", "access_token": VK_API_TOKEN, "v": "5.199"}, timeout=5).json()
         if 'response' in res and res['response']:
             contacts = res['response'][0].get('contacts', [])
-            if not contacts: 
+            if not contacts:
                 return {"status": "hidden", "vk_url": vk_url}
-            contact = contacts[0] 
+            contact = contacts[0]
             lpr_data = {"name": "", "role": contact.get('desc', 'Администратор'), "link": "", "email": contact.get('email', ''), "status": "found"}
             if 'user_id' in contact:
                 lpr_data["link"] = f"https://vk.com/id{contact['user_id']}"
                 u_res = requests.get("https://api.vk.com/method/users.get", params={"user_ids": contact['user_id'], "access_token": VK_API_TOKEN, "v": "5.199"}, timeout=5).json()
-                if 'response' in u_res and u_res['response']: 
+                if 'response' in u_res and u_res['response']:
                     lpr_data["name"] = f"{u_res['response'][0].get('first_name', '')} {u_res['response'][0].get('last_name', '')}".strip()
             return lpr_data
-    except Exception: 
+    except Exception:
         pass
     return {}
 
@@ -258,17 +258,17 @@ def enrich_lpr_contacts_from_vk(social_links):
 # 5. АЛГОРИТМЫ СКОРИНГА И АНАЛИТИКА
 # ==========================================
 def parse_yandex_date(date_val):
-    if not date_val: 
+    if not date_val:
         return None
     try:
-        if isinstance(date_val, (int, float)) or (isinstance(date_val, str) and str(date_val).isdigit()): 
+        if isinstance(date_val, (int, float)) or (isinstance(date_val, str) and str(date_val).isdigit()):
             return datetime.fromtimestamp(int(date_val) / 1000, tz=timezone.utc)
         return datetime.fromisoformat(str(date_val).replace('Z', '+00:00'))
-    except Exception: 
+    except Exception:
         return None
 
 def determine_niche_by_expert(title, category, prompts_data):
-    if not expert_engine: 
+    if not expert_engine:
         return "OTHER"
     raw_prompt = next((p.get("Промпт для ИИ") for p in prompts_data if p.get("Код") == "NICHE_PROMPT"), "")
     if not raw_prompt:
@@ -277,14 +277,14 @@ def determine_niche_by_expert(title, category, prompts_data):
     try:
         key = expert_engine.generate_content(prompt).text.strip().upper()
         for v in ["B2B_HEAVY", "BEAUTY_MEDICAL", "DENTISTRY", "HORECA", "B2B", "RETAIL", "AUTO", "EDUCATION", "SERVICES", "OTHER"]:
-            if v in key: 
+            if v in key:
                 return v
-    except Exception: 
+    except Exception:
         pass
     return "OTHER"
 
 def rewrite_errors_by_ai(niche_label, company_name, failed_rules, expert_engine):
-    if not expert_engine or not failed_rules: 
+    if not expert_engine or not failed_rules:
         return failed_rules
     payload_text = "".join([f"ID: {r['Код']} | Ошибка: {r['Критерий']} | Текст: {r['Обоснование']}\n" for r in failed_rules])
     prompt = f"""Ты — B2B-эксперт по локальному маркетингу. Ниша: {niche_label}. Компания: {company_name}.
@@ -298,9 +298,9 @@ def rewrite_errors_by_ai(niche_label, company_name, failed_rules, expert_engine)
         if match:
             new_texts = json.loads(match.group(0))
             for r in failed_rules:
-                if r['Код'] in new_texts and str(new_texts[r['Код']]).strip(): 
+                if r['Код'] in new_texts and str(new_texts[r['Код']]).strip():
                     r['Обоснование'] = new_texts[r['Код']]
-    except Exception: 
+    except Exception:
         pass
     return failed_rules
 
@@ -315,43 +315,43 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     
     cat_list = data.get('categories') or []
     cat_name = ""
-    if cat_list:
+    if isinstance(cat_list, list) and cat_list:
         first_cat = cat_list[0]
         if isinstance(first_cat, dict):
             cat_name = first_cat.get('name', str(first_cat))
         else:
             cat_name = str(first_cat)
     
-    if data.get('isVerifiedOwner') or len(title) > 2: 
+    if data.get('isVerifiedOwner') or len(title) > 2:
         scores['PROF-01.1'] = True
-    if cat_list: 
+    if cat_list:
         scores['PROF-03.1'] = True
-    if url: 
+    if url:
         scores['PROF-04.1'] = True
         
     phones = data.get('phones') or []
-    if phones: 
+    if phones:
         scores['PROF-05.1'] = True
         for p in phones:
             p_str = str(p)
-            if p_str.startswith('+7') or p_str.startswith('8'): 
+            if p_str.startswith('+7') or p_str.startswith('8'):
                 scores['PROF-05.2'] = True
                 break
             
     schedule = data.get('schedule') or data.get('workingHours') or []
-    if isinstance(schedule, list) and len(schedule) >= 5: 
+    if isinstance(schedule, list) and len(schedule) >= 5:
         scores['PROF-07.1'] = True
-    elif isinstance(schedule, dict) and len(schedule.keys()) >= 5: 
+    elif isinstance(schedule, dict) and len(schedule.keys()) >= 5:
         scores['PROF-07.1'] = True
     
     features = data.get('features') or {}
-    if features: 
+    if features:
         scores['PROF-08.1'] = True
 
     niche_mapping = {
-        "DENTISTRY": ["dentist_services", "uni_medic_specialization"], 
-        "AUTO": ["car_wash_services", "auto_repair_features"], 
-        "HORECA": ["restaurant_services", "cuisine_type"], 
+        "DENTISTRY": ["dentist_services", "uni_medic_specialization"],
+        "AUTO": ["car_wash_services", "auto_repair_features"],
+        "HORECA": ["restaurant_services", "cuisine_type"],
         "EDUCATION": ["school_direction", "specialized_schools", "classes for children"]
     }
     if isinstance(features, dict):
@@ -363,20 +363,20 @@ def calculate_hard_facts(data, niche_key="OTHER"):
         if niche_key in ["OTHER", "SERVICES"]:
             std_keys = {'payment_method', 'wi_fi', 'toilet', 'parking', 'street_entrance', 'parking_disabled', 'promotions', 'wheelchair_access'}
             client_unique_keys = [k for k in features.keys() if k not in std_keys]
-            if len(client_unique_keys) >= 2: 
+            if len(client_unique_keys) >= 2:
                 send_telegram_business_alert(title, cat_name, client_unique_keys[:5])
     
-    if len(desc) > 1200: 
+    if len(desc) > 1200:
         scores['PROF-09.1'] = True
-    if data.get('isVerifiedOwner'): 
+    if data.get('isVerifiedOwner'):
         scores['PROF-12.1'] = True
     
     social_items = data.get('socialLinks') or data.get('links') or []
     owner_links = (url + " " + desc + " " + " ".join([str(l) for l in social_items])).lower()
     
-    if any(s in owner_links for s in ["t.me", "wa.me", "whatsapp", "viber"]): 
+    if any(s in owner_links for s in ["t.me", "wa.me", "whatsapp", "viber"]):
         scores['PROF-13.1'] = True
-    if any(s in owner_links for s in ["vk.com", "vk.ru", "youtube", "dzen", "instagram"]): 
+    if any(s in owner_links for s in ["vk.com", "vk.ru", "youtube", "dzen", "instagram"]):
         scores['PROF-13.2'] = True
     
     menu_data = data.get('menu')
@@ -386,41 +386,41 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     catalog_items = data.get('productCatalog') or []
     
     valid_prods = []
-    for p in menu_items + catalog_items:
+    for p in (menu_items or []) + (catalog_items or []):
         if isinstance(p, dict):
             valid_prods.append(p)
             
     if valid_prods:
         total_vp = len(valid_prods)
-        if total_vp >= 10: 
+        if total_vp >= 10:
             scores['PROF-11.1'] = True
             
         with_photo = sum(1 for p in valid_prods if p.get('photoUrl') or p.get('photo'))
-        if with_photo / total_vp >= 0.7: 
+        if with_photo / total_vp >= 0.7:
             scores['PROF-11.2'] = True
             
         with_price = sum(1 for p in valid_prods if any(c.isdigit() for c in str(p.get('price') or '')))
-        if with_price / total_vp >= 0.7: 
+        if with_price / total_vp >= 0.7:
             scores['PROF-11.3'] = True
             
         with_desc = sum(1 for p in valid_prods if len(str(p.get('description') or '')) > 40)
-        if with_desc / total_vp >= 0.6: 
+        if with_desc / total_vp >= 0.6:
             scores['PROF-11.4'] = True
             
         categories = set(p.get('category') for p in valid_prods if p.get('category'))
-        if len(categories) >= 2: 
+        if len(categories) >= 2:
             scores['PROF-11.5'] = True
         
-    if len(str(data.get('address') or '')) > 5: 
+    if len(str(data.get('address') or '')) > 5:
         scores['SEO-18.1'] = True
-    if data.get('videoCount', 0) > 0 or data.get('videos') or data.get('mobileVideos'): 
+    if data.get('videoCount', 0) > 0 or data.get('videos') or data.get('mobileVideos'):
         scores['CONT-42.1'] = True
     
     photos = data.get('photos') or []
     photo_count = int(data.get('photoCount') or len(photos) or 0)
-    if photo_count >= 15: 
+    if photo_count >= 15:
         scores['CONT-36.1'] = True
-    if photo_count >= 30: 
+    if photo_count >= 30:
         scores['CONT-36.2'] = True
     
     tags = []
@@ -440,7 +440,7 @@ def calculate_hard_facts(data, niche_key="OTHER"):
         scores['CONT-37.3'] = True
     
     posts = data.get('mobilePosts') or data.get('posts') or []
-    if posts: 
+    if posts:
         scores['CONV-51.1'] = True
         for p in posts:
             pd_date = parse_yandex_date(p.get('publicationTime') or p.get('date'))
@@ -449,23 +449,23 @@ def calculate_hard_facts(data, niche_key="OTHER"):
                 break
             
     rating = float(data.get('rating') or 0.0)
-    if rating >= 4.5: 
+    if rating >= 4.5:
         scores['REP-27.1'] = True
-    if rating >= 4.8: 
+    if rating >= 4.8:
         scores['REP-27.2'] = True
         
     rev_count = int(data.get('reviewsCount') or data.get('ratingsCount') or data.get('reviewCount') or 0)
-    if rev_count >= 40: 
+    if rev_count >= 40:
         scores['REP-28.1'] = True
     
     raw_reviews = data.get('reviews') or []
     all_reviews = [r for r in raw_reviews if isinstance(r, dict)]
-    if not all_reviews: 
+    if not all_reviews:
         scores['META_NO_RECENT_REVIEWS'] = True
     else:
         top_20 = all_reviews[:20]
         first_date = parse_yandex_date(all_reviews[0].get('date'))
-        if first_date and (now - first_date).days <= 14: 
+        if first_date and (now - first_date).days <= 14:
             scores['REP-29.1'] = True
             
         replied = 0
@@ -493,19 +493,19 @@ def calculate_hard_facts(data, niche_key="OTHER"):
                 quick_reply = True
         
         if top_20:
-            if replied / len(top_20) >= 0.7: 
+            if replied / len(top_20) >= 0.7:
                 scores['REP-30.1'] = True
-            if has_photos / len(top_20) >= 0.05: 
+            if has_photos / len(top_20) >= 0.05:
                 scores['REP-35.1'] = True
-        if good_reply: 
+        if good_reply:
             scores['REP-30.3'] = True
-        if quick_reply: 
+        if quick_reply:
             scores['REP-30.2'] = True
             
     return scores
 
 def calculate_dynamic_expert_rules(data, prompts_data):
-    if not expert_engine or not prompts_data: 
+    if not expert_engine or not prompts_data:
         return {}
     title = str(data.get('title') or '')
     desc = str(data.get('description') or '')[:1000]
@@ -535,16 +535,16 @@ def calculate_dynamic_expert_rules(data, prompts_data):
         if p_code and p_code != 'NICHE_PROMPT':
             rules_list.append(f'"{p_code}": {p_prompt}')
             
-    if not rules_list: 
+    if not rules_list:
         return {}
         
     prompt = f"Контекст:\nНазвание: {title}\nОписание: {desc}\nТовары: {prods_text}\nОтзывы:\n{reviews_text[:1500]}\nКритерии:\n{chr(10).join(rules_list)}\nВерни строго JSON объект {{CODE: true/false}}."
     try:
         raw_resp = expert_engine.generate_content(prompt).text
         match = re.search(r'\{.*\}', raw_resp, re.DOTALL)
-        if match: 
+        if match:
             return {k: True for k, v in json.loads(match.group(0)).items() if str(v).lower() in ["1", "true"]}
-    except Exception: 
+    except Exception:
         pass
     return {}
 
@@ -552,7 +552,7 @@ def calculate_dynamic_expert_rules(data, prompts_data):
 # 6. ВЕРСТКА TYPST И ГЕНЕРАЦИЯ PDF
 # ==========================================
 def clean_typography(text):
-    if not text: 
+    if not text:
         return ""
     t = str(text).replace(" - ", " — ")
     t = t.replace(">=", "≥").replace("<=", "≤").replace(">", ">").replace("<", "<")
@@ -758,7 +758,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(9.5pt, weight: "bold", fill: rgb("8B7355"))[Telegram:#linebreak()t.me/paulvenkov]
       ]
     ]
-  )
+  ]
 ]
 """
 
@@ -777,7 +777,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 
     for block in blocks:
         block_items = [r for r in results_data if r['Группа'] in block['groups']]
-        if not block_items: 
+        if not block_items:
             continue
         earned_score = sum(r.get('Earned', 0.0) for r in block_items)
         max_score = sum(r.get('Max', 0.0) for r in block_items)
@@ -832,7 +832,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         st.error(f"Ошибка компиляции Typst: {e}")
         pdf_bytes = b""
     finally:
-        if os.path.exists(typ_path): 
+        if os.path.exists(typ_path):
             os.remove(typ_path)
         
     return pdf_bytes
@@ -842,7 +842,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 # ==========================================
 rules_data, prompts_data = fetch_cached_database()
 
-with st.sidebar: 
+with st.sidebar:
     st.markdown(f"## 📍 {PROJECT_NAME}")
     st.write("✅ База данных подключена (Google Sheets).")
 
@@ -881,18 +881,35 @@ if data_to_process:
     data = data_to_process
     title = data.get('title', 'Без названия')
     c_list = data.get('categories', [])
-    cat = c_list[0].get('name', '') if c_list and isinstance(c_list[0], dict) else (str(c_list[0]) if c_list else '')
+    cat = c_list[0].get('name', '') if (isinstance(c_list, list) and c_list and isinstance(c_list[0], dict)) else (str(c_list[0]) if (isinstance(c_list, list) and c_list) else '')
     client_reviews = int(data.get('reviewsCount') or data.get('ratingsCount') or len(data.get('reviews') or []) or 0)
     
     social_links = data.get('socialLinks') or data.get('links') or []
+    if not isinstance(social_links, list):
+        social_links = []
     lpr_data = enrich_lpr_contacts_from_vk(social_links)
     
-    related_places = data.get('relatedPlaces', [])
-    competitors_list = [str(c.get('name')) for c in related_places if c.get('name')][:2]
+    # Безопасная обработка relatedPlaces (защита от TypeError)
+    raw_related = data.get('relatedPlaces') or []
+    if isinstance(raw_related, list):
+        competitors_list = [
+            str(c.get('name')).strip()
+            for c in raw_related
+            if isinstance(c, dict) and c.get('name')
+        ][:2]
+    elif isinstance(raw_related, dict):
+        raw_items = raw_related.get('items') or raw_related.get('places') or [raw_related]
+        competitors_list = [
+            str(c.get('name')).strip()
+            for c in raw_items
+            if isinstance(c, dict) and c.get('name')
+        ][:2]
+    else:
+        competitors_list = []
     competitors_text = f" (например, {', '.join(competitors_list)})" if competitors_list else ""
     
     with st.spinner("Расчет юнит-экономики и запуск алгоритмов..."):
-        try: 
+        try:
             niche_key = determine_niche_by_expert(title, cat, prompts_data)
         except Exception:
             niche_key = "OTHER"
@@ -907,7 +924,7 @@ if data_to_process:
         
         for r in rules_data:
             code = str(r.get('Код', '')).strip()
-            if not code: 
+            if not code:
                 continue
             name = str(r.get('Критерий', '')).strip()
             group = str(r.get('Группа метрик', 'Прочее')).strip()
@@ -921,11 +938,15 @@ if data_to_process:
             if not reason_error or reason_error.lower() == 'nan':
                 reason_error = f"Отсутствие параметра «{name}» снижает видимость карточки в локальном поиске."
 
-            try: stage_val = int(r.get('Этап_Внедрения', 3))
-            except Exception: stage_val = 3
+            try:
+                stage_val = int(r.get('Этап_Внедрения', 3))
+            except Exception:
+                stage_val = 3
             
-            try: max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
-            except Exception: max_s = float(r.get('Балл', 0.0))
+            try:
+                max_s = float(str(r.get(target_column, r.get('Балл', 0.0))).strip().replace(',', '.') or 0.0)
+            except Exception:
+                max_s = float(r.get('Балл', 0.0))
             
             if max_s > 0.0:
                 val = max_s if raw_scores.get(code) else 0.0
@@ -939,10 +960,10 @@ if data_to_process:
                     final_reason = reason_error
                     
                 results.append({
-                    "Код": code, 
-                    "Критерий": name, 
-                    "Результат": comm, 
-                    "Обоснование": final_reason, 
+                    "Код": code,
+                    "Критерий": name,
+                    "Результат": comm,
+                    "Обоснование": final_reason,
                     "Группа": group,
                     "Этап": stage_val,
                     "Earned": val,
@@ -971,7 +992,7 @@ if data_to_process:
         
         st.divider()
         col1, col2 = st.columns([2, 1])
-        with col1: 
+        with col1:
             st.subheader(f"🏢 {title}")
             st.caption(f"🧠 Сегмент: **{niche_label}** | 📍 Фактических отзывов: {client_reviews}")
             
@@ -980,7 +1001,7 @@ if data_to_process:
             elif lpr_data and lpr_data.get('status') == 'hidden':
                 st.warning("⚠️ **Группа ВК найдена, но блок «Контакты» скрыт.**")
             
-        with col2: 
+        with col2:
             delta = "Отличный результат" if final_total_score >= 80 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
             st.metric(f"Индекс {PROJECT_NAME}", f"{round(final_total_score, 1)} / 100", delta=delta, delta_color="normal" if final_total_score >= 80 else "inverse")
 
@@ -997,10 +1018,10 @@ if data_to_process:
         
         if pdf_bytes:
             st.download_button(
-                label="💎 Скачать Аналитический Отчет (PDF)", 
-                data=pdf_bytes, 
-                file_name=f"PIN100_Report_{title.replace(' ', '_')}.pdf", 
-                mime="application/pdf", 
+                label="💎 Скачать Аналитический Отчет (PDF)",
+                data=pdf_bytes,
+                file_name=f"PIN100_Report_{title.replace(' ', '_')}.pdf",
+                mime="application/pdf",
                 type="primary",
                 use_container_width=True
             )
