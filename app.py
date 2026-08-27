@@ -152,11 +152,6 @@ def save_audit_to_sheets(url, title, niche, total_score, lost_revenue, lpr_data=
 # 4. НОРМАЛИЗАЦИЯ ССЫЛОК И СБОР ДАННЫХ
 # ==========================================
 def normalize_yandex_url(raw_url):
-    """
-    Разворачивает короткие ссылки (/-/CT...), 
-    принудительно переводит домен на yandex.ru 
-    и очищает URL для корректной работы Apify.
-    """
     url = raw_url.strip()
     
     if "/-/" in url:
@@ -555,8 +550,11 @@ def clean_typography(text):
     if not text:
         return ""
     t = str(text).replace(" - ", " — ")
-    t = t.replace(">=", "≥").replace("<=", "≤").replace(">", ">").replace("<", "<")
-    for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`']:
+    t = t.replace(">=", "≥").replace("<=", "≤").replace("->", "→")
+    # Заменяем знаки сравнения, чтобы Typst не путал их с разметкой Labels <label>
+    t = t.replace("<", " меньше ").replace(">", " больше ")
+    # Заменяем все специальные символы синтаксиса Typst
+    for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`', '~']:
         t = t.replace(c, ' ')
     return " ".join(t.split())
 
@@ -569,6 +567,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     rev_loss_fmt = f"{revenue_loss:,}".replace(',', ' ')
     
     title_safe = clean_typography(title)
+    niche_safe = clean_typography(niche)
     comp_safe = clean_typography(competitors_text)
     
     niche_str = str(niche).lower()
@@ -622,19 +621,20 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 )
 
 #set text(font: ("Inter", "Arial", "sans-serif"), size: 10.5pt, fill: rgb("334155"), lang: "ru")
+#set par(leading: 0.55em)
 #show heading: set text(font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))
 
 // --- ОБЛОЖКА ---
 #v(100pt)
 #text(12pt, fill: rgb("8B7355"), weight: "bold", tracking: 2pt)[PIN100 ANALYTICS]
 #v(10pt)
-#text(24pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Аналитический Отчет:#linebreak()Оцифровка упущенной выручки]
+#text(24pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Аналитический Отчет:\\ Оцифровка упущенной выручки]
 #v(10pt)
 #line(length: 60mm, stroke: 1.5pt + rgb("8B7355"))
 #v(30pt)
 #text(11pt, fill: rgb("475569"))[
-  Подготовлено для: #strong[{title_safe}] #linebreak()
-  Ниша: #strong[{clean_typography(niche)}] #linebreak()
+  Подготовлено для: #strong[{title_safe}] \\
+  Ниша: #strong[{niche_safe}] \\
   Дата расчета: #strong[{current_date}]
 ]
 #pagebreak()
@@ -647,7 +647,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   gutter: 20pt,
   rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 18pt)[
     #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ИНДЕКС ГОТОВНОСТИ ПРОФИЛЯ]
-    #linebreak()
+    \\
     #v(8pt)
     #text(26pt, weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)} / 100]
     #v(4pt)
@@ -655,7 +655,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
   ],
   rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 18pt)[
     #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[УПУЩЕННАЯ ВЫРУЧКА]
-    #linebreak()
+    \\
     #v(8pt)
     #text(24pt, weight: "bold", fill: rgb("9F1239"))[- {rev_loss_fmt} ₽/мес]
   ]
@@ -665,7 +665,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 15pt)[
   #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Критический вывод аналитики:]
   #v(8pt)
-  #set par(leading: 0.6em)
   #text(10.5pt, fill: rgb("334155"))[Прямо сейчас ваша компания фактически невидима для *{dev}% целевых клиентов* в поисковой выдаче Яндекс Карт. Из-за алгоритмических ошибок вы ежемесячно уступаете конкурентам около *{lost_leads} горячих сделок*. Попытки заливать рекламный бюджет в текущий профиль приведут к прямому финансовому убытку.]
 ]
 
@@ -686,7 +685,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 16pt)[
   #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[1. «Слепая витрина» и потеря поискового трафика]
   #v(8pt)
-  #set par(leading: 0.6em)
   #text(10pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши ключевые позиции. Из-за отсутствия LSI-разметки и фидов вас обходят конкуренты{comp_safe} с правильно настроенными каталогами.]
 ]
 #v(12pt)
@@ -694,7 +692,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 16pt)[
   #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[2. Барьер первого контакта (Обрыв конверсии)]
   #v(8pt)
-  #set par(leading: 0.6em)
   #text(10pt, fill: rgb("475569"))[Ваша карточка заставляет {target_audience} совершать лишние действия. Отсутствие прямых кнопок записи и онлайн-заказа приводит к уходу потенциальных клиентов.]
 ]
 #v(12pt)
@@ -702,7 +699,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 16pt)[
   #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[3. Скрытые репутационные угрозы]
   #v(8pt)
-  #set par(leading: 0.6em)
   #text(10pt, fill: rgb("475569"))[Оставленный без ответа негативный отзыв отпугивает новых покупателей с высоким средним чеком на финальном этапе принятия решения.]
 ]
 
@@ -721,7 +717,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #v(3pt)
     #text(12pt, weight: "bold", fill: rgb("0A1128"))[35 000 ₽]
     #v(3pt)
-    #set par(leading: 0.5em)
     #text(8pt, fill: rgb("475569"))[Базовое SEO, устранение ошибок витрины, чистка дублей.]
   ],
   rect(fill: rgb("F8FAFC"), stroke: 1.5pt + rgb("8B7355"), radius: 4pt, inset: 10pt)[
@@ -729,7 +724,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #v(3pt)
     #text(13pt, weight: "bold", fill: rgb("8B7355"))[{package_price}]
     #v(3pt)
-    #set par(leading: 0.5em)
     #text(8pt, fill: rgb("0A1128"), weight: "bold")[Комплекс под ключ: SEO + UX-конверсия + Защита бренда + XML-фиды.]
   ],
   rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
@@ -737,7 +731,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #v(3pt)
     #text(12pt, weight: "bold", fill: rgb("0A1128"))[150 000 ₽]
     #v(3pt)
-    #set par(leading: 0.5em)
     #text(8pt, fill: rgb("475569"))[Полное сопровождение воронки на 6 месяцев + реклама.]
   ]
 )
@@ -748,14 +741,13 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     columns: (1fr, auto),
     gutter: 10pt,
     [
-      #text(9.5pt, weight: "bold", fill: rgb("FFFFFF"))[Забронировать 20-минутный стратегический Zoom-разбор] #linebreak()
+      #text(9.5pt, weight: "bold", fill: rgb("FFFFFF"))[Забронировать 20-минутный стратегический Zoom-разбор] \\
       #v(2pt)
-      #set par(leading: 0.5em)
       #text(8pt, fill: rgb("CBD5E1"))[Покажем экран вашего профиля в аналитике Яндекса и передадим план исправления ТОП-5 ошибок.]
     ],
     [
       #align(center + horizon)[
-        #text(9.5pt, weight: "bold", fill: rgb("8B7355"))[Telegram:#linebreak()t.me/paulvenkov]
+        #text(9.5pt, weight: "bold", fill: rgb("8B7355"))[Telegram: \\ t.me/paulvenkov]
       ]
     ]
   ]
@@ -776,7 +768,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     ]
 
     for block in blocks:
-        block_items = [r for r in results_data if r['Группа'] in block['groups']]
+        block_items = [r for r in results_data if r.get('Группа') in block['groups']]
         if not block_items:
             continue
         earned_score = sum(r.get('Earned', 0.0) for r in block_items)
@@ -784,10 +776,10 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         percentage = (earned_score / max_score * 100) if max_score > 0 else 100
         bar_color = "166534" if percentage >= 80 else ("8B7355" if percentage >= 50 else "9F1239")
         
-        passed_items = [clean_typography(r['Критерий']) for r in block_items if r['Результат'] == 'ДА']
+        passed_items = [clean_typography(r.get('Критерий', '')) for r in block_items if r.get('Результат') == 'ДА']
         passed_text = ", ".join(passed_items) if passed_items else "Нет данных"
 
-        failed_items_block = [r for r in block_items if r['Результат'] == 'НЕТ']
+        failed_items_block = [r for r in block_items if r.get('Результат') == 'НЕТ']
         failed_cards = ""
         if failed_items_block:
             for f in failed_items_block:
@@ -797,9 +789,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #v(3pt)
 #block(breakable: false)[
   #rect(width: 100%, fill: rgb("FFF1F2"), stroke: 0.5pt + rgb("FECDD3"), radius: 3pt, inset: 6pt)[
-    #text(9pt, weight: "bold", fill: rgb("9F1239"))[× {c_name}] #linebreak()
+    #text(9pt, weight: "bold", fill: rgb("9F1239"))[× {c_name}] \\
     #v(2pt)
-    #set par(leading: 0.55em)
     #text(8.5pt, fill: rgb("475569"))[{c_reason}]
   ]
 ]
@@ -812,9 +803,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #heading(level: 3)[{block['title']} (#text(fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}])]
 #v(4pt)
 #rect(width: 100%, fill: rgb("F0FDF4"), stroke: 0.5pt + rgb("BBF7D0"), radius: 3pt, inset: 6pt)[
-  #text(8pt, weight: "bold", fill: rgb("166534"), tracking: 0.5pt)[В НОРМЕ:] #linebreak()
+  #text(8pt, weight: "bold", fill: rgb("166534"), tracking: 0.5pt)[В НОРМЕ:] \\
   #v(2pt)
-  #set par(leading: 0.55em)
   #text(8.5pt, fill: rgb("475569"))[{passed_text}]
 ]
 #v(3pt)
@@ -889,7 +879,7 @@ if data_to_process:
         social_links = []
     lpr_data = enrich_lpr_contacts_from_vk(social_links)
     
-    # Безопасная обработка relatedPlaces (защита от TypeError)
+    # Безопасная обработка relatedPlaces
     raw_related = data.get('relatedPlaces') or []
     if isinstance(raw_related, list):
         competitors_list = [
