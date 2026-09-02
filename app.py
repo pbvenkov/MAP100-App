@@ -216,7 +216,7 @@ def fetch_apify_data(yandex_url):
     status, retries = "RUNNING", 0
     
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
-        if retries >= 35:
+        if retries >= 75:
             raise Exception("Таймаут сбора данных. Яндекс долго отвечает.")
         time.sleep(4)
         status_req = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}", timeout=10).json()
