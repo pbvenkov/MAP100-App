@@ -11,19 +11,23 @@ class DriveManager:
         self.pdf_root_id = "15kzKEaS76HAhx22FR-BTvifbaecH_wx8"
         self.json_root_id = "1efm3iHSVvUPp50in3tfOGxd0xOACio2E"
         self.letters_root_id = "10hP476EXoiPCkRfE9nqc1ZyyTBNvPKR6"
+
         
-        # Кэш для запоминания созданных папок (решает проблему дубликатов)
         self._folder_cache = {}
 
     def _get_or_create_monthly_folder(self, parent_folder_id):
-        # Если папка уже найдена в эту сессию — берем ее из памяти
         if parent_folder_id in self._folder_cache:
             return self._folder_cache[parent_folder_id]
             
         month_name = datetime.now().strftime("%Y_%m")
         query = f"name='{month_name}' and '{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
         
-        results = self.service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        try:
+            results = self.service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        except Exception as e:
+            # Выводим ошибку, если Google не дал прочитать папку
+            raise Exception(f"Сбой при доступе к папке {parent_folder_id}. Ответ Google: {str(e)}")
+        
         files = results.get('files', [])
         
         if files:
@@ -34,10 +38,13 @@ class DriveManager:
                 'mimeType': 'application/vnd.google-apps.folder',
                 'parents': [parent_folder_id]
             }
-            folder = self.service.files().create(body=folder_metadata, fields='id').execute()
-            folder_id = folder.get('id')
+            try:
+                folder = self.service.files().create(body=folder_metadata, fields='id').execute()
+                folder_id = folder.get('id')
+            except Exception as e:
+                # Выводим ошибку, если Google не разрешил создать подпапку
+                raise Exception(f"Сбой при создании подпапки {month_name}. Ответ Google: {str(e)}")
             
-        # Записываем ID папки в память скрипта
         self._folder_cache[parent_folder_id] = folder_id
         return folder_id
 
@@ -49,7 +56,6 @@ class DriveManager:
                 content = content.encode('utf-8')
             file_stream = io.BytesIO(content)
             
-            # ОТКЛЮЧАЕМ resumable, чтобы файл заливался мгновенно за один раз
             media = MediaIoBaseUpload(file_stream, mimetype=mime_type, resumable=False)
             
             file_metadata = {
@@ -65,5 +71,5 @@ class DriveManager:
             
             return uploaded_file.get('webViewLink')
         except Exception as e:
-            print(f"Ошибка загрузки {filename}: {e}")
-            return None
+            # Выводим ошибку, если сорвалась сама загрузка файла
+            raise Exception(f"Сбой при заливке файла '{filename}'. Ответ Google: {str(e)}")
