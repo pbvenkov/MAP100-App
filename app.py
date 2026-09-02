@@ -15,12 +15,26 @@ import time
 import json
 import re
 from datetime import datetime, timezone
-from utils import generate_icebreaker_text
 import gspread
 from google.oauth2.service_account import Credentials
 import google.generativeai as genai
 import tempfile
 import typst
+
+# Вспомогательные модули проекта
+try:
+    from utils import generate_icebreaker_text
+except ImportError:
+    try:
+        from Utils import generate_icebreaker_text
+    except ImportError:
+        def generate_icebreaker_text(data):
+            return f"Здравствуйте! Подготовлен аудит для {data.get('title', 'организации')}."
+
+try:
+    from drive_manager import DriveManager
+except ImportError:
+    DriveManager = None
 
 # ==========================================
 # 1. КОНФИГУРАЦИЯ И БРЕНДИНГ
@@ -836,6 +850,8 @@ rules_data, prompts_data = fetch_cached_database()
 with st.sidebar:
     st.markdown(f"## 📍 {PROJECT_NAME}")
     st.write("✅ База данных подключена (Google Sheets).")
+    st.divider()
+    sender_name = st.text_input("Ваше имя (для подписи аутрича):", value="Павел")
 
 st.title(f"📍 {PROJECT_NAME}: {EXPERT_TITLE}")
 
@@ -1016,3 +1032,59 @@ if data_to_process:
                 type="primary",
                 use_container_width=True
             )
+
+            # ==========================================
+            # 8. ГЕНЕРАЦИЯ АУТРИЧА И ОБЛАЧНЫЙ АРХИВ
+            # ==========================================
+            st.divider()
+            st.markdown("### ✉️ Персональное письмо первого касания (Icebreaker)")
+            st.caption("Отправляется в WhatsApp или на Email без вложений. Задача — получить согласие на аудит.")
+            
+            comp_1 = competitors_list[0] if len(competitors_list) > 0 else "соседним клиникам"
+            comp_2 = competitors_list[1] if len(competitors_list) > 1 else "конкурентам"
+            leads_min = max(5, int(client_leads * lost_percentage * 0.8))
+            leads_max = max(10, int(client_leads * lost_percentage))
+            lost_leads_display = f"{leads_min}–{leads_max}"
+
+            template_payload = {
+                "lpr_name": lpr_data.get("name") if (lpr_data and lpr_data.get("name")) else "Добрый день",
+                "title": title,
+                "rating": round(float(data.get("rating", 4.5)), 1),
+                "comp_1": comp_1,
+                "comp_2": comp_2,
+                "competitor_1": comp_1,
+                "competitor_2": comp_2,
+                "lost_leads": lost_leads_display,
+                "lost_revenue": lost_revenue,
+                "sender_name": sender_name
+            }
+            
+            icebreaker_text = generate_icebreaker_text(template_payload)
+            st.code(icebreaker_text, language="markdown")
+            
+            if st.button("☁️ Синхронизировать сделку с Google Диском"):
+                with st.spinner("Создание папок месяца и загрузка файлов на Google Диск..."):
+                    try:
+                        creds = get_google_credentials()
+                        if not DriveManager:
+                            st.error("Файл drive_manager.py не обнаружен в корне проекта.")
+                        else:
+                            dm = DriveManager(creds)
+                            safe_name = title.replace(" ", "_").replace('"', '').replace("'", "")
+                            
+                            pdf_url = dm.upload_file(f"{safe_name}_Аудит_PIN100.pdf", pdf_bytes, "application/pdf", dm.pdf_root_id)
+                            json_url = dm.upload_file(f"{safe_name}.json", json.dumps(data, ensure_ascii=False, indent=2), "application/json", dm.json_root_id)
+                            txt_url = dm.upload_file(f"{safe_name}_Icebreaker.txt", icebreaker_text, "text/plain", dm.letters_root_id)
+                            
+                            if pdf_url or txt_url:
+                                st.success("✅ Сделка зафиксирована: PDF, JSON и текст письма загружены в папку текущего месяца!")
+                                links_display = []
+                                if pdf_url:
+                                    links_display.append(f"🔗 [Открыть PDF на Диске]({pdf_url})")
+                                if txt_url:
+                                    links_display.append(f"🔗 [Текст письма на Диске]({txt_url})")
+                                if json_url:
+                                    links_display.append(f"🔗 [JSON архив на Диске]({json_url})")
+                                st.markdown(" | ".join(links_display))
+                    except Exception as e:
+                        st.error(f"Ошибка сохранения на Google Диск: {e}")
