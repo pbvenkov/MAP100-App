@@ -631,7 +631,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     #set text(size: 8pt, fill: rgb("94A3B8"))
     PIN100 Analytics | Строго конфиденциально
     #h(1fr)
-    Стр. #context counter(page).display()
+    #context [Стр. #counter(page).display("1")]
   ]
 )
 
@@ -660,19 +660,23 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #grid(
   columns: (1fr, 1fr),
   gutter: 20pt,
-  rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 18pt)[
-    #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ИНДЕКС ГОТОВНОСТИ ПРОФИЛЯ]
-    \\
-    #v(8pt)
-    #text(26pt, weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)} / 100]
-    #v(4pt)
-    #text(8.5pt, fill: rgb("94A3B8"), style: "italic")[Оценка по 79 параметрам алгоритмов]
+  [
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 18pt)[
+      #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ИНДЕКС ГОТОВНОСТИ ПРОФИЛЯ]
+      \\
+      #v(8pt)
+      #text(26pt, weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)} / 100]
+      #v(4pt)
+      #text(8.5pt, fill: rgb("94A3B8"), style: "italic")[Оценка по 79 параметрам алгоритмов]
+    ]
   ],
-  rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 18pt)[
-    #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[УПУЩЕННАЯ ВЫРУЧКА]
-    \\
-    #v(8pt)
-    #text(24pt, weight: "bold", fill: rgb("9F1239"))[- {rev_loss_fmt} ₽/мес]
+  [
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 18pt)[
+      #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[УПУЩЕННАЯ ВЫРУЧКА]
+      \\
+      #v(8pt)
+      #text(24pt, weight: "bold", fill: rgb("9F1239"))[- {rev_loss_fmt} ₽/мес]
+    ]
   ]
 )
 #v(15pt)
@@ -727,26 +731,32 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #grid(
   columns: (1fr, 1.15fr, 1fr),
   gutter: 8pt,
-  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
-    #text(8.5pt, weight: "bold", fill: rgb("64748B"))[БАЗОВЫЙ (Quick Fix)]
-    #v(3pt)
-    #text(12pt, weight: "bold", fill: rgb("0A1128"))[35 000 ₽]
-    #v(3pt)
-    #text(8pt, fill: rgb("475569"))[Базовое SEO, устранение ошибок витрины, чистка дублей.]
+  [
+    #rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
+      #text(8.5pt, weight: "bold", fill: rgb("64748B"))[БАЗОВЫЙ (Quick Fix)]
+      #v(3pt)
+      #text(12pt, weight: "bold", fill: rgb("0A1128"))[35 000 ₽]
+      #v(3pt)
+      #text(8pt, fill: rgb("475569"))[Базовое SEO, устранение ошибок витрины, чистка дублей.]
+    ]
   ],
-  rect(fill: rgb("F8FAFC"), stroke: 1.5pt + rgb("8B7355"), radius: 4pt, inset: 10pt)[
-    #text(8.5pt, weight: "bold", fill: rgb("8B7355"))[★ {package_name}]
-    #v(3pt)
-    #text(13pt, weight: "bold", fill: rgb("8B7355"))[{package_price}]
-    #v(3pt)
-    #text(8pt, fill: rgb("0A1128"), weight: "bold")[Комплекс под ключ: SEO + UX-конверсия + Защита бренда + XML-фиды.]
+  [
+    #rect(fill: rgb("F8FAFC"), stroke: 1.5pt + rgb("8B7355"), radius: 4pt, inset: 10pt)[
+      #text(8.5pt, weight: "bold", fill: rgb("8B7355"))[★ {package_name}]
+      #v(3pt)
+      #text(13pt, weight: "bold", fill: rgb("8B7355"))[{package_price}]
+      #v(3pt)
+      #text(8pt, fill: rgb("0A1128"), weight: "bold")[Комплекс под ключ: SEO + UX-конверсия + Защита бренда + XML-фиды.]
+    ]
   ],
-  rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
-    #text(8.5pt, weight: "bold", fill: rgb("64748B"))[ENTERPRISE (ГОД)]
-    #v(3pt)
-    #text(12pt, weight: "bold", fill: rgb("0A1128"))[150 000 ₽]
-    #v(3pt)
-    #text(8pt, fill: rgb("475569"))[Полное сопровождение воронки на 6 месяцев + реклама.]
+  [
+    #rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
+      #text(8.5pt, weight: "bold", fill: rgb("64748B"))[ENTERPRISE (ГОД)]
+      #v(3pt)
+      #text(12pt, weight: "bold", fill: rgb("0A1128"))[150 000 ₽]
+      #v(3pt)
+      #text(8pt, fill: rgb("475569"))[Полное сопровождение воронки на 6 месяцев + реклама.]
+    ]
   ]
 )
 
@@ -765,7 +775,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         #text(9.5pt, weight: "bold", fill: rgb("8B7355"))[Telegram: \\ t.me/paulvenkov]
       ]
     ]
-  ]
+  )
 ]
 """
 
@@ -841,6 +851,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             os.remove(typ_path)
         
     return pdf_bytes
+
 
 # ==========================================
 # 7. ОСНОВНОЙ ПОЛЬЗОВАТЕЛЬСКИЙ ИНТЕРФЕЙС
@@ -992,6 +1003,12 @@ if data_to_process:
             client_check = st.number_input("Средний чек (₽)", value=eco["check"], step=5000)
             client_ltv = st.number_input("Цикл LTV (месяцев)", value=eco["ltv_months"], step=1)
 
+            st.divider()
+            st.subheader("📁 Google Drive папки")
+            drive_pdf_id = st.text_input("ID папки PDF:", value="root")
+            drive_json_id = st.text_input("ID папки JSON:", value="root")
+            drive_letters_id = st.text_input("ID папки Писем:", value="root")
+
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
         lost_revenue = int(client_leads * lost_percentage * client_check)
 
@@ -1070,6 +1087,15 @@ if data_to_process:
                             st.error("Файл drive_manager.py не обнаружен в корне проекта.")
                         else:
                             dm = DriveManager(creds)
+                            
+                            # Применяем ID папок из боковой панели, если они заданы
+                            if drive_pdf_id != "root":
+                                dm.pdf_root_id = drive_pdf_id
+                            if drive_json_id != "root":
+                                dm.json_root_id = drive_json_id
+                            if drive_letters_id != "root":
+                                dm.letters_root_id = drive_letters_id
+
                             safe_name = title.replace(" ", "_").replace('"', '').replace("'", "")
                             
                             pdf_url = dm.upload_file(f"{safe_name}_Аудит_PIN100.pdf", pdf_bytes, "application/pdf", dm.pdf_root_id)
