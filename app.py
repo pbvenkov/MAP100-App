@@ -137,7 +137,7 @@ def fetch_cached_database():
         return [], []
 
 def save_audit_to_sheets(url, title, niche, total_score, lost_revenue, lpr_data=None):
-    """Компактная CRM-фиксация лида"""
+    """Компактная CRM-фиксация лида со строгим порядком колонок"""
     try:
         client = gspread.authorize(get_google_credentials())
         ws = client.open_by_url(st.secrets["SPREADSHEET_URL"]).worksheet("Results")
@@ -145,19 +145,19 @@ def save_audit_to_sheets(url, title, niche, total_score, lost_revenue, lpr_data=
         lpr_name = lpr_data.get("name", "") if lpr_data else ""
         lpr_role = lpr_data.get("role", "") if lpr_data else ""
         lpr_contact = (lpr_data.get("link", "") or lpr_data.get("email", "")) if lpr_data else ""
-        lpr_full = f"{lpr_name} ({lpr_role})".strip(" ()")
         
         row = [
-            datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M"),
-            title,
-            niche,
-            str(round(total_score, 1)).replace('.', ','),
-            f"{lost_revenue:,}".replace(',', ' ') + " ₽",
-            lpr_full,
-            lpr_contact,
-            url,
-            "1. Новый лид",
-            ""
+            datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M"), # A: Дата
+            url,                                                   # B: Ссылка
+            title,                                                 # C: Компания
+            niche,                                                 # D: Ниша
+            str(round(total_score, 1)).replace('.', ','),          # E: Общий балл
+            lpr_name,                                              # F: ФИО ЛПР
+            lpr_role,                                              # G: Должность
+            lpr_contact,                                           # H: Личный контакт
+            "",                                                    # I: Прямой Email
+            f"{lost_revenue:,}".replace(',', ' ') + " ₽",          # J: Упущенная выручка
+            "1. Новый лид"                                         # K: Статус
         ]
         ws.append_row(row)
     except Exception:
@@ -1012,6 +1012,7 @@ if data_to_process:
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
         lost_revenue = int(client_leads * lost_percentage * client_check)
 
+        # Вызов обновленной функции записи в CRM (с 11 идеальными колонками)
         save_audit_to_sheets(source_url, title, niche_key, final_total_score, lost_revenue, lpr_data)
         
         st.divider()
@@ -1051,7 +1052,7 @@ if data_to_process:
             )
 
             # ==========================================
-            # 8. ГЕНЕРАЦИЯ АУТРИЧА И ОБЛАЧНЫЙ АРХИВ
+            # 8. ГЕНЕРАЦИЯ АУТРИЧА И АВТО-СОХРАНЕНИЕ НА ДИСК
             # ==========================================
             st.divider()
             st.markdown("### ✉️ Персональное письмо первого касания (Icebreaker)")
@@ -1079,22 +1080,27 @@ if data_to_process:
             icebreaker_text = generate_icebreaker_text(template_payload)
             st.code(icebreaker_text, language="markdown")
             
-            if st.button("☁️ Синхронизировать сделку с Google Диском"):
-                with st.spinner("Создание папок месяца и загрузка файлов на Google Диск..."):
+            # --- ЛОГИКА АВТОМАТИЧЕСКОГО СОХРАНЕНИЯ С ЗАЩИТОЙ ОТ ДУБЛЕЙ ---
+            # Создаем уникальный ключ для текущей компании
+            upload_flag_key = f"uploaded_{title}"
+            links_key = f"links_{title}"
+
+            if upload_flag_key not in st.session_state:
+                st.session_state[upload_flag_key] = False
+
+            # Если для этой компании файлы еще не загружены - загружаем
+            if not st.session_state[upload_flag_key]:
+                with st.spinner("☁️ Автоматическое сохранение файлов на Google Диск..."):
                     try:
                         creds = get_google_credentials()
                         if not DriveManager:
-                            st.error("Файл drive_manager.py не обнаружен в корне проекта.")
+                            st.warning("Файл drive_manager.py не обнаружен. Сохранение на Диск пропущено.")
                         else:
                             dm = DriveManager(creds)
                             
-                            # Применяем ID папок из боковой панели, если они заданы
-                            if drive_pdf_id != "root":
-                                dm.pdf_root_id = drive_pdf_id
-                            if drive_json_id != "root":
-                                dm.json_root_id = drive_json_id
-                            if drive_letters_id != "root":
-                                dm.letters_root_id = drive_letters_id
+                            if drive_pdf_id != "root": dm.pdf_root_id = drive_pdf_id
+                            if drive_json_id != "root": dm.json_root_id = drive_json_id
+                            if drive_letters_id != "root": dm.letters_root_id = drive_letters_id
 
                             safe_name = title.replace(" ", "_").replace('"', '').replace("'", "")
                             
@@ -1103,14 +1109,18 @@ if data_to_process:
                             txt_url = dm.upload_file(f"{safe_name}_Icebreaker.txt", icebreaker_text, "text/plain", dm.letters_root_id)
                             
                             if pdf_url or txt_url:
-                                st.success("✅ Сделка зафиксирована: PDF, JSON и текст письма загружены в папку текущего месяца!")
                                 links_display = []
-                                if pdf_url:
-                                    links_display.append(f"🔗 [Открыть PDF на Диске]({pdf_url})")
-                                if txt_url:
-                                    links_display.append(f"🔗 [Текст письма на Диске]({txt_url})")
-                                if json_url:
-                                    links_display.append(f"🔗 [JSON архив на Диске]({json_url})")
-                                st.markdown(" | ".join(links_display))
+                                if pdf_url: links_display.append(f"🔗 [Открыть PDF на Диске]({pdf_url})")
+                                if txt_url: links_display.append(f"🔗 [Текст письма на Диске]({txt_url})")
+                                if json_url: links_display.append(f"🔗 [JSON архив]({json_url})")
+                                
+                                # Сохраняем ссылки в память сессии и ставим флаг успешной загрузки
+                                st.session_state[links_key] = links_display
+                                st.session_state[upload_flag_key] = True
                     except Exception as e:
                         st.error(f"Ошибка сохранения на Google Диск: {e}")
+
+            # Отображаем успешный статус и ссылки (выводится всегда, если загрузка уже произошла)
+            if st.session_state.get(upload_flag_key):
+                st.success("✅ Сделка автоматически зафиксирована в облаке!")
+                st.markdown(" | ".join(st.session_state.get(links_key, [])))
