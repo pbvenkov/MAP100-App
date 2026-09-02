@@ -7,9 +7,9 @@ class DriveManager:
     def __init__(self, credentials):
         self.service = build('drive', 'v3', credentials=credentials)
         # Вставьте сюда ID папок из Шага 1
-        self.pdf_root_id = "ВАШ_ID_ПАПКИ_PDF"
-        self.json_root_id = "ВАШ_ID_ПАПКИ_JSON"
-        self.letters_root_id = "ВАШ_ID_ПАПКИ_LETTERS"
+        self.pdf_root_id = "15kzKEaS76HAhx22FR-BTvifbaecH_wx8"
+        self.json_root_id = "1efm3iHSVvUPp50in3tfOGxd0xOACio2E"
+        self.letters_root_id = "10hP476EXoiPCkRfE9nqc1ZyyTBNvPKR6"
 
     def _get_or_create_monthly_folder(self, parent_folder_id):
         month_name = datetime.now().strftime("%Y_%m")
