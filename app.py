@@ -1068,6 +1068,7 @@ if data_to_process:
             lost_leads_display = f"{leads_min}–{leads_max}"
 
             template_payload = {
+                "niche_key": niche_key,
                 "lpr_name": lpr_data.get("name") if (lpr_data and lpr_data.get("name")) else "коллеги",
                 "title": title,
                 "rating": round(float(data.get("rating", 4.5)), 1),
