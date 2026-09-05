@@ -110,7 +110,6 @@ def generate_icebreaker_text(data: dict) -> str:
     Генерирует высококонверсионное первое касание (Icebreaker)
     для мессенджеров (WhatsApp / Telegram) без сложного SEO-жаргона.
     """
-    # 1. Корректное обращение
     raw_lpr = str(data.get("lpr_name", "")).strip()
     stop_words = ["добрый день", "здравствуйте", "коллеги", "администратор", "none", ""]
     
@@ -120,11 +119,9 @@ def generate_icebreaker_text(data: dict) -> str:
         first_name = raw_lpr.split()[0]
         greeting = f"Добрый день, {first_name}!"
 
-    # 2. Отраслевой словарь
     niche_key = str(data.get("niche_key", "OTHER")).upper()
     lex = NICHE_LEXICON.get(niche_key, NICHE_LEXICON["OTHER"])
 
-    # 3. Переменные карточки и конкурентов
     title = str(data.get("title", "вашей компании")).strip()
     rating = data.get("rating", 4.7)
     comp_1 = data.get("comp_1") or data.get("competitor_1") or "соседним организациям"
@@ -140,7 +137,6 @@ def generate_icebreaker_text(data: dict) -> str:
 
     sender_name = str(data.get("sender_name", "Павел")).strip() or "Павел"
 
-    # 4. Сборка финального письма
     message = f"""{greeting}
 
 Меня зовут {sender_name}, я анализирую, как {lex['clients']} находят {lex['niche_genitive']} на Яндекс Картах. На этой неделе мы сравнивали, как распределяется поток {lex['leads_type']} между {lex['business_plural']} вашего района.
