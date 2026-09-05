@@ -103,16 +103,26 @@ NICHE_LEXICON = {
     }
 }
 
+DEFAULT_FALLBACK_TEMPLATE = """{greeting}
+
+Меня зовут {sender_name}, я анализирую, как {clients} находят {niche_genitive} на Яндекс Картах. На этой неделе мы сравнивали, как распределяется поток {leads_type} между {business_plural} вашего района.
+
+У «{title}» высокая репутация и сильная оценка ({rating}). Но если житель района ищет в поиске конкретную услугу (например, {examples}), профиль {business_genitive} не появляется в топе выдачи. В карточке не выведен прайс, и {clients} сразу уходят {comp_phrase}.
+
+По трафику локации {business_noun} каждый месяц упускает около {lost_leads} первичных обращений (это порядка {revenue_str} недополученной выручки).
+
+Мы свели эти технические ошибки в короткий 4-страничный разбор. Скинуть сюда PDF для {target_roles}? (можно просто ответить «Да» или ➕)"""
+
+
 def _clean_name(raw_name: str) -> str:
     if not raw_name:
         return ""
-    cleaned = raw_name.strip('«»"\' \t\n\r')
-    return cleaned
+    return str(raw_name).strip('«»"\' \t\n\r')
+
 
 def _build_competitors_phrase(comp_1: str, comp_2: str) -> str:
     c1 = _clean_name(comp_1)
     c2 = _clean_name(comp_2)
-
     stop_comp = {"соседним организациям", "прямым конкурентам", "соседним клиникам", "конкурентам", ""}
 
     has_c1 = bool(c1 and c1.lower() not in stop_comp)
@@ -121,48 +131,44 @@ def _build_competitors_phrase(comp_1: str, comp_2: str) -> str:
     if has_c1 and has_c2:
         return f"в «{c1}» или «{c2}»"
     if has_c1:
-        return f"в «{c1}» или к другим прямым конкурентам"
+        return f"в «{c1}» или к другим соседям"
     if has_c2:
-        return f"в «{c2}» или к другим прямым конкурентам"
-    return "к вашим прямым соседям и конкурентам"
+        return f"в «{c2}» или к другим соседям"
+    return "к вашим прямым соседям"
 
-def generate_icebreaker_text(data: dict) -> str:
-    # 1. Корректное обращение
+
+def generate_icebreaker_text(data: dict, templates_dict: dict = None) -> str:
+    # 1. Формирование корректного обращения к ЛПР
     raw_lpr = str(data.get("lpr_name", "")).strip()
-    stop_words = {"добрый день", "здравствуйте", "коллеги", "администратор", "none", "null", ""}
+    stop_names = {"добрый день", "здравствуйте", "коллеги", "администратор", "none", "null", ""}
+    first_token = re.sub(r'[^\w\-]', '', raw_lpr.split()[0]) if raw_lpr else ""
     
-    if not raw_lpr or raw_lpr.lower() in stop_words:
-        greeting = "Добрый день!"
+    if first_token and first_token.lower() not in stop_names:
+        greeting = f"Добрый день, {first_token}!"
     else:
-        # Извлекаем только первое имя и убираем артефакты знаков препинания
-        first_token = re.sub(r'[^\w\-]', '', raw_lpr.split()[0])
-        if first_token and first_token.lower() not in stop_words:
-            greeting = f"Добрый день, {first_token}!"
-        else:
-            greeting = "Добрый день!"
+        greeting = "Добрый день!"
 
     # 2. Отраслевой словарь
     niche_key = str(data.get("niche_key", "OTHER")).upper()
     lex = NICHE_LEXICON.get(niche_key, NICHE_LEXICON["OTHER"])
 
-    # 3. Нормализация данных компании и конкурентов
+    # 3. Чистка значений
     title = _clean_name(str(data.get("title", "вашей компании")))
     
     try:
-        rating_raw = float(str(data.get("rating", 4.7)).replace(',', '.'))
-        rating = round(rating_raw, 1)
+        rating_val = float(str(data.get("rating", 4.7)).replace(',', '.'))
+        rating = round(rating_val, 1)
         if rating <= 0.0:
             rating = 4.7
-    except (ValueError, TypeError):
+    except Exception:
         rating = 4.7
 
     comp_phrase = _build_competitors_phrase(
         data.get("comp_1") or data.get("competitor_1") or "",
         data.get("comp_2") or data.get("competitor_2") or ""
     )
-    
+
     lost_leads = str(data.get("lost_leads", "30–40")).strip()
-    
     raw_rev = data.get("lost_revenue", 0)
     if isinstance(raw_rev, (int, float)):
         revenue_str = f"{int(raw_rev):,}".replace(',', ' ') + " ₽"
@@ -172,13 +178,32 @@ def generate_icebreaker_text(data: dict) -> str:
 
     sender_name = _clean_name(str(data.get("sender_name", "Павел"))) or "Павел"
 
-    # 4. Сборка письма
-    return f"""{greeting}
+    context = {
+        "greeting": greeting,
+        "sender_name": sender_name,
+        "title": title,
+        "rating": rating,
+        "comp_phrase": comp_phrase,
+        "lost_leads": lost_leads,
+        "revenue_str": revenue_str,
+        "clients": lex["clients"],
+        "niche_genitive": lex["niche_genitive"],
+        "leads_type": lex["leads_type"],
+        "business_plural": lex["business_plural"],
+        "business_genitive": lex["business_genitive"],
+        "business_noun": lex["business_noun"],
+        "examples": lex["examples"],
+        "target_roles": lex["target_roles"]
+    }
 
-Меня зовут {sender_name}, я анализирую, как {lex['clients']} находят {lex['niche_genitive']} на Яндекс Картах. На этой неделе мы сравнивали, как распределяется поток {lex['leads_type']} между {lex['business_plural']} вашего района.
+    # 4. Выбор шаблона (Ниша -> DEFAULT -> Встроенный)
+    tpl_source = DEFAULT_FALLBACK_TEMPLATE
+    if templates_dict and isinstance(templates_dict, dict):
+        tpl_source = templates_dict.get(niche_key) or templates_dict.get("DEFAULT") or DEFAULT_FALLBACK_TEMPLATE
 
-У «{title}» высокая репутация и сильная оценка ({rating}). Но если житель района ищет в поиске конкретную услугу (например, {lex['examples']}), профиль {lex['business_genitive']} не появляется в топе выдачи. В карточке не выведен прайс, и {lex['clients']} сразу уходят {comp_phrase}.
+    # 5. Безопасная подстановка без падений на лишних фигурных скобках
+    class SafeDict(dict):
+        def __missing__(self, key):
+            return "{" + key + "}"
 
-По трафику локации {lex['business_noun']} каждый месяц упускает около {lost_leads} первичных обращений (это порядка {revenue_str} недополученной выручки).
-
-Мы свели эти технические ошибки в короткий 4-страничный разбор. Скинуть сюда PDF для {lex['target_roles']}? (можно просто ответить «Да» или ➕)""".strip()
+    return tpl_source.format_map(SafeDict(context)).strip()
