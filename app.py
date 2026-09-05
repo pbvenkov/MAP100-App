@@ -137,7 +137,7 @@ def fetch_cached_database():
         return [], []
 
 def save_audit_to_sheets(url, title, niche, total_score, lost_revenue, lpr_data=None):
-    """Компактная CRM-фиксация лида со строгим порядком колонок"""
+    """CRM-фиксация лида со строгим порядком колонок"""
     try:
         client = gspread.authorize(get_google_credentials())
         ws = client.open_by_url(st.secrets["SPREADSHEET_URL"]).worksheet("Results")
@@ -169,7 +169,7 @@ def save_audit_to_sheets(url, title, niche, total_score, lost_revenue, lpr_data=
 def normalize_yandex_url(raw_url):
     url = raw_url.strip()
     
-    # 1. Раскрываем короткие ссылки (yandex.ru/maps/-/... или yandex.com/maps/-/...)
+    # 1. Раскрываем короткие ссылки
     if "/-/" in url:
         session = requests.Session()
         session.headers.update({
@@ -225,7 +225,7 @@ def fetch_apify_data(yandex_url):
     status, retries = "RUNNING", 0
     
     while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
-        if retries >= 75:  # Увеличенный таймаут
+        if retries >= 75:
             raise Exception("Таймаут сбора данных. Яндекс долго отвечает.")
         time.sleep(4)
         status_req = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}", timeout=10).json()
@@ -575,9 +575,7 @@ def clean_typography(text):
         return ""
     t = str(text).replace(" - ", " — ")
     t = t.replace(">=", "≥").replace("<=", "≤").replace("->", "→")
-    # Заменяем знаки сравнения, чтобы Typst не путал их с разметкой Labels <label>
     t = t.replace("<", " меньше ").replace(">", " больше ")
-    # Заменяем все специальные символы синтаксиса Typst
     for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`', '~']:
         t = t.replace(c, ' ')
     return " ".join(t.split())
@@ -589,6 +587,10 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     lost_leads = int(client_leads * (dev / 100))
     
     rev_loss_fmt = f"{revenue_loss:,}".replace(',', ' ')
+    client_check_fmt = f"{client_check:,}".replace(',', ' ')
+    
+    ltv_loss = int(revenue_loss * max(1, client_ltv))
+    ltv_loss_fmt = f"{ltv_loss:,}".replace(',', ' ')
     
     title_safe = clean_typography(title)
     niche_safe = clean_typography(niche)
@@ -596,43 +598,32 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     
     niche_str = str(niche).lower()
     if "образ" in niche_str:
-        package_name = "Интеграция Education PRO"
-        package_price = "85 000 ₽"
-        quality_phrase = "образовательного процесса и уровень подготовки в вашей компании"
+        quality_phrase = "образовательного процесса и квалификации преподавателей"
         target_audience = "родителей и учеников"
+        service_example = "подготовку к экзаменам, профильные курсы или занятия"
     elif "стом" in niche_str or "мед" in niche_str or "бьют" in niche_str:
-        package_name = "Интеграция Medical PRO"
-        package_price = "85 000 ₽"
-        quality_phrase = "медицинских услуг, квалификацию врачей и сервис клиники"
+        quality_phrase = "медицинских услуг, квалификации врачей и стандартов лечения"
         target_audience = "пациентов"
-    elif "b2b" in niche_str or "производ" in niche_str or "опт" in niche_str:
-        package_name = "Интеграция B2B Enterprise"
-        package_price = "85 000 ₽"
-        quality_phrase = "продукции и надежность вашего предприятия"
-        target_audience = "клиентов и партнеров"
+        service_example = "имплантацию, протезирование, коронки или брекеты"
     elif "horeca" in niche_str or "ресторан" in niche_str or "кафе" in niche_str:
-        package_name = "Комплексная Бизнес-Упаковка HoReCa"
-        package_price = "35 000 ₽"
-        quality_phrase = "кухни, атмосферу и гостеприимство вашего заведения"
+        quality_phrase = "кухни, атмосферы и гостеприимства вашего заведения"
         target_audience = "гостей"
+        service_example = "банкеты, меню кухни или бронь столиков"
     elif "авто" in niche_str:
-        package_name = "Комплексная Бизнес-Упаковка Авто"
-        package_price = "35 000 ₽"
-        quality_phrase = "ремонта, запчастей и обслуживания в вашем автоцентре"
+        quality_phrase = "ремонта, запчастей и опыта мастеров автоцентра"
         target_audience = "автовладельцев"
-    elif "ритейл" in niche_str or "магаз" in niche_str:
-        package_name = "Комплексная Бизнес-Упаковка Ритейл"
-        package_price = "35 000 ₽"
-        quality_phrase = "товаров, широту ассортимента и качество обслуживания в вашем магазине"
-        target_audience = "покупателей"
+        service_example = "диагностику, ремонт подвески, сход-развал или ТО"
+    elif "b2b" in niche_str or "производ" in niche_str or "опт" in niche_str:
+        quality_phrase = "продукции, надежности поставок и производственных мощностей"
+        target_audience = "заказчиков"
+        service_example = "оптовые поставки, расчет партии или изготовление под заказ"
     else:
-        package_name = "Комплексная Бизнес-Упаковка"
-        package_price = "35 000 ₽"
-        quality_phrase = "товаров, услуг и высокий уровень клиентского сервиса"
+        quality_phrase = "товаров, услуг и высокого уровня клиентского сервиса"
         target_audience = "клиентов"
+        service_example = "ключевой ассортимент услуг и условия сотрудничества"
 
     typ_source = f"""
-#set document(title: "Аналитический Отчет - {title_safe}", author: "PIN100 Analytics")
+#set document(title: "Аналитическое Заключение - {title_safe}", author: "PIN100 Analytics")
 #set page(
   paper: "a4",
   margin: (x: 20mm, y: 25mm),
@@ -648,157 +639,189 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #set par(leading: 0.55em)
 #show heading: set text(font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))
 
-// --- ОБЛОЖКА ---
+// --- СТР. 1 ОБЛОЖКА ---
 #v(100pt)
 #text(12pt, fill: rgb("8B7355"), weight: "bold", tracking: 2pt)[PIN100 ANALYTICS]
 #v(10pt)
-#text(24pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Аналитический Отчет:\\ Оцифровка упущенной выручки]
+#text(24pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Аналитическое Заключение:\\ Оцифровка потерь первичного потока]
 #v(10pt)
 #line(length: 60mm, stroke: 1.5pt + rgb("8B7355"))
 #v(30pt)
 #text(11pt, fill: rgb("475569"))[
-  Подготовлено для: #strong[{title_safe}] \\
-  Ниша: #strong[{niche_safe}] \\
-  Дата расчета: #strong[{current_date}]
+  Организация: #strong[{title_safe}] \\
+  Направление: #strong[{niche_safe}] \\
+  Дата фиксации данных: #strong[{current_date}]
 ]
 #pagebreak()
 
 // --- СТР. 2 EXECUTIVE SUMMARY ---
-#heading(level: 2)[Executive Summary (Резюме для руководителя)]
-#v(15pt)
+#heading(level: 2)[Резюме для руководителя]
+#v(10pt)
 #grid(
   columns: (1fr, 1fr),
-  gutter: 20pt,
+  gutter: 15pt,
   [
-    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 18pt)[
-      #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ИНДЕКС ГОТОВНОСТИ ПРОФИЛЯ]
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 14pt)[
+      #text(8.5pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ВИДИМОСТЬ КАРТОЧКИ В ПОИСКЕ]
       \\
-      #v(8pt)
-      #text(26pt, weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)} / 100]
-      #v(4pt)
-      #text(8.5pt, fill: rgb("94A3B8"), style: "italic")[Оценка по 79 параметрам алгоритмов]
+      #v(6pt)
+      #text(24pt, weight: "bold", fill: rgb("{score_color}"))[{round(score, 1)} / 100]
+      #v(3pt)
+      #text(8pt, fill: rgb("94A3B8"), style: "italic")[Оценка готовности профиля для клиентов]
     ]
   ],
   [
-    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 18pt)[
-      #text(9pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[УПУЩЕННАЯ ВЫРУЧКА]
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 14pt)[
+      #text(8.5pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ПРЯМЫЕ ПОТЕРИ ВЫРУЧКИ]
       \\
-      #v(8pt)
-      #text(24pt, weight: "bold", fill: rgb("9F1239"))[- {rev_loss_fmt} ₽/мес]
+      #v(6pt)
+      #text(22pt, weight: "bold", fill: rgb("9F1239"))[- {rev_loss_fmt} ₽/мес]
+      #v(3pt)
+      #text(8pt, fill: rgb("94A3B8"), style: "italic")[Консервативная оценка первого визита]
     ]
   ]
 )
-#v(15pt)
+#v(10pt)
 
-#rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 15pt)[
-  #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Критический вывод аналитики:]
-  #v(8pt)
-  #text(10.5pt, fill: rgb("334155"))[Прямо сейчас ваша компания фактически невидима для *{dev}% целевых клиентов* в поисковой выдаче Яндекс Карт. Из-за алгоритмических ошибок вы ежемесячно уступаете конкурентам около *{lost_leads} горячих сделок*. Попытки заливать рекламный бюджет в текущий профиль приведут к прямому финансовому убытку.]
+#rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 12pt)[
+  #text(11pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Критический вывод анализа:]
+  #v(5pt)
+  #text(9.5pt, fill: rgb("334155"))[Прямо сейчас профиль скрыт от *{dev}% целевых клиентов* вашего района. Из-за скрытых технических недочетов в оформлении карточки вы каждый месяц отдаете конкурентам около *{lost_leads} первичных обращений*.]
 ]
 
-#v(12pt)
-#rect(width: 100%, fill: rgb("EFF6FF"), stroke: 0.5pt + rgb("BFDBFE"), radius: 4pt, inset: 10pt)[
-  #text(8.5pt, fill: rgb("1E40AF"))[
-    *Важное примечание:* Оценка #strong[{round(score, 1)} / 100] отражает исключительно техническую видимость профиля для поисковых роботов Яндекса и конверсионную готовность витрины, а не реальное высокое качество {quality_phrase}.
+#v(8pt)
+#text(10pt, weight: "bold", fill: rgb("0A1128"))[Прозрачный расчет потерь (юнит-экономика):]
+#v(4pt)
+
+#table(
+  columns: (1.3fr, 1fr, 1.4fr),
+  stroke: 0.5pt + rgb("E2E8F0"),
+  fill: (col, row) => if row == 0 { rgb("F1F5F9") } else if row == 5 { rgb("FFF1F2") } else { none },
+  inset: 6pt,
+  align: (left + horizon, center + horizon, left + horizon),
+  [#text(8pt, weight: "bold")[Параметр расчета]], [#text(8pt, weight: "bold")[Значение]], [#text(8pt, weight: "bold")[Как считаем]],
+  [#text(8.5pt)[Спрос в вашем районе]], [#text(8.5pt)[~{client_leads} обр./мес]], [#text(8pt, fill: rgb("64748B"))[Поисковый гео-трафик в радиусе 1.5 км]],
+  [#text(8.5pt)[Дефицит видимости профиля]], [#text(8.5pt)[{dev}%]], [#text(8pt, fill: rgb("64748B"))[100% минус текущий балл ({round(score, 1)})]],
+  [#text(8.5pt)[Клиенты, ушедшие к соседям]], [#text(8.5pt)[~{lost_leads} {target_audience}]], [#text(8pt, fill: rgb("64748B"))[Спрос района × дефицит видимости]],
+  [#text(8.5pt)[Базовый чек первого визита]], [#text(8.5pt)[{client_check_fmt} ₽]], [#text(8pt, fill: rgb("64748B"))[Средняя стоимость первого обращения]],
+  [#text(8.5pt, weight: "bold", fill: rgb("9F1239"))[Прямые потери в месяц]], [#text(8.5pt, weight: "bold", fill: rgb("9F1239"))[- {rev_loss_fmt} ₽/мес]], [#text(8pt, weight: "bold", fill: rgb("9F1239"))[Недополученная выручка первого визита]]
+)
+
+#v(2pt)
+#text(7.5pt, fill: rgb("64748B"), style: "italic")[
+  \* Расчет выполнен консервативно — только по первому визиту. С учетом повторных визитов и прикрепления клиентов ({client_ltv} мес.) совокупный отток выручки к конкурентам составляет до *{ltv_loss_fmt} ₽ в год*.
+]
+
+#v(8pt)
+#rect(width: 100%, fill: rgb("EFF6FF"), stroke: 0.5pt + rgb("BFDBFE"), radius: 3pt, inset: 8pt)[
+  #text(8pt, fill: rgb("1E40AF"))[
+    *Важное примечание:* Оценка #strong[{round(score, 1)} / 100] отражает исключительно техническое ранжирование карточки алгоритмами Яндекса, а не реальное высокое качество {quality_phrase}.
   ]
 ]
 
 #pagebreak()
 // --- СТР. 3 ТОЧКИ СЛИВА ---
-#heading(level: 2)[Три главные пробоины в воронке продаж]
+#heading(level: 2)[Три главные причины потери клиентов]
+#v(8pt)
+#text(10pt, fill: rgb("475569"))[Почему потенциальные клиенты из вашего района уходят к конкурентам:]
+#v(12pt)
+
+#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 14pt)[
+  #text(12pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[1. В поиске не видны ключевые и маржинальные услуги]
+  #v(6pt)
+  #text(9.5pt, fill: rgb("475569"))[Когда житель района ищет конкретную услугу (например, {service_example}), Яндекс не показывает вашу компанию в топе. В карточке не выведен понятный прейскурант и фото работ, поэтому клиенты сразу переходят к вашим соседям{comp_safe}.]
+]
 #v(10pt)
-#text(10.5pt, fill: rgb("475569"))[Главные бизнес-причины потери поискового трафика прямо сегодня:]
-#v(15pt)
 
-#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 16pt)[
-  #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[1. «Слепая витрина» и потеря поискового трафика]
-  #v(8pt)
-  #text(10pt, fill: rgb("475569"))[Алгоритмы Яндекса не видят ваши ключевые позиции. Из-за отсутствия LSI-разметки и фидов вас обходят конкуренты{comp_safe} с правильно настроенными каталогами.]
+#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 14pt)[
+  #text(12pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[2. Барьер при попытке связаться или записаться]
+  #v(6pt)
+  #text(9.5pt, fill: rgb("475569"))[Клиентам неудобно звонить по телефону вслепую. Если в профиле нет кнопки быстрой онлайн-записи или прямого перехода в мессенджер к администратору, большинство людей закрывают карточку и уходят к тем, к кому проще записаться.]
 ]
-#v(12pt)
+#v(10pt)
 
-#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 16pt)[
-  #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[2. Барьер первого контакта (Обрыв конверсии)]
-  #v(8pt)
-  #text(10pt, fill: rgb("475569"))[Ваша карточка заставляет {target_audience} совершать лишние действия. Отсутствие прямых кнопок записи и онлайн-заказа приводит к уходу потенциальных клиентов.]
-]
-#v(12pt)
-
-#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 16pt)[
-  #text(13pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[3. Скрытые репутационные угрозы]
-  #v(8pt)
-  #text(10pt, fill: rgb("475569"))[Оставленный без ответа негативный отзыв отпугивает новых покупателей с высоким средним чеком на финальном этапе принятия решения.]
+#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 14pt)[
+  #text(12pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[3. Профиль выглядит «неактивным» для поисковых систем]
+  #v(6pt)
+  #text(9.5pt, fill: rgb("475569"))[Если карточка не обновляется, а на отзывы нет официальных ответов руководства, поисковая система считает организацию пассивной и намеренно опускает ее в выдаче, продвигая более активных конкурентов.]
 ]
 
 #pagebreak()
-// --- СТР. 4 ТАРИФЫ И ВНЕДРЕНИЕ ---
-#heading(level: 2)[Инвестиционное предложение и Окупаемость]
+// --- СТР. 4 ДОРОЖНАЯ КАРТА И СЛЕДУЮЩИЙ ШАГ ---
+#heading(level: 2)[План устранения кассового разрыва]
 #v(8pt)
-#text(10pt, fill: rgb("475569"))[Пакет работ под ключ для остановки кассового разрыва:]
-#v(12pt)
+#text(9.5pt, fill: rgb("475569"))[Инженерный план возврата поискового трафика в кассу организации:]
+#v(10pt)
 
 #grid(
   columns: (1fr, 1.15fr, 1fr),
   gutter: 8pt,
   [
-    #rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
-      #text(8.5pt, weight: "bold", fill: rgb("64748B"))[БАЗОВЫЙ (Quick Fix)]
+    #rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 9pt)[
+      #text(8.5pt, weight: "bold", fill: rgb("64748B"))[ЭТАП 1: СРОЧНО]
+      #v(2pt)
+      #text(11pt, weight: "bold", fill: rgb("0A1128"))[3–5 дней]
       #v(3pt)
-      #text(12pt, weight: "bold", fill: rgb("0A1128"))[35 000 ₽]
-      #v(3pt)
-      #text(8pt, fill: rgb("475569"))[Базовое SEO, устранение ошибок витрины, чистка дублей.]
+      #text(8pt, fill: rgb("475569"))[Связка прайс-листа с поисковыми кластерами Яндекса, ликвидация конфликтов гео-данных и дублей.]
     ]
   ],
   [
-    #rect(fill: rgb("F8FAFC"), stroke: 1.5pt + rgb("8B7355"), radius: 4pt, inset: 10pt)[
-      #text(8.5pt, weight: "bold", fill: rgb("8B7355"))[★ {package_name}]
+    #rect(fill: rgb("F8FAFC"), stroke: 1.5pt + rgb("8B7355"), radius: 4pt, inset: 9pt)[
+      #text(8.5pt, weight: "bold", fill: rgb("8B7355"))[ЭТАП 2: ЗАХВАТ]
+      #v(2pt)
+      #text(12pt, weight: "bold", fill: rgb("8B7355"))[14 дней]
       #v(3pt)
-      #text(13pt, weight: "bold", fill: rgb("8B7355"))[{package_price}]
-      #v(3pt)
-      #text(8pt, fill: rgb("0A1128"), weight: "bold")[Комплекс под ключ: SEO + UX-конверсия + Защита бренда + XML-фиды.]
+      #text(8pt, fill: rgb("0A1128"), weight: "bold")[Бесшовная онлайн-запись, разметка витрины для нейросетей Яндекса, семантика специалистов.]
     ]
   ],
   [
-    #rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
-      #text(8.5pt, weight: "bold", fill: rgb("64748B"))[ENTERPRISE (ГОД)]
+    #rect(fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 9pt)[
+      #text(8.5pt, weight: "bold", fill: rgb("64748B"))[ЭТАП 3: ЛИДЕРСТВО]
+      #v(2pt)
+      #text(11pt, weight: "bold", fill: rgb("0A1128"))[Регулярно]
       #v(3pt)
-      #text(12pt, weight: "bold", fill: rgb("0A1128"))[150 000 ₽]
-      #v(3pt)
-      #text(8pt, fill: rgb("475569"))[Полное сопровождение воронки на 6 месяцев + реклама.]
+      #text(8pt, fill: rgb("475569"))[Обучение YandexGPT через структуру ответов, защита от правок конкурентов, ТОП-3 района.]
     ]
   ]
 )
 
-#v(12pt)
+#v(10pt)
+#rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
+  #text(8.5pt, fill: rgb("334155"))[
+    *Экономика окупаемости:* При текущих потерях порядка *{rev_loss_fmt} ₽/мес*, возврат даже 6–8 первичных клиентов полностью окупает любые вложения в профессиональную настройку уже в первые 30 дней.
+  ]
+]
+
+#v(10pt)
 #rect(width: 100%, fill: rgb("0A1128"), radius: 4pt, inset: 12pt)[
   #grid(
     columns: (1fr, auto),
-    gutter: 10pt,
+    gutter: 12pt,
     [
-      #text(9.5pt, weight: "bold", fill: rgb("FFFFFF"))[Забронировать 20-минутный стратегический Zoom-разбор] \\
-      #v(2pt)
-      #text(8pt, fill: rgb("CBD5E1"))[Покажем экран вашего профиля в аналитике Яндекса и передадим план исправления ТОП-5 ошибок.]
+      #text(10pt, weight: "bold", fill: rgb("FFFFFF"))[Получить пошаговый план исправления (ТЗ)] \\
+      #v(3pt)
+      #text(8.5pt, fill: rgb("CBD5E1"))[Напишите в Telegram — пришлем короткое 3-минутное видео по вашей карточке с разбором скрытых технических ошибок профиля.]
     ],
     [
       #align(center + horizon)[
-        #text(9.5pt, weight: "bold", fill: rgb("8B7355"))[Telegram: \\ t.me/paulvenkov]
+        #text(10pt, weight: "bold", fill: rgb("8B7355"))[Telegram: \\ t.me/paulvenkov]
       ]
     ]
   )
 ]
 """
 
-    # --- ТЕХНИЧЕСКОЕ ПРИЛОЖЕНИЕ ---
+    # --- ТЕХНИЧЕСКОЕ ПРИЛОЖЕНИЕ (ДЕТАЛИЗАЦИЯ ПО 79 ПАРАМЕТРАМ) ---
     typ_source += """
 #pagebreak()
 #heading(level: 2)[Техническое приложение (Детализация по 79 параметрам)]
 #v(10pt)
 """
     blocks = [
-        {"title": "Блок 1. Видимость и Охваты (SEO)", "groups": ['SEO и Трафик', 'Активность']},
-        {"title": "Блок 2. Упаковка и Конверсия (UX)", "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал']},
-        {"title": "Блок 3. Репутационный капитал", "groups": ['Репутация']},
-        {"title": "Блок 4. Нейросети и Скрытые данные", "groups": ['Технологии и ИИ']}
+        {"title": "Блок 1. Позиции в поиске района", "groups": ['SEO и Трафик', 'Активность']},
+        {"title": "Блок 2. Оформление витрины и удобство записи", "groups": ['Конверсия', 'Базовое заполнение', 'Контент и Визуал']},
+        {"title": "Блок 3. Репутация и отзывы", "groups": ['Репутация']},
+        {"title": "Блок 4. Новые функции и алгоритмы Яндекса", "groups": ['Технологии и ИИ']}
     ]
 
     for block in blocks:
@@ -837,12 +860,12 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #heading(level: 3)[{block['title']} (#text(fill: rgb("{bar_color}"))[{round(earned_score, 1)} / {round(max_score, 1)}])]
 #v(4pt)
 #rect(width: 100%, fill: rgb("F0FDF4"), stroke: 0.5pt + rgb("BBF7D0"), radius: 3pt, inset: 6pt)[
-  #text(8pt, weight: "bold", fill: rgb("166534"), tracking: 0.5pt)[В НОРМЕ:] \\
+  #text(8pt, weight: "bold", fill: rgb("166534"), tracking: 0.5pt)[В ПОРЯДКЕ:] \\
   #v(2pt)
   #text(8.5pt, fill: rgb("475569"))[{passed_text}]
 ]
 #v(3pt)
-#text(8pt, weight: "bold", fill: rgb("9F1239"), tracking: 0.5pt)[ЗОНЫ УЯЗВИМОСТИ (ОШИБКИ):]
+#text(8pt, weight: "bold", fill: rgb("9F1239"), tracking: 0.5pt)[ЧТО ТРЕБУЕТ ИСПРАВЛЕНИЯ:]
 {failed_cards}
 """
 
@@ -860,7 +883,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
             os.remove(typ_path)
         
     return pdf_bytes
-
 
 # ==========================================
 # 7. ОСНОВНОЙ ПОЛЬЗОВАТЕЛЬСКИЙ ИНТЕРФЕЙС
@@ -916,7 +938,6 @@ if data_to_process:
         social_links = []
     lpr_data = enrich_lpr_contacts_from_vk(social_links)
     
-    # Безопасная обработка relatedPlaces
     raw_related = data.get('relatedPlaces') or []
     if isinstance(raw_related, list):
         competitors_list = [
@@ -1015,7 +1036,6 @@ if data_to_process:
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
         lost_revenue = int(client_leads * lost_percentage * client_check)
 
-        # Вызов обновленной функции записи в CRM (с 11 колонками)
         save_audit_to_sheets(source_url, title, niche_key, final_total_score, lost_revenue, lpr_data)
         
         st.divider()
@@ -1084,15 +1104,13 @@ if data_to_process:
             icebreaker_text = generate_icebreaker_text(template_payload)
             st.code(icebreaker_text, language="markdown")
             
-            # --- ЛОГИКА АВТОМАТИЧЕСКОГО СОХРАНЕНИЯ С ЗАЩИТОЙ ОТ ДУБЛЕЙ ---
-            # Создаем уникальный ключ для текущей компании
+            # Логика сохранения на Google Диск с защитой от повторов
             upload_flag_key = f"uploaded_{title}"
             links_key = f"links_{title}"
 
             if upload_flag_key not in st.session_state:
                 st.session_state[upload_flag_key] = False
 
-            # Если для этой компании файлы еще не загружены - загружаем
             if not st.session_state[upload_flag_key]:
                 with st.spinner("☁️ Автоматическое сохранение файлов на Google Диск..."):
                     try:
@@ -1101,7 +1119,6 @@ if data_to_process:
                             st.warning("Файл drive_manager.py не обнаружен. Сохранение на Диск пропущено.")
                         else:
                             dm = DriveManager(creds)
-                            
                             safe_name = title.replace(" ", "_").replace('"', '').replace("'", "")
                             
                             pdf_url = dm.upload_file(f"{safe_name}_Аудит_PIN100.pdf", pdf_bytes, "application/pdf", dm.pdf_root_id)
@@ -1114,13 +1131,11 @@ if data_to_process:
                                 if txt_url: links_display.append(f"🔗 [Текст письма на Диске]({txt_url})")
                                 if json_url: links_display.append(f"🔗 [JSON архив]({json_url})")
                                 
-                                # Сохраняем ссылки в память сессии и ставим флаг успешной загрузки
                                 st.session_state[links_key] = links_display
                                 st.session_state[upload_flag_key] = True
                     except Exception as e:
                         st.error(f"Ошибка сохранения на Google Диск: {e}")
 
-            # Отображаем успешный статус и ссылки (выводится всегда, если загрузка уже произошла)
             if st.session_state.get(upload_flag_key):
                 st.success("✅ Сделка автоматически зафиксирована в облаке!")
                 st.markdown(" | ".join(st.session_state.get(links_key, [])))
