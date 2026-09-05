@@ -299,7 +299,6 @@ def parse_yandex_date(date_val):
 def determine_niche_by_expert(title, category, prompts_data):
     full_context = f"{title} {category}".lower()
     
-    # Резервный эвристический поиск ниши при сбоях ИИ
     if any(w in full_context for w in ["стомат", "зуб", "дентал", "ортодонт"]):
         return "DENTISTRY"
     if any(w in full_context for w in ["авто", "сервис", "шиномонтаж", "мойка", "сто "]):
@@ -335,7 +334,6 @@ def rewrite_errors_by_ai(niche_label, company_name, failed_rules, expert_engine)
     if not expert_engine or not failed_rules:
         return
     
-    # Отправляем только упавшие правила для экономии токенов
     payload_text = "".join([f"ID: {r['Код']} | Ошибка: {r['Критерий']} | Текст: {r['Обоснование']}\n" for r in failed_rules[:15]])
     prompt = f"""Ты — B2B-эксперт по локальному маркетингу. Ниша: {niche_label}. Компания: {company_name}.
 Перепиши обоснование каждой ошибки под боли этой ниши простым языком руководителя. Опирайся на потери клиентов и выручки.
@@ -697,7 +695,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 #table(
   columns: (1.3fr, 1fr, 1.4fr),
   stroke: 0.5pt + rgb("E2E8F0"),
-  fill: (col, row) => if row == 0 { rgb("F1F5F9") } else if row == 5 { rgb("FFF1F2") } else { none },
+  fill: (col, row) => if row == 0 {{ rgb("F1F5F9") }} else if row == 5 {{ rgb("FFF1F2") }} else {{ none }},
   inset: 6pt,
   align: (left + horizon, center + horizon, left + horizon),
   [#text(8pt, weight: "bold")[Параметр расчета]], [#text(8pt, weight: "bold")[Значение]], [#text(8pt, weight: "bold")[Как считаем]],
@@ -812,6 +810,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 ]
 """
 
+    # --- ТЕХНИЧЕСКОЕ ПРИЛОЖЕНИЕ (ДЕТАЛИЗАЦИЯ ПО 79 ПАРАМЕТРАМ) ---
     typ_source += """
 #pagebreak()
 #heading(level: 2)[Техническое приложение (Детализация по 79 параметрам)]
@@ -899,9 +898,6 @@ st.title(f"📍 {PROJECT_NAME}: {EXPERT_TITLE}")
 
 tab_link, tab_file = st.tabs(["🌐 По ссылке (Яндекс Карты)", "📁 Из JSON файла"])
 
-data_to_process = None
-source_url = ""
-
 with tab_link:
     url_input = st.text_input("Вставьте ссылку на карточку организации", placeholder="https://yandex.ru/maps/...")
     if st.button("🚀 Сгенерировать Отчет по ссылке", type="primary"):
@@ -910,8 +906,8 @@ with tab_link:
         else:
             with st.spinner("Сбор свежих данных через Apify..."):
                 try:
-                    data_to_process = fetch_apify_data(url_input)
-                    source_url = url_input
+                    st.session_state["data_to_process"] = fetch_apify_data(url_input)
+                    st.session_state["source_url"] = url_input
                 except Exception as e:
                     send_telegram_alert(str(e), url_input)
                     st.error(f"⚠️ Ошибка парсинга: {str(e)}")
@@ -920,10 +916,14 @@ with tab_file:
     uploaded_file = st.file_uploader("Загрузите предварительно сохраненный JSON", type=["json"])
     if uploaded_file and st.button("🚀 Сформировать Отчет из файла"):
         try:
-            data_to_process = json.load(uploaded_file)
-            source_url = data_to_process.get('url') or "Файл JSON"
+            parsed_data = json.load(uploaded_file)
+            st.session_state["data_to_process"] = parsed_data
+            st.session_state["source_url"] = parsed_data.get('url') or "Файл JSON"
         except Exception as e:
             st.error(f"Ошибка чтения JSON: {e}")
+
+data_to_process = st.session_state.get("data_to_process")
+source_url = st.session_state.get("source_url", "")
 
 # ==========================================
 # 8. РАСЧЕТ И ОТОБРАЖЕНИЕ
@@ -1009,7 +1009,6 @@ if data_to_process:
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
         lost_revenue = int(client_leads * lost_percentage * client_check)
 
-        # Защита от повторной записи в Google Sheets при перезагрузках страницы
         sheet_flag_key = f"logged_sheets_{title}"
         if sheet_flag_key not in st.session_state:
             save_audit_to_sheets(source_url, title, niche_key, final_total_score, lost_revenue, lpr_data)
