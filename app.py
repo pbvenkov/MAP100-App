@@ -1,7 +1,7 @@
 import streamlit as st
 
 # ==========================================
-# 0. ИНИЦИАЛИЗАЦИЯ СТРАНИЦЫ
+# 0. ИНИЦИАЛИЗАЦИЯ СТРАНИЦЫ (СТРОГО ПЕРВЫЙ ВЫЗОВ)
 # ==========================================
 st.set_page_config(
     page_title="PIN100 | Аналитический Отчет",
@@ -24,7 +24,7 @@ import typst
 try:
     from utils import generate_icebreaker_text
 except ImportError:
-    def generate_icebreaker_text(data):
+    def generate_icebreaker_text(data, templates_dict=None):
         return f"Здравствуйте! Подготовлен аудит для {data.get('title', 'организации')}."
 
 try:
@@ -142,14 +142,27 @@ def fetch_cached_database():
     try:
         client = gspread.authorize(get_google_credentials())
         doc = client.open_by_url(st.secrets["SPREADSHEET_URL"])
+        
         raw_rules = doc.worksheet("Rules").get_all_values()
         rules = [dict(zip(raw_rules[0], row)) for row in raw_rules[1:] if any(row)]
+        
         raw_prompts = doc.worksheet("Prompts").get_all_values()
         prompts = [dict(zip(raw_prompts[0], row)) for row in raw_prompts[1:] if any(row)]
-        return rules, prompts
+        
+        templates = {}
+        try:
+            raw_templates = doc.worksheet("Templates").get_all_values()
+            if len(raw_templates) > 1:
+                for row in raw_templates[1:]:
+                    if len(row) >= 2 and row[0].strip():
+                        templates[row[0].strip().upper()] = row[1].strip()
+        except Exception:
+            templates = {}
+            
+        return rules, prompts, templates
     except Exception as e:
         st.error(f"Ошибка подключения к Google Sheets: {e}")
-        return [], []
+        return [], [], {}
 
 def save_audit_to_sheets(url, title, niche, total_score, lost_revenue, lpr_data=None):
     try:
@@ -886,7 +899,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 # ==========================================
 # 7. ПОЛЬЗОВАТЕЛЬСКИЙ ИНТЕРФЕЙС
 # ==========================================
-rules_data, prompts_data = fetch_cached_database()
+rules_data, prompts_data, templates_data = fetch_cached_database()
 
 with st.sidebar:
     st.markdown(f"## 📍 {PROJECT_NAME}")
@@ -1054,26 +1067,24 @@ if data_to_process:
             st.markdown("### ✉️ Персональное письмо первого касания (Icebreaker)")
             st.caption("Отправляется в WhatsApp или на Email без вложений. Задача — получить согласие на аудит.")
             
-            comp_1 = competitors_list[0] if len(competitors_list) > 0 else "соседним организациям"
-            comp_2 = competitors_list[1] if len(competitors_list) > 1 else "прямым конкурентам"
+            comp_1 = competitors_list[0] if len(competitors_list) > 0 else ""
+            comp_2 = competitors_list[1] if len(competitors_list) > 1 else ""
             leads_min = max(5, int(client_leads * lost_percentage * 0.8))
             leads_max = max(10, int(client_leads * lost_percentage))
 
             template_payload = {
                 "niche_key": niche_key,
-                "lpr_name": lpr_data.get("name") if (lpr_data and lpr_data.get("name")) else "коллеги",
+                "lpr_name": lpr_data.get("name") if (lpr_data and lpr_data.get("name")) else "",
                 "title": title,
                 "rating": round(safe_float(data.get("rating"), 4.5), 1),
                 "comp_1": comp_1,
                 "comp_2": comp_2,
-                "competitor_1": comp_1,
-                "competitor_2": comp_2,
                 "lost_leads": f"{leads_min}–{leads_max}",
                 "lost_revenue": lost_revenue,
                 "sender_name": sender_name
             }
             
-            icebreaker_text = generate_icebreaker_text(template_payload)
+            icebreaker_text = generate_icebreaker_text(template_payload, templates_data)
             st.code(icebreaker_text, language="markdown")
             
             upload_flag_key = f"uploaded_{title}"
