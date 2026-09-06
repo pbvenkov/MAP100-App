@@ -1,7 +1,7 @@
 import streamlit as st
 
 # ==========================================
-# 0. ИНИЦИАЛИЗАЦИЯ СТРАНИЦЫ
+# 0. ИНИЦИАЛИЗАЦИЯ СТРАНИЦЫ (СТРОГО ПЕРВЫЙ ВЫЗОВ)
 # ==========================================
 st.set_page_config(
     page_title="PIN100 | Аналитический Отчет",
@@ -41,6 +41,7 @@ EXPERT_TITLE = "Генератор B2B Воронки (Аналитически�
 APIFY_API_TOKEN = st.secrets.get("APIFY_API_TOKEN", "")
 APIFY_ACTOR_ID = "zen-studio~yandex-maps-scraper"
 VK_API_TOKEN = st.secrets.get("VK_API_TOKEN", "")
+DADATA_API_KEY = st.secrets.get("DADATA_API_KEY", "")
 
 try:
     gemini_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -54,7 +55,7 @@ except Exception:
     expert_engine = None
 
 def plural_ru(n, forms):
-    """Склонение существительных: ('пациент', 'пациента', 'пациентов')"""
+    """Склонение существительных по числительным: ('пациент', 'пациента', 'пациентов')"""
     n = abs(int(n)) % 100
     n1 = n % 10
     if 10 < n < 20:
@@ -82,6 +83,15 @@ def safe_int(val, default=0):
     except (ValueError, TypeError):
         return default
 
+def clean_typography(text):
+    if not text:
+        return ""
+    t = str(text).replace(" - ", " — ").replace(">=", "≥").replace("<=", "≤").replace("->", "→")
+    t = t.replace("<", " меньше ").replace(">", " больше ")
+    for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`', '~']:
+        t = t.replace(c, ' ')
+    return " ".join(t.split())
+
 # ==========================================
 # 2. УВЕДОМЛЕНИЯ В TELEGRAM
 # ==========================================
@@ -96,8 +106,178 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
         except Exception:
             pass
 
+def send_telegram_business_alert(title, category, unique_keys):
+    tg_token = st.secrets.get("TG_BOT_TOKEN")
+    tg_admin_id = st.secrets.get("TG_ADMIN_ID")
+    if not (tg_token and tg_admin_id):
+        return
+
+    ai_reasoning = "Потенциально высокий LTV. Требует ручной бизнес-оценки."
+    if expert_engine:
+        try:
+            prompt = f"Кратко (в 2 предложениях) оцени нишу '{category}' (компания '{title}'). Почему B2B-консалтинг окупится в этом сегменте?"
+            response = expert_engine.generate_content(prompt)
+            ai_reasoning = response.text.strip()
+        except Exception:
+            pass
+
+    tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+    text = (
+        f"🚨 *Обнаружена новая ниша!*\n\n"
+        f"🏢 *Компания:* {title}\n"
+        f"🏷 *Категория:* {category}\n"
+        f"🔑 *Ключи:* {', '.join(unique_keys)}\n\n"
+        f"💡 *Оценка ИИ:*\n_{ai_reasoning}_"
+    )
+    try:
+        requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
+    except Exception:
+        pass
+
 # ==========================================
-# 3. БАЗА ДАННЫХ И CRM (GOOGLE SHEETS)
+# 3. ПОИСК ЛПР И ИНН (КАСКАДНЫЙ WATERFALL)
+# ==========================================
+def extract_inn(data, dadata_token=None):
+    """Каскадный поиск ИНН: Apify JSON -> Регулярные выражения -> DaData API"""
+    legal_info = data.get('legalInfo') or data.get('companyLegalInfo') or {}
+    if isinstance(legal_info, dict) and legal_info.get('inn'):
+        clean_inn = re.sub(r'[^\d]', '', str(legal_info.get('inn')))
+        if len(clean_inn) in (10, 12):
+            return clean_inn
+
+    text_corpus = " ".join([
+        str(data.get('description') or ''),
+        str(data.get('legalName') or ''),
+        str(data.get('companyName') or ''),
+        str(data.get('features') or '')
+    ])
+    
+    inn_match = re.search(r'(?:ИНН\D{0,5})?(\b\d{10}\b|\b\d{12}\b)', text_corpus, re.IGNORECASE)
+    if inn_match:
+        return inn_match.group(1)
+
+    if dadata_token:
+        query_target = data.get("legalName") or data.get("companyName") or data.get("title")
+        if query_target and len(query_target) > 3:
+            url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Authorization": f"Token {dadata_token}"
+            }
+            try:
+                res = requests.post(url, json={"query": query_target, "count": 1}, headers=headers, timeout=4).json()
+                suggestions = res.get("suggestions", [])
+                if suggestions:
+                    inn_val = suggestions[0].get("data", {}).get("inn")
+                    if inn_val:
+                        return str(inn_val)
+            except Exception:
+                pass
+
+    return ""
+
+def extract_lpr_from_reviews(reviews_data, engine=None):
+    """Поиск подписи руководства в официальных ответах на отзывы"""
+    if not reviews_data or not engine:
+        return {}
+        
+    replies = []
+    for r in reviews_data[:20]:
+        if not isinstance(r, dict):
+            continue
+        reply_obj = r.get('reply') or {}
+        text = reply_obj.get('text', '') if isinstance(reply_obj, dict) else (r.get('businessComment') or '')
+        if text and len(text) > 15:
+            replies.append(text.strip())
+
+    if not replies:
+        return {}
+
+    prompt = f"""Ниже приведены официальные ответы организации на отзывы клиентов:
+{chr(10).join(replies[:8])}
+
+Найди, кем и как подписываются ответы (имя и должность ЛПР: главврач, директор, управляющий, владелица).
+Верни строго JSON:
+{{"name": "Имя или Имя Отчество", "role": "Должность", "status": "found"}}
+Если подписи нет или она обезличена (например, "Администрация" или "Команда"), верни: {{"status": "not_found"}}"""
+
+    try:
+        raw_res = engine.generate_content(prompt).text
+        match = re.search(r'\{.*\}', raw_res, re.DOTALL)
+        if match:
+            data = json.loads(match.group(0))
+            if data.get("status") == "found" and data.get("name"):
+                return data
+    except Exception:
+        pass
+    return {}
+
+def enrich_lpr_contacts_from_vk(social_links):
+    """Поиск контактов руководителя через VK API"""
+    if not VK_API_TOKEN or not social_links:
+        return {}
+    vk_url = next((link.get('url', '') for link in social_links if isinstance(link, dict) and ('vk.com' in link.get('url', '') or 'vk.ru' in link.get('url', ''))), None)
+    if not vk_url:
+        return {}
+    try:
+        clean_vk = vk_url.split('?')[0].rstrip('/')
+        group_id = clean_vk.split('/')[-1]
+        res = requests.get("https://api.vk.com/method/groups.getById", params={"group_id": group_id, "fields": "contacts", "access_token": VK_API_TOKEN, "v": "5.199"}, timeout=5).json()
+        if 'response' in res and res['response']:
+            contacts = res['response'][0].get('contacts', [])
+            if not contacts:
+                return {"status": "hidden", "vk_url": vk_url}
+            contact = contacts[0]
+            lpr_data = {"name": "", "role": contact.get('desc', 'Администратор'), "link": "", "email": contact.get('email', ''), "status": "found"}
+            if 'user_id' in contact:
+                lpr_data["link"] = f"https://vk.com/id{contact['user_id']}"
+                u_res = requests.get("https://api.vk.com/method/users.get", params={"user_ids": contact['user_id'], "access_token": VK_API_TOKEN, "v": "5.199"}, timeout=5).json()
+                if 'response' in u_res and u_res['response']:
+                    lpr_data["name"] = f"{u_res['response'][0].get('first_name', '')} {u_res['response'][0].get('last_name', '')}".strip()
+            return lpr_data
+    except Exception:
+        pass
+    return {}
+
+def enrich_lpr_by_dadata(query_str, dadata_token=None):
+    """Поиск ФИО генерального директора или ИП через DaData API по ИНН или названию"""
+    if not dadata_token or not query_str:
+        return {}
+        
+    url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": f"Token {dadata_token}"
+    }
+    try:
+        res = requests.post(url, json={"query": query_str, "count": 1}, headers=headers, timeout=4).json()
+        suggestions = res.get("suggestions", [])
+        if suggestions:
+            party_data = suggestions[0].get("data", {})
+            management = party_data.get("management") or {}
+            
+            if management.get("name"):
+                return {
+                    "name": management.get("name"),
+                    "role": management.get("post", "Руководитель"),
+                    "status": "found"
+                }
+            if party_data.get("type") == "INDIVIDUAL":
+                fio = party_data.get("name", {}).get("full", "")
+                clean_fio = fio.replace("ИП", "").strip()
+                return {
+                    "name": clean_fio,
+                    "role": "Индивидуальный предприниматель",
+                    "status": "found"
+                }
+    except Exception:
+        pass
+    return {}
+
+# ==========================================
+# 4. БАЗА ДАННЫХ И CRM (GOOGLE SHEETS)
 # ==========================================
 NICHE_ECONOMICS = {
     "DENTISTRY": {"leads": 70, "check": 25000, "label": "Стоматология", "ltv_months": 12},
@@ -187,7 +367,7 @@ def check_oid_history(oid):
 
     return {"exists": False, "source": None, "base_score": None, "last_score": None, "count": 0}
 
-def save_lead_to_results(oid, url, title, niche, total_score, lost_revenue, lpr_data=None):
+def save_lead_to_results(oid, url, title, niche, total_score, lost_revenue, lpr_data=None, inn=""):
     try:
         client = gspread.authorize(get_google_credentials())
         ws = client.open_by_url(st.secrets["SPREADSHEET_URL"]).worksheet("Results")
@@ -207,7 +387,8 @@ def save_lead_to_results(oid, url, title, niche, total_score, lost_revenue, lpr_
             lpr_role,                                              # H: Должность
             lpr_contact,                                           # I: Личный контакт
             f"{lost_revenue:,}".replace(',', ' ') + " ₽",          # J: Кассовый разрыв
-            "1. Новый лид"                                         # K: Статус
+            "1. Новый лид",                                        # K: Статус
+            f"'{inn}" if inn else ""                               # L: ИНН
         ]
         ws.append_row(row)
     except Exception:
@@ -236,7 +417,7 @@ def save_progress_measurement(oid, title, audit_type, total_score, delta_start, 
         pass
 
 # ==========================================
-# 4. ИДЕНТИФИКАЦИЯ И ПАРСИНГ
+# 5. НОРМАЛИЗАЦИЯ, OID И ПАРСИНГ
 # ==========================================
 def extract_oid_and_url(raw_url):
     url = raw_url.strip()
@@ -315,34 +496,8 @@ def fetch_apify_data(cleaned_url):
     first_item['title'] = resolved_title
     return first_item
 
-def enrich_lpr_contacts_from_vk(social_links):
-    if not VK_API_TOKEN or not social_links:
-        return {}
-    vk_url = next((link.get('url', '') for link in social_links if isinstance(link, dict) and ('vk.com' in link.get('url', '') or 'vk.ru' in link.get('url', ''))), None)
-    if not vk_url:
-        return {}
-    try:
-        clean_vk = vk_url.split('?')[0].rstrip('/')
-        group_id = clean_vk.split('/')[-1]
-        res = requests.get("https://api.vk.com/method/groups.getById", params={"group_id": group_id, "fields": "contacts", "access_token": VK_API_TOKEN, "v": "5.199"}, timeout=5).json()
-        if 'response' in res and res['response']:
-            contacts = res['response'][0].get('contacts', [])
-            if not contacts:
-                return {"status": "hidden", "vk_url": vk_url}
-            contact = contacts[0]
-            lpr_data = {"name": "", "role": contact.get('desc', 'Администратор'), "link": "", "email": contact.get('email', ''), "status": "found"}
-            if 'user_id' in contact:
-                lpr_data["link"] = f"https://vk.com/id{contact['user_id']}"
-                u_res = requests.get("https://api.vk.com/method/users.get", params={"user_ids": contact['user_id'], "access_token": VK_API_TOKEN, "v": "5.199"}, timeout=5).json()
-                if 'response' in u_res and u_res['response']:
-                    lpr_data["name"] = f"{u_res['response'][0].get('first_name', '')} {u_res['response'][0].get('last_name', '')}".strip()
-            return lpr_data
-    except Exception:
-        pass
-    return {}
-
 # ==========================================
-# 5. СКОРИНГ И СЕМАНТИКА
+# 6. СКОРИНГ И СЕМАНТИЧЕСКИЙ АНАЛИЗ
 # ==========================================
 def parse_yandex_date(date_val):
     if not date_val:
@@ -388,8 +543,8 @@ def determine_niche_by_expert(title, category, prompts_data):
         pass
     return "OTHER"
 
-def rewrite_errors_by_ai(niche_label, company_name, failed_rules, expert_engine):
-    if not expert_engine or not failed_rules:
+def rewrite_errors_by_ai(niche_label, company_name, failed_rules, engine):
+    if not engine or not failed_rules:
         return
     
     payload_text = "".join([f"ID: {r['Код']} | Ошибка: {r['Критерий']} | Текст: {r['Обоснование']}\n" for r in failed_rules[:15]])
@@ -399,7 +554,7 @@ def rewrite_errors_by_ai(niche_label, company_name, failed_rules, expert_engine)
 {payload_text}
 Верни строго JSON объект: {{"Код_ошибки": "Новый текст обоснования"}}"""
     try:
-        raw_resp = expert_engine.generate_content(prompt).text
+        raw_resp = engine.generate_content(prompt).text
         match = re.search(r'\{.*\}', raw_resp, re.DOTALL)
         if match:
             new_texts = json.loads(match.group(0))
@@ -419,6 +574,11 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     url = str(raw_url).lower()
     
     cat_list = data.get('categories') or []
+    cat_name = ""
+    if isinstance(cat_list, list) and cat_list:
+        first_cat = cat_list[0]
+        cat_name = first_cat.get('name', str(first_cat)) if isinstance(first_cat, dict) else str(first_cat)
+    
     if data.get('isVerifiedOwner') or len(title) > 2:
         scores['PROF-01.1'] = True
     if cat_list:
@@ -456,6 +616,11 @@ def calculate_hard_facts(data, niche_key="OTHER"):
             if features.get(k):
                 scores['PROF-08.2'] = True
                 break
+        if niche_key in ["OTHER", "SERVICES"]:
+            std_keys = {'payment_method', 'wi_fi', 'toilet', 'parking', 'street_entrance', 'parking_disabled', 'promotions', 'wheelchair_access'}
+            client_unique_keys = [k for k in features.keys() if k not in std_keys]
+            if len(client_unique_keys) >= 2:
+                send_telegram_business_alert(title, cat_name, client_unique_keys[:5])
     
     if len(desc) > 1200:
         scores['PROF-09.1'] = True
@@ -617,17 +782,8 @@ def calculate_dynamic_expert_rules(data, prompts_data):
     return {}
 
 # ==========================================
-# 6. ГЕНЕРАЦИЯ PDF (ЧЕРЕЗ ШАБЛОН TYPST)
+# 7. ГЕНЕРАЦИЯ PDF (ШАБЛОН TYPST, 4 СТР.)
 # ==========================================
-def clean_typography(text):
-    if not text:
-        return ""
-    t = str(text).replace(" - ", " — ").replace(">=", "≥").replace("<=", "≤").replace("->", "→")
-    t = t.replace("<", " меньше ").replace(">", " больше ")
-    for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`', '~']:
-        t = t.replace(c, ' ')
-    return " ".join(t.split())
-
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, client_ltv, competitors_text=""):
     current_date = datetime.now().strftime("%d.%m.%Y")
     score_color = "166534" if score >= 80 else ("8B7355" if score >= 50 else "9F1239")
@@ -652,7 +808,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         quality_phrase = "медицинских услуг, квалификации врачей и стандартов лечения"
         target_forms = ("пациент", "пациента", "пациентов")
         service_example = "имплантацию, протезирование, коронки или брекеты"
-    elif "horeca" in niche_str or "ресторан" in niche_str or "каfe" in niche_str:
+    elif "horeca" in niche_str or "ресторан" in niche_str or "кафе" in niche_str:
         quality_phrase = "кухни, атмосферы и гостеприимства вашего заведения"
         target_forms = ("гость", "гостя", "гостей")
         service_example = "банкеты, меню кухни или бронь столиков"
@@ -717,7 +873,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     return pdf_bytes
 
 # ==========================================
-# 7. ПОЛЬЗОВАТЕЛЬСКИЙ ИНТЕРФЕЙС
+# 8. ПОЛЬЗОВАТЕЛЬСКИЙ ИНТЕРФЕЙС
 # ==========================================
 rules_data, prompts_data, templates_data = fetch_cached_database()
 
@@ -766,7 +922,7 @@ source_url = st.session_state.get("source_url", "")
 current_oid = st.session_state.get("current_oid", "UNKNOWN")
 
 # ==========================================
-# 8. РАСЧЕТ И ОТОБРАЖЕНИЕ
+# 9. ОСНОВНОЙ ПАЙПЛАЙН РАСЧЕТА И ВЫВОДА
 # ==========================================
 if data_to_process:
     data = data_to_process
@@ -775,11 +931,22 @@ if data_to_process:
     cat = c_list[0].get('name', '') if (isinstance(c_list, list) and c_list and isinstance(c_list[0], dict)) else (str(c_list[0]) if (isinstance(c_list, list) and c_list) else '')
     client_reviews = safe_int(data.get('reviewsCount') or data.get('ratingsCount') or len(data.get('reviews') or []))
     
+    # 1. Извлечение ИНН
+    inn_code = extract_inn(data, DADATA_API_KEY)
+    
+    # 2. Каскадный поиск ЛПР (Отзывы -> VK -> DaData)
     social_links = data.get('socialLinks') or data.get('links') or []
     if not isinstance(social_links, list):
         social_links = []
-    lpr_data = enrich_lpr_contacts_from_vk(social_links)
+        
+    lpr_data = extract_lpr_from_reviews(data.get('reviews') or [], expert_engine)
+    if not lpr_data or lpr_data.get("status") != "found":
+        lpr_data = enrich_lpr_contacts_from_vk(social_links)
+    if not lpr_data or lpr_data.get("status") != "found":
+        search_target = inn_code if inn_code else (data.get("legalName") or data.get("companyName") or title)
+        lpr_data = enrich_lpr_by_dadata(search_target, DADATA_API_KEY)
     
+    # 3. Конкуренты из блока рекомендаций
     raw_related = data.get('relatedPlaces') or []
     if isinstance(raw_related, dict):
         raw_related = raw_related.get('items') or raw_related.get('places') or [raw_related]
@@ -848,14 +1015,15 @@ if data_to_process:
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
         lost_revenue = int(client_leads * lost_percentage * client_check)
 
-        # Каскадная проверка по OID
+        # Каскадная проверка по OID в Google Sheets
         history_info = check_oid_history(current_oid)
 
         st.divider()
         col1, col2 = st.columns([2, 1])
         with col1:
             st.subheader(f"🏢 {title}")
-            st.caption(f"🔑 Яндекс OID: **{current_oid}** | 🧠 Сегмент: **{niche_label}**")
+            inn_badge = f" | 🏛 ИНН: **{inn_code}**" if inn_code else ""
+            st.caption(f"🔑 Яндекс OID: **{current_oid}**{inn_badge} | 🧠 Сегмент: **{niche_label}**")
             
             if history_info["exists"]:
                 st.info(f"🔄 **Карточка уже в базе ({history_info['source']}).** Базовый балл: {history_info['base_score']} | Замеров: {history_info['count']}")
@@ -863,7 +1031,10 @@ if data_to_process:
                 st.success("✨ **Новая организация.** Будет зафиксирована в CRM Results.")
                 
             if lpr_data and lpr_data.get('status') == 'found':
-                st.success(f"🕵️‍♂️ **Найден ЛПР:** {lpr_data.get('name')} ({lpr_data.get('role')})\n\n🔗 {lpr_data.get('link')}")
+                contact_info = f" ({lpr_data.get('link')})" if lpr_data.get('link') else ""
+                st.success(f"🕵️‍♂️ **Найден ЛПР:** {lpr_data.get('name')} — {lpr_data.get('role')}{contact_info}")
+            elif lpr_data and lpr_data.get('status') == 'hidden':
+                st.warning("⚠️ **Группа ВК найдена, но блок «Контакты» скрыт.**")
             
         with col2:
             delta = "Отличный результат" if final_total_score >= 80 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
@@ -883,7 +1054,7 @@ if data_to_process:
                 use_container_width=True
             )
 
-            # Формирование письма
+            # Формирование письма первого касания (Icebreaker)
             st.divider()
             st.markdown("### ✉️ Персональное письмо первого касания (Icebreaker)")
             
@@ -907,7 +1078,7 @@ if data_to_process:
             icebreaker_text = generate_icebreaker_text(template_payload, templates_data)
             st.code(icebreaker_text, language="markdown")
             
-            # Сохранение на Диск и роутинг в Таблицу
+            # Сохранение на Диск и фиксация в БД (Results или Client_Progress)
             session_save_key = f"saved_{current_oid}_{round(final_total_score, 1)}"
             if session_save_key not in st.session_state:
                 st.session_state[session_save_key] = False
@@ -916,7 +1087,7 @@ if data_to_process:
                 with st.spinner("☁️ Сохранение артефактов на Google Диск и фиксация в БД..."):
                     try:
                         if not DriveManager:
-                            st.warning("Файл drive_manager.py не обнаружен. Сохранение пропущено.")
+                            st.warning("Файл drive_manager.py не обнаружен. Сохранение на Диск пропущено.")
                         else:
                             dm = DriveManager()
                             date_str = datetime.now().strftime("%Y-%m-%d")
@@ -927,13 +1098,19 @@ if data_to_process:
                             
                             # Роутинг в Google Sheets
                             if not history_info["exists"]:
-                                save_lead_to_results(current_oid, source_url, title, niche_key, final_total_score, lost_revenue, lpr_data)
+                                save_lead_to_results(
+                                    current_oid, source_url, title, niche_key, 
+                                    final_total_score, lost_revenue, lpr_data, inn=inn_code
+                                )
                             else:
                                 b_sc = history_info["base_score"] or final_total_score
                                 l_sc = history_info["last_score"] or final_total_score
                                 d_start = final_total_score - b_sc
                                 d_last = final_total_score - l_sc
-                                save_progress_measurement(current_oid, title, audit_stage, final_total_score, d_start, d_last, lost_revenue, pdf_url, json_url, source_url)
+                                save_progress_measurement(
+                                    current_oid, title, audit_stage, final_total_score, 
+                                    d_start, d_last, lost_revenue, pdf_url, json_url, source_url
+                                )
 
                             st.session_state[f"links_{session_save_key}"] = [
                                 f"🔗 [PDF на Диске]({pdf_url})" if pdf_url else "",
