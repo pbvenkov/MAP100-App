@@ -277,20 +277,96 @@ def enrich_lpr_by_dadata(query_str, dadata_token=None):
     return {}
 
 # ==========================================
-# 4. БАЗА ДАННЫХ И CRM (GOOGLE SHEETS)
+# 4. БАЗА ДАННЫХ, CRM И УМНАЯ ЭКОНОМИКА
 # ==========================================
+# Консервативные базисы первого обращения (для регионов РФ)
 NICHE_ECONOMICS = {
-    "DENTISTRY": {"leads": 70, "check": 25000, "label": "Стоматология", "ltv_months": 12},
-    "HORECA": {"leads": 150, "check": 2000, "label": "HORECA / Рестораны", "ltv_months": 12},
-    "B2B": {"leads": 40, "check": 30000, "label": "Легкий B2B / Опт", "ltv_months": 12},
-    "B2B_HEAVY": {"leads": 10, "check": 500000, "label": "Сложный B2B / Производство", "ltv_months": 1},
-    "RETAIL": {"leads": 200, "check": 1500, "label": "Ритейл", "ltv_months": 12},
-    "AUTO": {"leads": 100, "check": 12000, "label": "Автосервис / Автосалон", "ltv_months": 6},
-    "SERVICES": {"leads": 60, "check": 7000, "label": "Услуги B2C", "ltv_months": 6},
-    "BEAUTY_MEDICAL": {"leads": 80, "check": 6000, "label": "Медицина / Бьюти", "ltv_months": 12},
-    "EDUCATION": {"leads": 30, "check": 50000, "label": "Образование", "ltv_months": 12},
-    "OTHER": {"leads": 50, "check": 5000, "label": "Прочее", "ltv_months": 6}
+    "DENTISTRY": {"leads": 70, "check": 6500, "label": "Стоматология", "ltv_months": 12},
+    "HORECA": {"leads": 150, "check": 1500, "label": "HORECA / Рестораны", "ltv_months": 12},
+    "B2B": {"leads": 40, "check": 25000, "label": "Легкий B2B / Опт", "ltv_months": 12},
+    "B2B_HEAVY": {"leads": 10, "check": 300000, "label": "Сложный B2B / Производство", "ltv_months": 1},
+    "RETAIL": {"leads": 200, "check": 1200, "label": "Ритейл", "ltv_months": 12},
+    "AUTO": {"leads": 100, "check": 5500, "label": "Автосервис / Автосалон", "ltv_months": 6},
+    "SERVICES": {"leads": 60, "check": 4000, "label": "Услуги B2C", "ltv_months": 6},
+    "BEAUTY_MEDICAL": {"leads": 80, "check": 3500, "label": "Медицина / Бьюти", "ltv_months": 12},
+    "EDUCATION": {"leads": 30, "check": 18000, "label": "Образование", "ltv_months": 12},
+    "OTHER": {"leads": 50, "check": 3000, "label": "Прочее", "ltv_months": 6}
 }
+
+GEO_TIERS = {
+    "TIER_1": {
+        "cities": ["москва", "санкт-петербург", "петербург", "зеленоград", "сочи"],
+        "multiplier": 1.45
+    },
+    "TIER_2": {
+        "cities": [
+            "новосибирск", "екатеринбург", "казань", "нижний новгород", "челябинск",
+            "красноярск", "самара", "уфа", "ростов-на-дону", "омск", "краснодар",
+            "воронеж", "пермь", "волгоград", "тюмень", "владивосток"
+        ],
+        "multiplier": 1.15
+    }
+}
+
+def _calculate_geo_check(data: dict, niche_key: str) -> tuple[int, str]:
+    base_eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
+    base_check = base_eco["check"]
+    
+    address = str(data.get("address") or "").lower()
+    geo_mult = 1.0
+    geo_label = "Регионы РФ"
+
+    if any(city in address for city in GEO_TIERS["TIER_1"]["cities"]):
+        geo_mult = GEO_TIERS["TIER_1"]["multiplier"]
+        geo_label = "Москва / СПб"
+    elif any(city in address for city in GEO_TIERS["TIER_2"]["cities"]):
+        geo_mult = GEO_TIERS["TIER_2"]["multiplier"]
+        geo_label = "Город-миллионник"
+
+    final_check = int(round(base_check * geo_mult / 500) * 500)
+    return final_check, f"Консервативный базис ({geo_label})"
+
+def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
+    """
+    Каскадный расчет чека:
+    1. B2B / B2B_HEAVY -> строго гео-матрица
+    2. HORECA -> приоритет полю averageBill Яндекса
+    3. B2C услуги -> 35-й перцентиль прайс-листа (отсечение аномалий)
+    4. Fallback -> гео-матрица (База ниши * Коэффициент города)
+    """
+    if niche_key in ["B2B", "B2B_HEAVY"]:
+        return _calculate_geo_check(data, niche_key)
+
+    # Приоритет официальному среднему чеку Яндекса
+    raw_bill = data.get("averageBill") or data.get("priceCategory") or ""
+    bill_digits = re.findall(r'\d+', str(raw_bill).replace(' ', ''))
+    if bill_digits:
+        nums = [int(n) for n in bill_digits if int(n) >= 300]
+        if nums:
+            return int(sum(nums) / len(nums)), "Средний счёт из профиля Яндекса"
+
+    # Анализ реального прайс-листа карточки
+    menu_data = data.get('menu')
+    m_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
+    c_items = data.get('productCatalog') or []
+    all_items = [p for p in (m_items + c_items) if isinstance(p, dict)]
+
+    extracted_prices = []
+    for item in all_items:
+        raw_price = str(item.get("price") or item.get("cost") or "")
+        clean_p = re.sub(r'[^\d]', '', raw_price)
+        if clean_p and 400 <= int(clean_p) <= 80000:
+            extracted_prices.append(int(clean_p))
+
+    if len(extracted_prices) >= 5:
+        extracted_prices.sort()
+        idx = int(len(extracted_prices) * 0.35)
+        smart_price = round(extracted_prices[idx] / 100) * 100
+        multiplier = 1.8 if niche_key == "HORECA" else 1.0
+        final_val = int(round(smart_price * multiplier / 100) * 100)
+        return final_val, f"Прайс-лист карточки ({len(extracted_prices)} позиций)"
+
+    return _calculate_geo_check(data, niche_key)
 
 def get_google_credentials():
     creds_raw = st.secrets.get("GCP_CREDENTIALS", {})
@@ -337,7 +413,6 @@ def check_oid_history(oid):
         client = gspread.authorize(get_google_credentials())
         doc = client.open_by_url(st.secrets["SPREADSHEET_URL"])
         
-        # 1. Проверяем историю в Client_Progress
         try:
             cp_ws = doc.worksheet("Client_Progress")
             cp_rows = cp_ws.get_all_values()
@@ -350,7 +425,6 @@ def check_oid_history(oid):
         except Exception:
             pass
 
-        # 2. Проверяем вхождение в Results
         try:
             res_ws = doc.worksheet("Results")
             res_rows = res_ws.get_all_values()
@@ -1005,11 +1079,15 @@ if data_to_process:
             with st.spinner("ИИ адаптирует выводы под специфику ниши..."):
                 rewrite_errors_by_ai(niche_label, title, failed_items, expert_engine)
 
+        # Каскадный расчет среднего чека
+        smart_check_val, check_source = determine_smart_check(data, niche_key)
+
         with st.sidebar:
             st.divider()
             st.markdown(f"### 🧮 Экономика: {niche_key}")
+            st.caption(f"Источник чека: *{check_source}*")
             client_leads = st.number_input("Потенциал лидов/мес", value=eco["leads"], step=10)
-            client_check = st.number_input("Средний чек (₽)", value=eco["check"], step=5000)
+            client_check = st.number_input("Средний чек (₽)", value=smart_check_val, step=500)
             client_ltv = st.number_input("Цикл LTV (месяцев)", value=eco["ltv_months"], step=1)
 
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
