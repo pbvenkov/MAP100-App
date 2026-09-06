@@ -55,7 +55,7 @@ except Exception:
     expert_engine = None
 
 def plural_ru(n, forms):
-    """Склонение существительных: ('пациент', 'пациента', 'пациентов')"""
+    """Склонение существительных по числительным: ('пациент', 'пациента', 'пациентов')"""
     n = abs(int(n)) % 100
     n1 = n % 10
     if 10 < n < 20:
@@ -867,6 +867,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     lost_leads = int(client_leads * (dev / 100))
     
     rev_loss_fmt = f"{revenue_loss:,}".replace(',', ' ')
+    weekly_loss = int(revenue_loss / 4)
+    weekly_loss_fmt = f"{weekly_loss:,}".replace(',', ' ')
     client_check_fmt = f"{client_check:,}".replace(',', ' ')
     ltv_loss = int(revenue_loss * max(1, client_ltv))
     ltv_loss_fmt = f"{ltv_loss:,}".replace(',', ' ')
@@ -875,31 +877,44 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     niche_safe = clean_typography(niche)
     comp_safe = clean_typography(competitors_text)
     
+    # Динамическая семантика под все ниши бизнеса
     niche_str = str(niche).lower()
-    if "образ" in niche_str:
-        quality_phrase = "образовательного процесса и квалификации преподавателей"
-        target_forms = ("ученик", "ученика", "учеников")
-        service_example = "подготовку к экзаменам, профильные курсы или занятия"
-    elif "стом" in niche_str or "мед" in niche_str or "бьют" in niche_str:
-        quality_phrase = "медицинских услуг, квалификации врачей и стандартов лечения"
+    if "стом" in niche_str or "зуб" in niche_str:
+        quality_phrase = "стоматологических услуг, квалификации врачей и стандартов лечения"
         target_forms = ("пациент", "пациента", "пациентов")
-        service_example = "имплантацию, протезирование, коронки или брекеты"
-    elif "horeca" in niche_str or "ресторан" in niche_str or "кафе" in niche_str:
-        quality_phrase = "кухни, атмосферы и гостеприимства вашего заведения"
+        service_example = "имплантацию, лечение кариеса, коронки или брекеты"
+    elif "мед" in niche_str or "клиник" in niche_str or "бьют" in niche_str or "салон" in niche_str:
+        quality_phrase = "медицинских услуг, опыта специалистов и уровня заботы о клиентах"
+        target_forms = ("пациент", "пациента", "пациентов")
+        service_example = "прием врачей, комплексные чекапы или косметологические процедуры"
+    elif "horeca" in niche_str or "ресторан" in niche_str or "кафе" in niche_str or "бар" in niche_str:
+        quality_phrase = "кухни, сервиса и гостеприимной атмосферы заведения"
         target_forms = ("гость", "гостя", "гостей")
-        service_example = "банкеты, меню кухни или бронь столиков"
-    elif "авто" in niche_str:
-        quality_phrase = "ремонта, запчастей и опыта мастеров автоцентра"
+        service_example = "банкеты, меню кухни, бизнес-ланчи или бронь столов"
+    elif "авто" in niche_str or "мойка" in niche_str or "сервис" in niche_str:
+        quality_phrase = "ремонта, запчастей и квалификации автомехаников"
         target_forms = ("автовладелец", "автовладельца", "автовладельцев")
-        service_example = "диагностику, ремонт подвески, сход-развал или ТО"
-    elif "b2b" in niche_str or "производ" in niche_str or "опт" in niche_str:
-        quality_phrase = "продукции, надежности поставок и производственных мощностей"
+        service_example = "диагностику, ремонт ходовой, сход-развал или ТО"
+    elif "образ" in niche_str or "школ" in niche_str or "курс" in niche_str:
+        quality_phrase = "учебной программы и преподавательского состава"
+        target_forms = ("ученик", "ученика", "учеников")
+        service_example = "подготовку к экзаменам, профильные курсы или интенсивы"
+    elif "b2b_heavy" in niche_str or "производ" in niche_str or "завод" in niche_str:
+        quality_phrase = "производственных мощностей, стандартов ГОСТ и надежности поставок"
         target_forms = ("заказчик", "заказчика", "заказчиков")
-        service_example = "оптовые поставки, расчет партии или изготовление под заказ"
+        service_example = "серийное производство, изготовление партий или поставку под проект"
+    elif "b2b" in niche_str or "опт" in niche_str:
+        quality_phrase = "надежности поставок, ассортимента склада и условий отгрузки"
+        target_forms = ("партнер", "партнера", "партнеров")
+        service_example = "оптовые закупки, регулярные поставки или спецзаказы"
+    elif "ритейл" in niche_str or "retail" in niche_str or "магазин" in niche_str:
+        quality_phrase = "качества товаров, широты ассортимента и обслуживания"
+        target_forms = ("покупатель", "покупателя", "покупателей")
+        service_example = "наличие нужного ассортимента, цены и условия доставки"
     else:
-        quality_phrase = "товаров, услуг и высокого уровня клиентского сервиса"
+        quality_phrase = "товаров, услуг и стандартов клиентского сервиса"
         target_forms = ("клиент", "клиента", "клиентов")
-        service_example = "ключевой ассортимент услуг и условия сотрудничества"
+        service_example = "ключевой перечень услуг и условия сотрудничества"
 
     audience_declension = plural_ru(lost_leads, target_forms)
 
@@ -918,6 +933,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         "[[SCORE]]": str(round(score, 1)),
         "[[SCORE_COLOR]]": score_color,
         "[[REV_LOSS_FMT]]": rev_loss_fmt,
+        "[[WEEKLY_LOSS_FMT]]": weekly_loss_fmt,
         "[[DEV]]": str(dev),
         "[[LOST_LEADS]]": str(lost_leads),
         "[[AUDIENCE_DECLENSION]]": audience_declension,
