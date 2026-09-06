@@ -54,7 +54,7 @@ except Exception:
     expert_engine = None
 
 def plural_ru(n, forms):
-    """Склонение существительных по числительным: ('пациент', 'пациента', 'пациентов')"""
+    """Склонение существительных: ('пациент', 'пациента', 'пациентов')"""
     n = abs(int(n)) % 100
     n1 = n % 10
     if 10 < n < 20:
@@ -95,34 +95,6 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
             requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
         except Exception:
             pass
-
-def send_telegram_business_alert(title, category, unique_keys):
-    tg_token = st.secrets.get("TG_BOT_TOKEN")
-    tg_admin_id = st.secrets.get("TG_ADMIN_ID")
-    if not (tg_token and tg_admin_id):
-        return
-
-    ai_reasoning = "Потенциально высокий LTV. Требует ручной бизнес-оценки."
-    if expert_engine:
-        try:
-            prompt = f"Кратко (в 2 предложениях) оцени нишу '{category}' (компания '{title}'). Почему B2B-консалтинг окупится в этом сегменте?"
-            response = expert_engine.generate_content(prompt)
-            ai_reasoning = response.text.strip()
-        except Exception:
-            pass
-
-    tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-    text = (
-        f"🚨 *Обнаружена новая ниша!*\n\n"
-        f"🏢 *Компания:* {title}\n"
-        f"🏷 *Категория:* {category}\n"
-        f"🔑 *Ключи:* {', '.join(unique_keys)}\n\n"
-        f"💡 *Оценка ИИ:*\n_{ai_reasoning}_"
-    )
-    try:
-        requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
-    except Exception:
-        pass
 
 # ==========================================
 # 3. БАЗА ДАННЫХ И CRM (GOOGLE SHEETS)
@@ -176,7 +148,46 @@ def fetch_cached_database():
         st.error(f"Ошибка подключения к Google Sheets: {e}")
         return [], [], {}
 
-def save_audit_to_sheets(url, title, niche, total_score, lost_revenue, lpr_data=None):
+def check_oid_history(oid):
+    """Каскадная проверка наличия OID в CRM и истории замеров"""
+    if not oid or oid == "UNKNOWN":
+        return {"exists": False, "source": None, "base_score": None, "last_score": None, "count": 0}
+    
+    try:
+        client = gspread.authorize(get_google_credentials())
+        doc = client.open_by_url(st.secrets["SPREADSHEET_URL"])
+        
+        # 1. Проверяем историю в Client_Progress
+        try:
+            cp_ws = doc.worksheet("Client_Progress")
+            cp_rows = cp_ws.get_all_values()
+            if len(cp_rows) > 1:
+                matches = [r for r in cp_rows[1:] if len(r) > 1 and str(r[1]).strip() == str(oid)]
+                if matches:
+                    base_score = safe_float(matches[0][4])
+                    last_score = safe_float(matches[-1][4])
+                    return {"exists": True, "source": "Client_Progress", "base_score": base_score, "last_score": last_score, "count": len(matches)}
+        except Exception:
+            pass
+
+        # 2. Проверяем вхождение в Results
+        try:
+            res_ws = doc.worksheet("Results")
+            res_rows = res_ws.get_all_values()
+            if len(res_rows) > 1:
+                for r in res_rows[1:]:
+                    if len(r) > 1 and str(r[1]).strip() == str(oid):
+                        base_score = safe_float(r[5])
+                        return {"exists": True, "source": "Results", "base_score": base_score, "last_score": base_score, "count": 1}
+        except Exception:
+            pass
+
+    except Exception:
+        pass
+
+    return {"exists": False, "source": None, "base_score": None, "last_score": None, "count": 0}
+
+def save_lead_to_results(oid, url, title, niche, total_score, lost_revenue, lpr_data=None):
     try:
         client = gspread.authorize(get_google_credentials())
         ws = client.open_by_url(st.secrets["SPREADSHEET_URL"]).worksheet("Results")
@@ -186,26 +197,48 @@ def save_audit_to_sheets(url, title, niche, total_score, lost_revenue, lpr_data=
         lpr_contact = (lpr_data.get("link", "") or lpr_data.get("email", "")) if lpr_data else ""
         
         row = [
-            datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M"),
-            url,
-            title,
-            niche,
-            str(round(total_score, 1)).replace('.', ','),
-            lpr_name,
-            lpr_role,
-            lpr_contact,
-            "",
-            f"{lost_revenue:,}".replace(',', ' ') + " ₽",
-            "1. Новый лид"
+            datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M"), # A: Дата
+            str(oid),                                              # B: OID
+            title,                                                 # C: Компания
+            url,                                                   # D: URL
+            niche,                                                 # E: Ниша
+            str(round(total_score, 1)).replace('.', ','),          # F: PIN Score
+            lpr_name,                                              # G: ЛПР
+            lpr_role,                                              # H: Должность
+            lpr_contact,                                           # I: Личный контакт
+            f"{lost_revenue:,}".replace(',', ' ') + " ₽",          # J: Кассовый разрыв
+            "1. Новый лид"                                         # K: Статус
+        ]
+        ws.append_row(row)
+    except Exception:
+        pass
+
+def save_progress_measurement(oid, title, audit_type, total_score, delta_start, delta_last, lost_revenue, pdf_url, json_url, clean_url):
+    try:
+        client = gspread.authorize(get_google_credentials())
+        ws = client.open_by_url(st.secrets["SPREADSHEET_URL"]).worksheet("Client_Progress")
+        
+        row = [
+            datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M"),  # A: Дата
+            str(oid),                                               # B: OID
+            title,                                                  # C: Компания
+            audit_type,                                             # D: Тип замера
+            str(round(total_score, 1)).replace('.', ','),           # E: PIN Score
+            f"+{round(delta_start, 1)}".replace('.', ',') if delta_start > 0 else str(round(delta_start, 1)).replace('.', ','),
+            f"+{round(delta_last, 1)}".replace('.', ',') if delta_last > 0 else str(round(delta_last, 1)).replace('.', ','),
+            f"{lost_revenue:,}".replace(',', ' ') + " ₽",           # H: Кассовый разрыв
+            pdf_url,                                                # I: Ссылка на PDF
+            json_url,                                               # J: Ссылка на JSON
+            clean_url                                               # K: URL карточки
         ]
         ws.append_row(row)
     except Exception:
         pass
 
 # ==========================================
-# 4. НОРМАЛИЗАЦИЯ И ПАРСИНГ
+# 4. ИДЕНТИФИКАЦИЯ И ПАРСИНГ
 # ==========================================
-def normalize_yandex_url(raw_url):
+def extract_oid_and_url(raw_url):
     url = raw_url.strip()
     
     if "/-/" in url:
@@ -224,19 +257,19 @@ def normalize_yandex_url(raw_url):
     url = re.sub(r'yandex\.(?:com|by|kz|uz)/', 'yandex.ru/', url)
     url = url.replace("yandex.ru/navi/", "yandex.ru/maps/")
     
-    oid_match = re.search(r'oid(?:%3D|=)(\d+)', url)
+    oid = "UNKNOWN"
+    oid_match = re.search(r'(?:org/|oid(?:%3D|=))(\d+)', url)
     if oid_match:
-        return f"https://yandex.ru/maps/org/{oid_match.group(1)}/"
+        oid = oid_match.group(1)
+        clean_url = f"https://yandex.ru/maps/org/{oid}/"
+    else:
+        if "?" in url:
+            url = url.split("?")[0]
+        clean_url = re.sub(r'/(reviews|gallery|features|menu|goods|prices|posts)/?$', '', url).rstrip('/') + '/'
 
-    if "?" in url:
-        url = url.split("?")[0]
-        
-    url = re.sub(r'/(reviews|gallery|features|menu|goods|prices|posts)/?$', '', url)
-    return url.rstrip('/') + '/'
+    return oid, clean_url
 
-def fetch_apify_data(yandex_url):
-    cleaned_url = normalize_yandex_url(yandex_url)
-    
+def fetch_apify_data(cleaned_url):
     payload = {
         "startUrls": [{"url": cleaned_url}],
         "enrichBusinessData": True,
@@ -360,8 +393,8 @@ def rewrite_errors_by_ai(niche_label, company_name, failed_rules, expert_engine)
         return
     
     payload_text = "".join([f"ID: {r['Код']} | Ошибка: {r['Критерий']} | Текст: {r['Обоснование']}\n" for r in failed_rules[:15]])
-    prompt = f"""Ты — B2B-эксперт по локальному маркетингу. Ниша: {niche_label}. Компания: {company_name}.
-Перепиши обоснование каждой ошибки под боли этой ниши простым языком руководителя без технического жаргона. Опирайся на потери клиентов и выручки.
+    prompt = f"""Ты — эксперт по локальному маркетингу. Ниша: {niche_label}. Компания: {company_name}.
+Перепиши обоснование каждой ошибки под боли этой ниши простым языком руководителя без технического жаргона (без XML, LSI, B2B, контрактов). Опирайся на потери клиентов и выручки.
 Ошибки:
 {payload_text}
 Верни строго JSON объект: {{"Код_ошибки": "Новый текст обоснования"}}"""
@@ -386,11 +419,6 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     url = str(raw_url).lower()
     
     cat_list = data.get('categories') or []
-    cat_name = ""
-    if isinstance(cat_list, list) and cat_list:
-        first_cat = cat_list[0]
-        cat_name = first_cat.get('name', str(first_cat)) if isinstance(first_cat, dict) else str(first_cat)
-    
     if data.get('isVerifiedOwner') or len(title) > 2:
         scores['PROF-01.1'] = True
     if cat_list:
@@ -428,11 +456,6 @@ def calculate_hard_facts(data, niche_key="OTHER"):
             if features.get(k):
                 scores['PROF-08.2'] = True
                 break
-        if niche_key in ["OTHER", "SERVICES"]:
-            std_keys = {'payment_method', 'wi_fi', 'toilet', 'parking', 'street_entrance', 'parking_disabled', 'promotions', 'wheelchair_access'}
-            client_unique_keys = [k for k in features.keys() if k not in std_keys]
-            if len(client_unique_keys) >= 2:
-                send_telegram_business_alert(title, cat_name, client_unique_keys[:5])
     
     if len(desc) > 1200:
         scores['PROF-09.1'] = True
@@ -629,7 +652,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         quality_phrase = "медицинских услуг, квалификации врачей и стандартов лечения"
         target_forms = ("пациент", "пациента", "пациентов")
         service_example = "имплантацию, протезирование, коронки или брекеты"
-    elif "horeca" in niche_str or "ресторан" in niche_str or "кафе" in niche_str:
+    elif "horeca" in niche_str or "ресторан" in niche_str or "каfe" in niche_str:
         quality_phrase = "кухни, атмосферы и гостеприимства вашего заведения"
         target_forms = ("гость", "гостя", "гостей")
         service_example = "банкеты, меню кухни или бронь столиков"
@@ -703,6 +726,7 @@ with st.sidebar:
     st.write("✅ База данных подключена.")
     st.divider()
     sender_name = st.text_input("Ваше имя (для подписи аутрича):", value="Павел")
+    audit_stage = st.selectbox("Тип замера:", ["0. Базовый (Аудит)", "1. Контроль (Этап 1)", "2. Финал (Этап 2)", "3. Мониторинг"])
 
 st.title(f"📍 {PROJECT_NAME}: {EXPERT_TITLE}")
 
@@ -714,10 +738,12 @@ with tab_link:
         if "yandex" not in url_input.lower():
             st.error("❌ Введите корректную ссылку на Яндекс Карты.")
         else:
-            with st.spinner("Сбор свежих данных через Apify..."):
+            with st.spinner("Извлечение OID и сбор свежих данных..."):
                 try:
-                    st.session_state["data_to_process"] = fetch_apify_data(url_input)
-                    st.session_state["source_url"] = url_input
+                    detected_oid, clean_yandex_url = extract_oid_and_url(url_input)
+                    st.session_state["data_to_process"] = fetch_apify_data(clean_yandex_url)
+                    st.session_state["source_url"] = clean_yandex_url
+                    st.session_state["current_oid"] = detected_oid
                 except Exception as e:
                     send_telegram_alert(str(e), url_input)
                     st.error(f"⚠️ Ошибка парсинга: {str(e)}")
@@ -728,12 +754,16 @@ with tab_file:
         try:
             parsed_data = json.load(uploaded_file)
             st.session_state["data_to_process"] = parsed_data
-            st.session_state["source_url"] = parsed_data.get('url') or "Файл JSON"
+            raw_u = parsed_data.get('url') or "Файл JSON"
+            detected_oid, clean_yandex_url = extract_oid_and_url(raw_u)
+            st.session_state["source_url"] = clean_yandex_url
+            st.session_state["current_oid"] = detected_oid
         except Exception as e:
             st.error(f"Ошибка чтения JSON: {e}")
 
 data_to_process = st.session_state.get("data_to_process")
 source_url = st.session_state.get("source_url", "")
+current_oid = st.session_state.get("current_oid", "UNKNOWN")
 
 # ==========================================
 # 8. РАСЧЕТ И ОТОБРАЖЕНИЕ
@@ -775,7 +805,6 @@ if data_to_process:
             group = str(r.get('Группа метрик', 'Прочее')).strip()
             
             reason_success = str(r.get('Обоснование_УСПЕХА', '')).strip() or f"Параметр «{name}» настроен верно."
-            
             niche_error_col = f"Обоснование_ОШИБКИ_{niche_key}"
             reason_error = str(r.get(niche_error_col, '')).strip()
             if not reason_error or reason_error.lower() == 'nan':
@@ -819,21 +848,22 @@ if data_to_process:
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
         lost_revenue = int(client_leads * lost_percentage * client_check)
 
-        sheet_flag_key = f"logged_sheets_{title}"
-        if sheet_flag_key not in st.session_state:
-            save_audit_to_sheets(source_url, title, niche_key, final_total_score, lost_revenue, lpr_data)
-            st.session_state[sheet_flag_key] = True
-        
+        # Каскадная проверка по OID
+        history_info = check_oid_history(current_oid)
+
         st.divider()
         col1, col2 = st.columns([2, 1])
         with col1:
             st.subheader(f"🏢 {title}")
-            st.caption(f"🧠 Сегмент: **{niche_label}** | 📍 Фактических отзывов: {client_reviews}")
+            st.caption(f"🔑 Яндекс OID: **{current_oid}** | 🧠 Сегмент: **{niche_label}**")
             
+            if history_info["exists"]:
+                st.info(f"🔄 **Карточка уже в базе ({history_info['source']}).** Базовый балл: {history_info['base_score']} | Замеров: {history_info['count']}")
+            else:
+                st.success("✨ **Новая организация.** Будет зафиксирована в CRM Results.")
+                
             if lpr_data and lpr_data.get('status') == 'found':
                 st.success(f"🕵️‍♂️ **Найден ЛПР:** {lpr_data.get('name')} ({lpr_data.get('role')})\n\n🔗 {lpr_data.get('link')}")
-            elif lpr_data and lpr_data.get('status') == 'hidden':
-                st.warning("⚠️ **Группа ВК найдена, но блок «Контакты» скрыт.**")
             
         with col2:
             delta = "Отличный результат" if final_total_score >= 80 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
@@ -841,28 +871,21 @@ if data_to_process:
 
         st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно.".replace(',', ' '))
         
-        with st.expander("🛠 Сохранить сырой JSON карточки"):
-            json_string = json.dumps(data, ensure_ascii=False, indent=4)
-            st.download_button(label="💾 Скачать JSON", data=json_string, file_name=f"{title.replace(' ', '_')}.json", mime="application/json")
-
-        st.divider()
-        st.markdown("### 📥 Выгрузка отчетов")
-        
         pdf_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check, client_ltv, competitors_text)
         
         if pdf_bytes:
             st.download_button(
-                label="💎 Скачать Аналитический Отчет (PDF)",
+                label="💎 Скачать Аналитический Отчет (PDF, 4 стр.)",
                 data=pdf_bytes,
-                file_name=f"PIN100_Report_{title.replace(' ', '_')}.pdf",
+                file_name=f"{current_oid}_Report.pdf",
                 mime="application/pdf",
                 type="primary",
                 use_container_width=True
             )
 
+            # Формирование письма
             st.divider()
             st.markdown("### ✉️ Персональное письмо первого касания (Icebreaker)")
-            st.caption("Отправляется в WhatsApp или на Email без вложений. Задача — получить согласие на аудит.")
             
             comp_1 = competitors_list[0] if len(competitors_list) > 0 else ""
             comp_2 = competitors_list[1] if len(competitors_list) > 1 else ""
@@ -884,35 +907,45 @@ if data_to_process:
             icebreaker_text = generate_icebreaker_text(template_payload, templates_data)
             st.code(icebreaker_text, language="markdown")
             
-            upload_flag_key = f"uploaded_{title}"
-            links_key = f"links_{title}"
+            # Сохранение на Диск и роутинг в Таблицу
+            session_save_key = f"saved_{current_oid}_{round(final_total_score, 1)}"
+            if session_save_key not in st.session_state:
+                st.session_state[session_save_key] = False
 
-            if upload_flag_key not in st.session_state:
-                st.session_state[upload_flag_key] = False
-
-            if not st.session_state[upload_flag_key]:
-                with st.spinner("☁️ Автоматическое сохранение файлов на Google Диск..."):
+            if not st.session_state[session_save_key]:
+                with st.spinner("☁️ Сохранение артефактов на Google Диск и фиксация в БД..."):
                     try:
                         if not DriveManager:
-                            st.warning("Файл drive_manager.py не обнаружен. Сохранение на Диск пропущено.")
+                            st.warning("Файл drive_manager.py не обнаружен. Сохранение пропущено.")
                         else:
                             dm = DriveManager()
-                            safe_name = title.replace(" ", "_").replace('"', '').replace("'", "")
+                            date_str = datetime.now().strftime("%Y-%m-%d")
                             
-                            pdf_url = dm.upload_file(f"{safe_name}_Аудит_PIN100.pdf", pdf_bytes, "application/pdf", dm.pdf_root_id)
-                            json_url = dm.upload_file(f"{safe_name}.json", json.dumps(data, ensure_ascii=False, indent=2), "application/json", dm.json_root_id)
-                            txt_url = dm.upload_file(f"{safe_name}_Icebreaker.txt", icebreaker_text, "text/plain", dm.letters_root_id)
+                            pdf_url = dm.upload_file(f"{current_oid}_{date_str}_audit.pdf", pdf_bytes, "application/pdf", dm.pdf_root_id)
+                            json_url = dm.upload_file(f"{current_oid}_{date_str}_audit.json", json.dumps(data, ensure_ascii=False, indent=2), "application/json", dm.json_root_id)
+                            txt_url = dm.upload_file(f"{current_oid}_{date_str}_icebreaker.txt", icebreaker_text, "text/plain", dm.letters_root_id)
                             
-                            links_display = []
-                            if pdf_url: links_display.append(f"🔗 [Открыть PDF на Диске]({pdf_url})")
-                            if txt_url: links_display.append(f"🔗 [Текст письма на Диске]({txt_url})")
-                            if json_url: links_display.append(f"🔗 [JSON архив]({json_url})")
-                            
-                            st.session_state[links_key] = links_display
-                            st.session_state[upload_flag_key] = True
-                    except Exception as e:
-                        st.error(f"Ошибка сохранения на Google Диск: {e}")
+                            # Роутинг в Google Sheets
+                            if not history_info["exists"]:
+                                save_lead_to_results(current_oid, source_url, title, niche_key, final_total_score, lost_revenue, lpr_data)
+                            else:
+                                b_sc = history_info["base_score"] or final_total_score
+                                l_sc = history_info["last_score"] or final_total_score
+                                d_start = final_total_score - b_sc
+                                d_last = final_total_score - l_sc
+                                save_progress_measurement(current_oid, title, audit_stage, final_total_score, d_start, d_last, lost_revenue, pdf_url, json_url, source_url)
 
-            if st.session_state.get(upload_flag_key):
-                st.success("✅ Сделка автоматически зафиксирована в облаке!")
-                st.markdown(" | ".join(st.session_state.get(links_key, [])))
+                            st.session_state[f"links_{session_save_key}"] = [
+                                f"🔗 [PDF на Диске]({pdf_url})" if pdf_url else "",
+                                f"🔗 [Письмо на Диске]({txt_url})" if txt_url else "",
+                                f"🔗 [Снапшот JSON]({json_url})" if json_url else ""
+                            ]
+                            st.session_state[session_save_key] = True
+                    except Exception as e:
+                        st.error(f"Ошибка сохранения: {e}")
+
+            if st.session_state.get(session_save_key):
+                st.success("✅ Замер синхронизирован с Google Диском и Google Таблицей!")
+                active_links = [l for l in st.session_state.get(f"links_{session_save_key}", []) if l]
+                if active_links:
+                    st.markdown(" | ".join(active_links))
