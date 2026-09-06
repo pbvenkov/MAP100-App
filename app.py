@@ -55,7 +55,7 @@ except Exception:
     expert_engine = None
 
 def plural_ru(n, forms):
-    """Склонение существительных по числительным: ('пациент', 'пациента', 'пациентов')"""
+    """Склонение существительных: ('пациент', 'пациента', 'пациентов')"""
     n = abs(int(n)) % 100
     n1 = n % 10
     if 10 < n < 20:
@@ -292,6 +292,20 @@ NICHE_ECONOMICS = {
     "OTHER": {"leads": 50, "check": 3000, "label": "Прочее", "ltv_months": 6}
 }
 
+# Несгораемый нижний порог чека первого визита для каждой ниши
+NICHE_MIN_FLOOR = {
+    "DENTISTRY": 4500,       # Стоматология (первичная пломба / чистка)
+    "AUTO": 3000,            # Автосервис (базовая диагностика / ТО)
+    "BEAUTY_MEDICAL": 2500,  # Медицина / косметология (первичный прием)
+    "EDUCATION": 8000,       # Курсы / обучение (месячный абонемент)
+    "B2B": 15000,            # Легкий B2B / опт (минимальный тестовый заказ)
+    "B2B_HEAVY": 100000,     # Производство / заводы (минимальная партия)
+    "HORECA": 900,           # Рестораны / кафе (средний чек на гостя с напитком)
+    "RETAIL": 900,           # Розница
+    "SERVICES": 2000,        # Бытовые услуги B2C
+    "OTHER": 1500            # Прочее
+}
+
 GEO_TIERS = {
     "TIER_1": {
         "cities": ["москва", "санкт-петербург", "петербург", "зеленоград", "сочи"],
@@ -327,33 +341,53 @@ def _calculate_geo_check(data: dict, niche_key: str) -> tuple[int, str]:
 
 def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
     """
-    Каскадный расчет чека:
+    Каскадный расчет чека с жестким отсечением дешевых расходников через NICHE_MIN_FLOOR:
     1. B2B / B2B_HEAVY -> строго гео-матрица
-    2. HORECA -> приоритет полю averageBill Яндекса
-    3. B2C услуги -> 35-й перцентиль прайс-листа (отсечение аномалий)
-    4. Fallback -> гео-матрица (База ниши * Коэффициент города)
+    2. HORECA -> averageBill Яндекса (не ниже floor)
+    3. B2C услуги -> 35-й перцентиль прайс-листа (только полноценные услуги)
+    4. Fallback -> гео-матрица
     """
-    if niche_key in ["B2B", "B2B_HEAVY"]:
-        return _calculate_geo_check(data, niche_key)
+    address = str(data.get("address") or "").lower()
+    geo_mult = 1.0
+    if any(city in address for city in GEO_TIERS["TIER_1"]["cities"]):
+        geo_mult = GEO_TIERS["TIER_1"]["multiplier"]
+    elif any(city in address for city in GEO_TIERS["TIER_2"]["cities"]):
+        geo_mult = GEO_TIERS["TIER_2"]["multiplier"]
 
+    base_floor = NICHE_MIN_FLOOR.get(niche_key, 1500)
+    floor_val = int(round(base_floor * geo_mult / 100) * 100)
+
+    # 1. B2B сегмент сразу рассчитываем по гео-матрице
+    if niche_key in ["B2B", "B2B_HEAVY"]:
+        val, src = _calculate_geo_check(data, niche_key)
+        return max(val, floor_val), src
+
+    # 2. HORECA: атрибут averageBill Яндекса
     raw_bill = data.get("averageBill") or data.get("priceCategory") or ""
     bill_digits = re.findall(r'\d+', str(raw_bill).replace(' ', ''))
     if bill_digits:
         nums = [int(n) for n in bill_digits if int(n) >= 300]
         if nums:
-            return int(sum(nums) / len(nums)), "Средний счёт из профиля Яндекса"
+            avg_bill = int(sum(nums) / len(nums))
+            final_val = max(avg_bill, floor_val)
+            return final_val, "Средний счёт из профиля Яндекса"
 
+    # 3. Анализ прайс-листа карточки
     menu_data = data.get('menu')
     m_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
     c_items = data.get('productCatalog') or []
     all_items = [p for p in (m_items + c_items) if isinstance(p, dict)]
 
     extracted_prices = []
+    lower_price_limit = max(400, int(base_floor * 0.5))
+
     for item in all_items:
         raw_price = str(item.get("price") or item.get("cost") or "")
         clean_p = re.sub(r'[^\d]', '', raw_price)
-        if clean_p and 400 <= int(clean_p) <= 80000:
-            extracted_prices.append(int(clean_p))
+        if clean_p:
+            p_val = int(clean_p)
+            if lower_price_limit <= p_val <= 90000:
+                extracted_prices.append(p_val)
 
     if len(extracted_prices) >= 5:
         extracted_prices.sort()
@@ -361,9 +395,15 @@ def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
         smart_price = round(extracted_prices[idx] / 100) * 100
         multiplier = 1.8 if niche_key == "HORECA" else 1.0
         final_val = int(round(smart_price * multiplier / 100) * 100)
+        
+        if final_val < floor_val:
+            return floor_val, f"Базовый порог ниши ({floor_val:,} ₽)".replace(',', ' ')
+            
         return final_val, f"Прайс-лист карточки ({len(extracted_prices)} позиций)"
 
-    return _calculate_geo_check(data, niche_key)
+    # 4. Резервный расчет по гео-матрице
+    val, src = _calculate_geo_check(data, niche_key)
+    return max(val, floor_val), src
 
 def get_google_credentials():
     creds_raw = st.secrets.get("GCP_CREDENTIALS", {})
@@ -877,7 +917,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     niche_safe = clean_typography(niche)
     comp_safe = clean_typography(competitors_text)
     
-    # Динамическая семантика под все ниши бизнеса
     niche_str = str(niche).lower()
     if "стом" in niche_str or "зуб" in niche_str:
         quality_phrase = "стоматологических услуг, квалификации врачей и стандартов лечения"
@@ -1033,7 +1072,6 @@ if data_to_process:
                     st.session_state["current_oid"] = current_oid
                     break
 
-    # Имя компании для безопасного именования файлов
     safe_title = re.sub(r'[^\w\-]', '_', title).strip('_')
     if not safe_title:
         safe_title = "Company"
@@ -1112,7 +1150,7 @@ if data_to_process:
             with st.spinner("ИИ адаптирует выводы под специфику ниши..."):
                 rewrite_errors_by_ai(niche_label, title, failed_items, expert_engine)
 
-        # Каскадный расчет среднего чека
+        # Каскадный расчет чека с учетом несгораемого пола
         smart_check_val, check_source = determine_smart_check(data, niche_key)
 
         with st.sidebar:
@@ -1126,7 +1164,6 @@ if data_to_process:
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
         lost_revenue = int(client_leads * lost_percentage * client_check)
 
-        # Каскадная проверка по OID в Google Sheets
         history_info = check_oid_history(current_oid)
 
         st.divider()
@@ -1189,7 +1226,7 @@ if data_to_process:
             icebreaker_text = generate_icebreaker_text(template_payload, templates_data)
             st.code(icebreaker_text, language="markdown")
             
-            # Именование для Google Диска: {Компания}_{OID}_{Дата}_{Тип}
+            # Именование файлов для Google Диска: {Компания}_{OID}_{Дата}_{Тип}
             date_str = datetime.now().strftime("%Y-%m-%d")
             file_prefix = f"{safe_title}_{current_oid}" if current_oid != "UNKNOWN" else safe_title
 
