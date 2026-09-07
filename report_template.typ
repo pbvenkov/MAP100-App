@@ -6,7 +6,7 @@
     #set text(size: 8pt, fill: rgb("94A3B8"))
     PIN100 Analytics | Независимый аудит поисковой гео-выдачи
     #h(1fr)
-    Стр. #counter(page).display("1")
+    Стр. #context counter(page).display("1")
   ]
 )
 
