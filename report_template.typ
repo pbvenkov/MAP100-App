@@ -1,7 +1,7 @@
 #set document(title: "Аналитическое Заключение - [[TITLE]]", author: "PIN100 Analytics")
 #set page(
   paper: "a4",
-  margin: (x: 20mm, y: 20mm),
+  margin: (x: 20mm, y: 18mm),
   footer: [
     #set text(size: 8pt, fill: rgb("94A3B8"))
     PIN100 Analytics | Независимый аудит поисковой гео-выдачи
@@ -10,14 +10,14 @@
   ]
 )
 
-#set text(font: ("Inter", "Arial", "sans-serif"), size: 10pt, fill: rgb("334155"), lang: "ru")
-#set par(leading: 0.58em)
+#set text(font: ("Inter", "Arial", "sans-serif"), size: 9.5pt, fill: rgb("334155"), lang: "ru")
+#set par(leading: 0.55em)
 #show heading: set text(font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))
 
 // ==========================================
 // СТР. 1: ОБЛОЖКА И МЕТОДОЛОГИЯ
 // ==========================================
-#v(90pt)
+#v(85pt)
 #text(12pt, fill: rgb("8B7355"), weight: "bold", tracking: 2pt)[PIN100 ANALYTICS]
 #v(8pt)
 #text(24pt, weight: "bold", font: ("Playfair Display", "Georgia", "serif"), fill: rgb("0A1128"))[Аналитическое Заключение:\ Оцифровка потерь первичного потока]
@@ -42,49 +42,53 @@
 // СТР. 2: РЕЗЮМЕ ДЛЯ РУКОВОДИТЕЛЯ
 // ==========================================
 #heading(level: 2)[Резюме для руководителя]
-#v(6pt)
+#v(4pt)
 
 #grid(
   columns: (1fr, 1fr),
-  gutter: 14pt,
+  gutter: 12pt,
   [
-    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 11pt)[
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 9pt)[
       #text(8pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ВИДИМОСТЬ КАРТОЧКИ В ПОИСКЕ]
       \
-      #v(4pt)
-      #text(22pt, weight: "bold", fill: rgb("[[SCORE_COLOR]]"))[[[SCORE]] / 100]
+      #v(3pt)
+      #text(21pt, weight: "bold", fill: rgb("[[SCORE_COLOR]]"))[[[SCORE]] / 100]
       #v(2pt)
       #text(8pt, fill: rgb("94A3B8"), style: "italic")[Оценка по 79 факторам ранжирования]
     ]
   ],
   [
-    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 11pt)[
+    #rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 9pt)[
       #text(8pt, fill: rgb("64748B"), weight: "bold", tracking: 0.5pt)[ПРЯМЫЕ ПОТЕРИ ВЫРУЧКИ]
       \
-      #v(4pt)
-      #text(20pt, weight: "bold", fill: rgb("9F1239"))[- [[REV_LOSS_FMT]]~₽/мес]
+      #v(3pt)
+      #text(19pt, weight: "bold", fill: rgb("9F1239"))[- [[REV_LOSS_FMT]]~₽/мес]
       #v(2pt)
       #text(8pt, fill: rgb("94A3B8"), style: "italic")[Консервативная оценка первого визита]
     ]
   ]
 )
 
-#v(6pt)
-#rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
-  #text(10pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Критический вывод анализа:]
-  #v(3pt)
-  #text(9pt, fill: rgb("334155"))[Прямо сейчас профиль скрыт от *[[DEV]]% целевых клиентов* вашего района. Из-за технических недочетов в оформлении карточки вы каждый месяц отдаете конкурентам локации около *[[LOST_LEADS]] [[AUDIENCE_DECLENSION]]*.]
+#v(4pt)
+#rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 9pt)[
+  #text(9.5pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[Критический вывод анализа:]
+  #v(2pt)
+  #text(8.5pt, fill: rgb("334155"))[
+    Прямо сейчас профиль скрыт от *[[DEV]]% целевых клиентов* вашего района. Из-за технических недочетов в оформлении карточки вы каждый месяц отдаете конкурентам локации около *[[LOST_LEADS]] [[AUDIENCE_DECLENSION]]*[cite: 1]. \
+    #v(2pt)
+    *Парадокс репутации:* Высокий рейтинг подтверждает доверие постоянных клиентов[cite: 3]. Но по общим поисковым запросам алгоритмы Карт скрывают карточку от новых жителей района с острой потребностью, перенаправляя их к соседям[cite: 1, 3].
+  ]
 ]
 
-#v(6pt)
-#text(9.5pt, weight: "bold", fill: rgb("0A1128"))[Прозрачный расчет потерь (юнит-экономика локации):]
-#v(3pt)
+#v(4pt)
+#text(9pt, weight: "bold", fill: rgb("0A1128"))[Прозрачный расчет потерь (юнит-экономика локации):]
+#v(2pt)
 
 #table(
   columns: (1.3fr, 1fr, 1.4fr),
   stroke: 0.5pt + rgb("E2E8F0"),
   fill: (col, row) => if row == 0 { rgb("F1F5F9") } else if row == 5 { rgb("FFF1F2") } else { none },
-  inset: 6pt,
+  inset: 5.5pt,
   align: (left + horizon, center + horizon, left + horizon),
   [#text(8pt, weight: "bold")[Параметр расчета]], [#text(8pt, weight: "bold")[Значение]], [#text(8pt, weight: "bold")[Как считаем]],
   [#text(8.5pt)[Пул спроса лидеров района]], [#text(8.5pt)[~[[CLIENT_LEADS]] обр./мес]], [#text(8pt, fill: rgb("64748B"))[Поток обращений в ТОП-3 клиники локации]],
@@ -96,13 +100,13 @@
 
 #v(2pt)
 #text(7.5pt, fill: rgb("64748B"), style: "italic")[
-  \* Расчет выполнен строго по первому чеку. С учетом повторных визитов и прикрепления клиентов ([[CLIENT_LTV]]~мес.) совокупный отток выручки в пользу прямых конкурентов района составляет до *[[LTV_LOSS_FMT]]~₽ в год*.
+  \* Расчет выполнен строго по первому чеку. С учетом повторных визитов и прикрепления клиентов ([[CLIENT_LTV]]~мес.) совокупный отток выручки в пользу прямых конкурентов района составляет до *[[LTV_LOSS_FMT]]~₽ в год*[cite: 1].
 ]
 
-#v(6pt)
-#rect(width: 100%, fill: rgb("EFF6FF"), stroke: 0.5pt + rgb("BFDBFE"), radius: 3pt, inset: 8pt)[
+#v(4pt)
+#rect(width: 100%, fill: rgb("EFF6FF"), stroke: 0.5pt + rgb("BFDBFE"), radius: 3pt, inset: 7pt)[
   #text(8pt, fill: rgb("1E40AF"))[
-    *Важное примечание:* Оценка #strong[[[SCORE]] / 100] фиксирует исключительно техническую видимость профиля в поиске Яндекса, а не реальное высокое качество [[QUALITY_PHRASE]]. Это программные особенности поисковой выдачи, которые не зависят от работы администраторов.
+    *Важное примечание:* Оценка #strong[[[SCORE]] / 100] фиксирует исключительно техническую видимость профиля в поиске Яндекса, а не реальное высокое качество [[QUALITY_PHRASE]][cite: 1]. Это программные особенности поисковой выдачи, которые не зависят от работы администраторов.
   ]
 ]
 
@@ -113,35 +117,35 @@
 // ==========================================
 #heading(level: 2)[Три главные причины потери пациентов]
 #v(4pt)
-#text(9pt, fill: rgb("475569"))[Почему потенциальные клиенты из вашего района уходят к конкурентам[[COMP_SAFE]]:]
-#v(8pt)
-
-#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 11pt)[
-  #text(10.5pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[1. В поиске не видны ключевые услуги и понятные цены]
-  #v(4pt)
-  #text(8.5pt, fill: rgb("475569"))[
-    *Как видит пациент:* Когда житель района ищет конкретную помощь (например, *[[SERVICE_EXAMPLE]]*), Яндекс проверяет наличие этих позиций в прейскуранте карточки. \
-    *Что происходит в кассе:* Если в профиле нет структурированного списка процедур с ценами и фото, поисковая система исключает организацию из топа выдачи, а пациент сразу уходит в клиники с прозрачным прайсом.
-  ]
-]
+#text(9pt, fill: rgb("475569"))[Почему потенциальные клиенты из вашего района уходят к конкурентам[[COMP_SAFE]][cite: 1]:]
 #v(7pt)
 
-#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 11pt)[
-  #text(10.5pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[2. Барьер при попытке связаться или записаться]
-  #v(4pt)
+#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
+  #text(10pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[1. Разрыв между брендовыми и категорийными запросами]
+  #v(3pt)
+  #text(8.5pt, fill: rgb("475569"))[
+    *Как видит пациент:* По прямому названию («[[TITLE]]») компанию найдут всегда. Однако первичные пациенты ищут не бренд, а решение проблемы: *[[SERVICE_EXAMPLE]]*[cite: 1, 3]. \
+    *Что происходит в кассе:* Если в карточке нет структурированного прейскуранта с точными ценами, алгоритм исключает профиль из целевой выдачи и отдает платежеспособных клиентов карточкам с открытым прайсом[cite: 1].
+  ]
+]
+#v(6pt)
+
+#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
+  #text(10pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[2. Барьер при попытке связаться или записаться]
+  #v(3pt)
   #text(8.5pt, fill: rgb("475569"))[
     *Как видит пациент:* Более 60% современных пользователей на картах предпочитают мгновенную онлайн-запись или связь через мессенджер без звонка администратору вслепую. \
-    *Что происходит в кассе:* Если кнопки быстрой записи нет, большинство людей закрывают карточку, не совершая звонка, и выбирают организацию, куда записаться можно в 1–2 клика.
+    *Что происходит в кассе:* Если кнопки быстрой записи нет, большинство людей закрывают карточку, не совершая звонка, и выбирают организацию, куда записаться можно в 1–2 клика[cite: 1].
   ]
 ]
-#v(7pt)
+#v(6pt)
 
-#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 11pt)[
-  #text(10.5pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[3. Профиль выглядит «неактивным» для поисковых систем]
-  #v(4pt)
+#rect(width: 100%, fill: rgb("FFFFFF"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 10pt)[
+  #text(10pt, font: ("Playfair Display", "Georgia", "serif"), weight: "bold", fill: rgb("0A1128"))[3. Профиль выглядит «неактивным» для поисковых систем]
+  #v(3pt)
   #text(8.5pt, fill: rgb("475569"))[
-    *Как видит поисковик:* Алгоритмы оценивают регулярность обновления карточки и обязательное наличие официальных ответов руководства на отзывы гостей. \
-    *Что происходит в кассе:* Отсутствие ответов на отклики и редкое обновление профиля сигнализируют системе о низкой активности. Яндекс намеренно опускает такую организацию в поиске, продвигая активных соседей.
+    *Как видит поисковик:* Алгоритмы оценивают регулярность обновления карточки и обязательное наличие официальных ответов руководства на отзывы гостей[cite: 1]. \
+    *Что происходит в кассе:* Отсутствие ответов на отклики и редкое обновление профиля сигнализируют системе о низкой активности[cite: 1]. Яндекс намеренно опускает такую организацию в поиске, продвигая активных соседей[cite: 1].
   ]
 ]
 
@@ -152,8 +156,8 @@
 // ==========================================
 #heading(level: 2)[План устранения кассового разрыва]
 #v(4pt)
-#text(9pt, fill: rgb("475569"))[Пошаговый план возврата районного потока обращений в кассу организации:]
-#v(8pt)
+#text(9pt, fill: rgb("475569"))[Пошаговый план возврата районного потока обращений в кассу организации[cite: 1]:]
+#v(7pt)
 
 #grid(
   columns: (1fr, 1.15fr, 1fr),
@@ -187,34 +191,34 @@
   ]
 )
 
-#v(8pt)
-#rect(width: 100%, fill: rgb("FFF1F2"), stroke: 0.5pt + rgb("FECDD3"), radius: 4pt, inset: 9pt)[
+#v(7pt)
+#rect(width: 100%, fill: rgb("FFF1F2"), stroke: 0.5pt + rgb("FECDD3"), radius: 4pt, inset: 8.5pt)[
   #text(8.5pt, fill: rgb("9F1239"))[
     *Цена бездействия (Cost of Inaction):* Каждая неделя промедления с исправлением технических недочетов обходится организации примерно в *[[WEEKLY_LOSS_FMT]]~₽*, которые безвозвратно переходят к вашим прямым конкурентам.
   ]
 ]
 
-#v(6pt)
-#rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 9pt)[
+#v(5pt)
+#rect(width: 100%, fill: rgb("F8FAFC"), stroke: 0.5pt + rgb("CBD5E1"), radius: 4pt, inset: 8.5pt)[
   #text(8pt, fill: rgb("334155"))[
     *Экономика окупаемости:* При текущих потерях порядка *[[REV_LOSS_FMT]]~₽/мес*, привлечение даже 4–6 дополнительных первичных клиентов полностью окупает любые сервисные расходы на настройку уже в первые 30 дней.
   ]
 ]
 
-#v(8pt)
+#v(7pt)
 #rect(width: 100%, fill: rgb("0A1128"), radius: 4pt, inset: 11pt)[
   #grid(
     columns: (2.3fr, 1fr),
     gutter: 10pt,
     [
-      #text(9.5pt, weight: "bold", fill: rgb("FFFFFF"))[Получить пошаговый план исправления (ТЗ)] \
+      #text(9.5pt, weight: "bold", fill: rgb("FFFFFF"))[Получить пошаговый план исправления (ТЗ)][cite: 1] \
       #v(2pt)
-      #text(8pt, fill: rgb("CBD5E1"))[Напишите в Telegram — пришлем короткое 3-минутное персональное видео по вашей карточке с разбором скрытых технических ошибок профиля.]
+      #text(8pt, fill: rgb("CBD5E1"))[Напишите в Telegram — пришлем короткое 3-минутное персональное видео по вашей карточке с разбором скрытых технических ошибок профиля[cite: 1].]
     ],
     [
       #align(center + horizon)[
         #rect(fill: rgb("1E293B"), stroke: 0.5pt + rgb("8B7355"), radius: 3pt, inset: 7pt)[
-          #text(8pt, weight: "bold", fill: rgb("F1F5F9"))[Telegram:\ #text(fill: rgb("D97706"))[\@paulvenkov]]
+          #text(8pt, weight: "bold", fill: rgb("F1F5F9"))[Telegram:\ #text(fill: rgb("D97706"))[\@paulvenkov]][cite: 1]
         ]
       ]
     ]
