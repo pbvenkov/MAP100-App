@@ -293,16 +293,16 @@ NICHE_ECONOMICS = {
 }
 
 NICHE_MIN_FLOOR = {
-    "DENTISTRY": 4500,       # Первичная пломба / чистка
-    "AUTO": 3000,            # Базовая диагностика / мелкое ТО
-    "BEAUTY_MEDICAL": 2500,  # Первичный прием врача / косметолога
-    "EDUCATION": 8000,       # Месячный абонемент / базовый курс
-    "B2B": 15000,            # Пробный минимальный оптовый заказ
-    "B2B_HEAVY": 100000,     # Минимальная партия производства
-    "HORECA": 900,           # Чек гостя с напитком
-    "RETAIL": 900,           # Розница
-    "SERVICES": 2000,        # Бытовые услуги
-    "OTHER": 1500            # Общий порог
+    "DENTISTRY": 4500,
+    "AUTO": 3000,
+    "BEAUTY_MEDICAL": 2500,
+    "EDUCATION": 8000,
+    "B2B": 15000,
+    "B2B_HEAVY": 100000,
+    "HORECA": 900,
+    "RETAIL": 900,
+    "SERVICES": 2000,
+    "OTHER": 1500
 }
 
 GEO_TIERS = {
@@ -520,7 +520,7 @@ def save_progress_measurement(oid, title, audit_type, total_score, delta_start, 
         pass
 
 # ==========================================
-# 5. НОРМАЛИЗАЦИЯ, OID И ПАРСИНГ
+# 5. НОРМАЛИЗАЦИЯ, OID И ПАРСИНГ (С ДИАГНОСТИКОЙ)
 # ==========================================
 def extract_oid_and_url(raw_url):
     url = str(raw_url).strip()
@@ -567,8 +567,30 @@ def extract_oid_and_url(raw_url):
 
     return oid, clean_url
 
+def get_apify_run_details(run_id):
+    """Извлекает statusMessage и последние строки лога запуска из Apify"""
+    log_text = ""
+    status_msg = ""
+    try:
+        meta_res = requests.get(
+            f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}",
+            timeout=8
+        ).json()
+        status_msg = meta_res.get("data", {}).get("statusMessage", "")
+
+        log_res = requests.get(
+            f"https://api.apify.com/v2/actor-runs/{run_id}/log?token={APIFY_API_TOKEN}",
+            timeout=8
+        )
+        if log_res.status_code == 200:
+            lines = [line.strip() for line in log_res.text.strip().split("\n") if line.strip()]
+            log_text = " | ".join(lines[-6:])
+    except Exception:
+        pass
+        
+    return status_msg, log_text
+
 def fetch_apify_data(cleaned_url):
-    # Извлекаем OID для резервного поиска по внутреннему индексу Карт
     oid_match = re.search(r'\b(\d{7,13})\b', cleaned_url)
     search_query = oid_match.group(1) if oid_match else cleaned_url
 
@@ -592,33 +614,61 @@ def fetch_apify_data(cleaned_url):
     ).json()
     
     if 'error' in run_req:
-        raise Exception(f"Ошибка Apify API: {run_req['error']}")
+        err_type = run_req['error'].get('type', 'Unknown')
+        err_msg = run_req['error'].get('message', 'Неизвестная ошибка')
+        raise Exception(f"Apify API Error [{err_type}]: {err_msg}")
         
     run_id = run_req['data']['id']
     dataset_id = run_req['data']['defaultDatasetId']
     status, retries = "RUNNING", 0
     
-    while status not in ["SUCCEEDED", "FAILED", "ABORTED"]:
+    while status not in ["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"]:
         if retries >= 75:
-            raise Exception("Таймаут сбора данных. Яндекс долго отвечает.")
+            _, log_tail = get_apify_run_details(run_id)
+            raise Exception(f"Таймаут сбора данных. Лог Apify: {log_tail or 'нет ответа'}")
         time.sleep(4)
-        status_req = requests.get(f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}", timeout=10).json()
+        status_req = requests.get(
+            f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}", 
+            timeout=10
+        ).json()
         status = status_req['data']['status']
         retries += 1
         
     if status != "SUCCEEDED":
-        raise Exception(f"Парсер завершился со статусом {status}.")
+        status_msg, log_tail = get_apify_run_details(run_id)
+        reason = status_msg or log_tail or "Неизвестная ошибка контейнера"
+        raise Exception(f"Актор завершился со статусом [{status}]: {reason}")
         
-    dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}", timeout=15).json()
+    dataset = requests.get(
+        f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}", 
+        timeout=15
+    ).json()
     
     if not isinstance(dataset, list) or len(dataset) == 0:
-        raise Exception(f"Яндекс не вернул данные по адресу: {cleaned_url}. Возможно, сработала защита от роботов или адрес изменился.")
+        _, log_tail = get_apify_run_details(run_id)
+        
+        if "captcha" in log_tail.lower():
+            diag = "Яндекс запросил SmartCaptcha (IP датацентра заблокирован)"
+        elif "navigation timeout" in log_tail.lower():
+            diag = "Страница организации не загрузилась вовремя (таймаут сети)"
+        elif "found 0" in log_tail.lower() or "not found" in log_tail.lower():
+            diag = "Организация не найдена поисковым селектором Яндекса"
+        else:
+            diag = log_tail or "Датасет пуст"
+            
+        raise Exception(f"Яндекс вернул пустой ответ (Run ID: {run_id}). Диагностика: {diag}")
         
     first_item = dataset[0]
     if not isinstance(first_item, dict):
-        raise Exception("Некорректный формат данных ответа.")
+        raise Exception("Некорректный формат данных ответа от актора.")
         
-    resolved_title = first_item.get('title') or first_item.get('name') or first_item.get('companyName') or first_item.get('header') or "Организация"
+    resolved_title = (
+        first_item.get('title') or 
+        first_item.get('name') or 
+        first_item.get('companyName') or 
+        first_item.get('header') or 
+        "Организация"
+    )
     first_item['title'] = resolved_title
     return first_item
 
@@ -1213,7 +1263,6 @@ if data_to_process:
             with st.spinner("ИИ адаптирует выводы под специфику ниши..."):
                 rewrite_errors_by_ai(niche_label, title, failed_items, expert_engine)
 
-        # Каскадный расчет чека с учетом несгораемого пола
         smart_check_val, check_source = determine_smart_check(data, niche_key)
 
         with st.sidebar:
@@ -1265,7 +1314,6 @@ if data_to_process:
                 use_container_width=True
             )
 
-            # Формирование письма первого касания (Icebreaker)
             st.divider()
             st.markdown("### ✉️ Персональное письмо первого касания (Icebreaker)")
             
@@ -1289,7 +1337,6 @@ if data_to_process:
             icebreaker_text = generate_icebreaker_text(template_payload, templates_data)
             st.code(icebreaker_text, language="markdown")
             
-            # Именование файлов для Google Диска: {Компания}_{OID}_{Дата}_{Тип}
             date_str = datetime.now().strftime("%Y-%m-%d")
             file_prefix = f"{safe_title}_{current_oid}" if current_oid != "UNKNOWN" else safe_title
 
@@ -1309,7 +1356,6 @@ if data_to_process:
                             json_url = dm.upload_file(f"{file_prefix}_{date_str}_audit.json", json.dumps(data, ensure_ascii=False, indent=2), "application/json", dm.json_root_id)
                             txt_url = dm.upload_file(f"{file_prefix}_{date_str}_icebreaker.txt", icebreaker_text, "text/plain", dm.letters_root_id)
                             
-                            # Роутинг в Google Sheets
                             if not history_info["exists"]:
                                 save_lead_to_results(
                                     current_oid, source_url, title, niche_key, 
