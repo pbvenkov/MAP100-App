@@ -339,13 +339,6 @@ def _calculate_geo_check(data: dict, niche_key: str) -> tuple[int, str]:
     return final_check, f"Консервативный базис ({geo_label})"
 
 def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
-    """
-    Каскадный расчет чека с жестким отсечением дешевых расходников через NICHE_MIN_FLOOR:
-    1. B2B / B2B_HEAVY -> строго гео-матрица
-    2. HORECA -> averageBill Яндекса (не ниже floor)
-    3. B2C услуги -> 35-й перцентиль прайс-листа (только полноценные услуги)
-    4. Fallback -> гео-матрица
-    """
     address = str(data.get("address") or "").lower()
     geo_mult = 1.0
     if any(city in address for city in GEO_TIERS["TIER_1"]["cities"]):
@@ -680,7 +673,7 @@ def rewrite_errors_by_ai(niche_label, company_name, failed_rules, engine):
     except Exception:
         pass
 
-def calculate_hard_facts(data, niche_key="OTHER"):
+def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     scores = {}
     now = datetime.now(timezone.utc)
     title = str(data.get('title') or '')
@@ -689,19 +682,24 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     raw_url = data.get('url') or data.get('website') or ''
     url = str(raw_url).lower()
     
+    # PROF-03.1 & PROF-03.2 (Рубрики)
     cat_list = data.get('categories') or []
     cat_name = ""
     if isinstance(cat_list, list) and cat_list:
         first_cat = cat_list[0]
         cat_name = first_cat.get('name', str(first_cat)) if isinstance(first_cat, dict) else str(first_cat)
-        scores['PROF-03.1'] = True  # Наличие основной рубрики
+        scores['PROF-03.1'] = True
         if len(cat_list) >= 3:
-            scores['PROF-03.2'] = True  # Задействовано 3+ рубрики из 5 доступных слотов Яндекса
+            scores['PROF-03.2'] = True
     
     if data.get('isVerifiedOwner') or len(title) > 2:
         scores['PROF-01.1'] = True
+        
+    # PROF-04.1 (Сайт) & PROF-04.2 (UTM-метки)
     if url:
         scores['PROF-04.1'] = True
+        if "utm_" in url:
+            scores['PROF-04.2'] = True
         
     phones = data.get('phones') or []
     if phones:
@@ -721,6 +719,11 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     if features:
         scores['PROF-08.1'] = True
 
+    # PROF-08.3 (Доступная среда и парковка)
+    if isinstance(features, dict):
+        if any(k in features for k in ['wheelchair_access', 'accessible_entrance', 'parking', 'parking_disabled', 'wheelchair_accessible']):
+            scores['PROF-08.3'] = True
+
     niche_mapping = {
         "DENTISTRY": ["dentist_services", "uni_medic_specialization"],
         "AUTO": ["car_wash_services", "auto_repair_features"],
@@ -739,10 +742,18 @@ def calculate_hard_facts(data, niche_key="OTHER"):
             if len(client_unique_keys) >= 2:
                 send_telegram_business_alert(title, cat_name, client_unique_keys[:5])
     
+    # PROF-09.1 (Объем описания) & PROF-09.2 (Структура)
     if len(desc) > 1200:
         scores['PROF-09.1'] = True
+    if desc.count('\n') >= 2 or any(bullet in desc for bullet in ['-', '—', '•', '1.', '2.', '*']):
+        scores['PROF-09.2'] = True
+
     if data.get('isVerifiedOwner'):
         scores['PROF-12.1'] = True
+
+    # PROF-15.1 (Юридические данные и ИНН)
+    if data.get('legalInfo') or data.get('companyLegalInfo') or (inn_code and len(inn_code) in (10, 12)):
+        scores['PROF-15.1'] = True
     
     social_items = data.get('socialLinks') or data.get('links') or []
     owner_links = (url + " " + desc + " " + " ".join([str(l) for l in social_items])).lower()
@@ -774,6 +785,11 @@ def calculate_hard_facts(data, niche_key="OTHER"):
         
     if len(str(data.get('address') or '')) > 5:
         scores['SEO-18.1'] = True
+        
+    # GEO-18.4 (Точный маркер входа)
+    if data.get('entrances') or data.get('entranceCoordinates') or data.get('doors'):
+        scores['GEO-18.4'] = True
+
     if safe_int(data.get('videoCount')) > 0 or data.get('videos') or data.get('mobileVideos'):
         scores['CONT-42.1'] = True
     
@@ -832,34 +848,59 @@ def calculate_hard_facts(data, niche_key="OTHER"):
         has_photos = 0
         good_reply = False
         quick_reply = False
+        expert_authors = 0
+        reply_lengths = []
+        recent_reply = False
         
         for r in top_20:
+            author_lvl = safe_int(r.get('author', {}).get('level') or r.get('userLevel') or 0)
+            if author_lvl >= 3:
+                expert_authors += 1
+
             if isinstance(r.get('reply'), dict):
                 bc_text = str(r.get('reply', {}).get('text') or '').strip()
+                bc_date_raw = r.get('reply', {}).get('date')
             else:
                 bc_text = str(r.get('businessComment') or r.get('reply') or '').strip()
+                bc_date_raw = r.get('businessCommentDate')
                 
             if bc_text:
                 replied += 1
+                reply_lengths.append(len(bc_text))
+                
             if r.get('photos') or r.get('photoDetails'):
                 has_photos += 1
             if safe_float(r.get('rating')) >= 4.0 and bc_text:
                 good_reply = True
             
-            bc_date = parse_yandex_date(r.get('businessCommentDate'))
+            bc_date = parse_yandex_date(bc_date_raw)
             rev_date = parse_yandex_date(r.get('date'))
             if bc_text and bc_date and rev_date and 0 <= (bc_date - rev_date).days <= 3:
                 quick_reply = True
+                
+            # Проверка свежести ответа (< 30 дней) для REP-85.1
+            if bc_text:
+                if bc_date and (now - bc_date).days <= 30:
+                    recent_reply = True
+                elif not bc_date and rev_date and (now - rev_date).days <= 30:
+                    recent_reply = True
         
         if top_20:
             if replied / len(top_20) >= 0.7:
                 scores['REP-30.1'] = True
             if has_photos / len(top_20) >= 0.05:
                 scores['REP-35.1'] = True
+            if expert_authors / len(top_20) >= 0.25:
+                scores['REP-34.1'] = True
+                
         if good_reply:
             scores['REP-30.3'] = True
         if quick_reply:
             scores['REP-30.2'] = True
+        if reply_lengths and (sum(reply_lengths) / len(reply_lengths)) >= 80:
+            scores['REP-30.4'] = True
+        if recent_reply:
+            scores['REP-85.1'] = True
             
     return scores
 
@@ -1102,7 +1143,8 @@ if data_to_process:
     with st.spinner("Расчет юнит-экономики и запуск алгоритмов..."):
         niche_key = determine_niche_by_expert(title, cat, prompts_data)
         
-        raw_scores = calculate_hard_facts(data, niche_key)
+        # Передаем inn_code для расчета PROF-15.1
+        raw_scores = calculate_hard_facts(data, niche_key, inn_code=inn_code)
         exp_sc = calculate_dynamic_expert_rules(data, prompts_data)
         raw_scores.update(exp_sc)
         
