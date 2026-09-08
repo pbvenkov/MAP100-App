@@ -568,12 +568,21 @@ def extract_oid_and_url(raw_url):
     return oid, clean_url
 
 def fetch_apify_data(cleaned_url):
+    # Извлекаем OID для резервного поиска по внутреннему индексу Карт
+    oid_match = re.search(r'\b(\d{7,13})\b', cleaned_url)
+    search_query = oid_match.group(1) if oid_match else cleaned_url
+
     payload = {
         "startUrls": [{"url": cleaned_url}],
+        "searchStringsArray": [search_query],
         "enrichBusinessData": True,
         "includeReviews": True,
-        "maxPhotos": 80,
-        "maxPosts": 30
+        "maxReviews": 20,
+        "maxPhotos": 60,
+        "maxPosts": 20,
+        "proxyConfiguration": {
+            "useApifyProxy": True
+        }
     }
     
     run_req = requests.post(
@@ -603,7 +612,7 @@ def fetch_apify_data(cleaned_url):
     dataset = requests.get(f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}", timeout=15).json()
     
     if not isinstance(dataset, list) or len(dataset) == 0:
-        raise Exception(f"Яндекс не вернул данные по адресу: {cleaned_url}")
+        raise Exception(f"Яндекс не вернул данные по адресу: {cleaned_url}. Возможно, сработала защита от роботов или адрес изменился.")
         
     first_item = dataset[0]
     if not isinstance(first_item, dict):
