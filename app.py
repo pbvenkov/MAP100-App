@@ -88,7 +88,6 @@ def clean_typography(text):
         return ""
     t = str(text).replace(" - ", " — ").replace(">=", "≥").replace("<=", "≤").replace("->", "→")
     t = t.replace("<", " меньше ").replace(">", " больше ")
-    # Экранирование и очистка спецсимволов для безопасной вставки в Typst
     for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`', '~', '^']:
         t = t.replace(c, ' ')
     return " ".join(t.split())
@@ -136,7 +135,7 @@ def send_telegram_business_alert(title, category, unique_keys):
         pass
 
 # ==========================================
-# 3. ПОИСК ЛПР И ИНН (КАСКАДНЫЙ WATERFALL)
+# 3. ПОИСК ЛПР И КООРДИНАТ ДЛЯ СВЯЗИ (WATERFALL)
 # ==========================================
 def extract_inn(data, dadata_token=None):
     """Каскадный поиск ИНН: Apify JSON -> Регулярные выражения -> DaData API"""
@@ -178,6 +177,35 @@ def extract_inn(data, dadata_token=None):
 
     return ""
 
+def extract_direct_messengers(data):
+    """Извлечение прямых каналов связи (Telegram, WhatsApp) из карточки"""
+    links = data.get('socialLinks') or data.get('links') or []
+    candidate_links = []
+    
+    if isinstance(links, list):
+        for item in links:
+            u = item.get('url', '') if isinstance(item, dict) else str(item)
+            if u:
+                candidate_links.append(u)
+                
+    phones = data.get('phones') or []
+    phone_numbers = []
+    for p in phones:
+        val = p.get('number', '') if isinstance(p, dict) else str(p)
+        clean_num = re.sub(r'[^\d+]', '', val)
+        if clean_num:
+            phone_numbers.append(clean_num)
+            
+    contact_info = {}
+    for link in candidate_links:
+        low = link.lower()
+        if "t.me/" in low and not any(k in low for k in ["bot", "joinchat", "share"]):
+            contact_info["tg_link"] = link
+        if "wa.me/" in low or "whatsapp.com" in low:
+            contact_info["wa_link"] = link
+
+    return contact_info, phone_numbers
+
 def extract_lpr_from_reviews(reviews_data, engine=None):
     """Поиск подписи руководства в официальных ответах на отзывы"""
     if not reviews_data or not engine:
@@ -205,7 +233,7 @@ def extract_lpr_from_reviews(reviews_data, engine=None):
 
     try:
         raw_res = engine.generate_content(prompt).text
-        match = re.search(r'\{.*\}', raw_resp, re.DOTALL)
+        match = re.search(r'\{.*\}', raw_res, re.DOTALL)
         if match:
             data = json.loads(match.group(0))
             if data.get("status") == "found" and data.get("name"):
@@ -215,7 +243,7 @@ def extract_lpr_from_reviews(reviews_data, engine=None):
     return {}
 
 def enrich_lpr_contacts_from_vk(social_links):
-    """Поиск контактов руководителя через VK API"""
+    """Поиск руководителя через VK API с получением мобильного и Telegram"""
     if not VK_API_TOKEN or not social_links:
         return {}
     vk_url = next((link.get('url', '') for link in social_links if isinstance(link, dict) and ('vk.com' in link.get('url', '') or 'vk.ru' in link.get('url', ''))), None)
@@ -224,18 +252,45 @@ def enrich_lpr_contacts_from_vk(social_links):
     try:
         clean_vk = vk_url.split('?')[0].rstrip('/')
         group_id = clean_vk.split('/')[-1]
-        res = requests.get("https://api.vk.com/method/groups.getById", params={"group_id": group_id, "fields": "contacts", "access_token": VK_API_TOKEN, "v": "5.199"}, timeout=5).json()
+        res = requests.get(
+            "https://api.vk.com/method/groups.getById", 
+            params={"group_id": group_id, "fields": "contacts", "access_token": VK_API_TOKEN, "v": "5.199"}, 
+            timeout=5
+        ).json()
+        
         if 'response' in res and res['response']:
             contacts = res['response'][0].get('contacts', [])
             if not contacts:
-                return {"status": "hidden", "vk_url": vk_url}
+                return {"status": "hidden", "channel": "VK", "link": vk_url, "source": "Группа VK"}
+                
             contact = contacts[0]
-            lpr_data = {"name": "", "role": contact.get('desc', 'Администратор'), "link": "", "email": contact.get('email', ''), "status": "found"}
+            lpr_data = {
+                "name": "",
+                "role": contact.get('desc', 'Руководитель'),
+                "link": "",
+                "phone": contact.get('phone', ''),
+                "email": contact.get('email', ''),
+                "channel": "VK",
+                "source": "VK (контакты группы)",
+                "status": "found"
+            }
             if 'user_id' in contact:
-                lpr_data["link"] = f"https://vk.com/id{contact['user_id']}"
-                u_res = requests.get("https://api.vk.com/method/users.get", params={"user_ids": contact['user_id'], "access_token": VK_API_TOKEN, "v": "5.199"}, timeout=5).json()
+                uid = contact['user_id']
+                lpr_data["link"] = f"https://vk.com/id{uid}"
+                u_res = requests.get(
+                    "https://api.vk.com/method/users.get", 
+                    params={"user_ids": uid, "fields": "contacts,site,connections", "access_token": VK_API_TOKEN, "v": "5.199"}, 
+                    timeout=5
+                ).json()
                 if 'response' in u_res and u_res['response']:
-                    lpr_data["name"] = f"{u_res['response'][0].get('first_name', '')} {u_res['response'][0].get('last_name', '')}".strip()
+                    u = u_res['response'][0]
+                    lpr_data["name"] = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip()
+                    if u.get('mobile_phone'):
+                        lpr_data["phone"] = u.get('mobile_phone')
+                    site_val = str(u.get('site', '')).lower()
+                    if "t.me/" in site_val:
+                        lpr_data["link"] = u.get('site')
+                        lpr_data["channel"] = "Telegram"
             return lpr_data
     except Exception:
         pass
@@ -262,7 +317,9 @@ def enrich_lpr_by_dadata(query_str, dadata_token=None):
             if management.get("name"):
                 return {
                     "name": management.get("name"),
-                    "role": management.get("post", "Руководитель"),
+                    "role": management.get("post", "Генеральный директор"),
+                    "channel": "DaData / ЕГРЮЛ",
+                    "source": "ЕГРЮЛ",
                     "status": "found"
                 }
             if party_data.get("type") == "INDIVIDUAL":
@@ -271,11 +328,57 @@ def enrich_lpr_by_dadata(query_str, dadata_token=None):
                 return {
                     "name": clean_fio,
                     "role": "Индивидуальный предприниматель",
+                    "channel": "DaData / ЕГРИП",
+                    "source": "ЕГРИП",
                     "status": "found"
                 }
     except Exception:
         pass
     return {}
+
+def resolve_lpr_profile(data, expert_engine, dadata_token):
+    """Сбор и приоритезация контактов руководителя по всем источникам"""
+    social_links = data.get('socialLinks') or data.get('links') or []
+    if not isinstance(social_links, list):
+        social_links = []
+        
+    direct_messengers, phones = extract_direct_messengers(data)
+    inn_code = extract_inn(data, dadata_token)
+
+    # 1. Поиск подписи в ответах на отзывы
+    lpr = extract_lpr_from_reviews(data.get('reviews') or [], expert_engine)
+    if lpr and lpr.get("status") == "found":
+        lpr["source"] = "Ответы на отзывы Яндекса"
+        lpr["channel"] = "Яндекс Отзывы"
+
+    # 2. Поиск через сообщество VK
+    if not lpr or lpr.get("status") != "found":
+        lpr = enrich_lpr_contacts_from_vk(social_links)
+
+    # 3. Поиск через DaData (ЕГРЮЛ/ЕГРИП)
+    if not lpr or lpr.get("status") != "found":
+        search_target = inn_code if inn_code else (data.get("legalName") or data.get("companyName") or data.get("title"))
+        lpr = enrich_lpr_by_dadata(search_target, dadata_token)
+
+    if not lpr:
+        lpr = {"name": "", "role": "Руководство", "status": "not_found", "source": "Не определен"}
+
+    # Привязка прямых мессенджеров для моментального касания
+    if direct_messengers.get("tg_link"):
+        lpr["direct_tg"] = direct_messengers["tg_link"]
+        if not lpr.get("link"):
+            lpr["link"] = direct_messengers["tg_link"]
+            lpr["channel"] = "Telegram"
+    if direct_messengers.get("wa_link"):
+        lpr["direct_wa"] = direct_messengers["wa_link"]
+        if not lpr.get("link"):
+            lpr["link"] = direct_messengers["wa_link"]
+            lpr["channel"] = "WhatsApp"
+
+    if phones and not lpr.get("phone"):
+        lpr["phone"] = phones[0]
+
+    return lpr, inn_code
 
 # ==========================================
 # 4. БАЗА ДАННЫХ, CRM И УМНАЯ ЭКОНОМИКА
@@ -350,12 +453,10 @@ def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
     base_floor = NICHE_MIN_FLOOR.get(niche_key, 1500)
     floor_val = int(round(base_floor * geo_mult / 100) * 100)
 
-    # 1. B2B сегмент сразу рассчитываем по гео-матрице
     if niche_key in ["B2B", "B2B_HEAVY"]:
         val, src = _calculate_geo_check(data, niche_key)
         return max(val, floor_val), src
 
-    # 2. HORECA: атрибут averageBill Яндекса
     raw_bill = data.get("averageBill") or data.get("priceCategory") or ""
     bill_digits = re.findall(r'\d+', str(raw_bill).replace(' ', ''))
     if bill_digits:
@@ -365,7 +466,6 @@ def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
             final_val = max(avg_bill, floor_val)
             return final_val, "Средний счёт из профиля Яндекса"
 
-    # 3. Анализ прайс-листа карточки
     menu_data = data.get('menu')
     m_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
     c_items = data.get('productCatalog') or []
@@ -394,7 +494,6 @@ def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
             
         return final_val, f"Прайс-лист карточки ({len(extracted_prices)} позиций)"
 
-    # 4. Резервный расчет по гео-матрице
     val, src = _calculate_geo_check(data, niche_key)
     return max(val, floor_val), src
 
@@ -472,14 +571,19 @@ def check_oid_history(oid):
     return {"exists": False, "source": None, "base_score": None, "last_score": None, "count": 0}
 
 def save_lead_to_results(oid, url, title, niche, total_score, lost_revenue, lpr_data=None, inn=""):
+    """Сохранение организации и обнаруженных координат ЛПР в Google Sheets"""
     try:
         client = gspread.authorize(get_google_credentials())
         ws = client.open_by_url(st.secrets["SPREADSHEET_URL"]).worksheet("Results")
         
         lpr_name = lpr_data.get("name", "") if lpr_data else ""
         lpr_role = lpr_data.get("role", "") if lpr_data else ""
-        lpr_contact = (lpr_data.get("link", "") or lpr_data.get("email", "")) if lpr_data else ""
         
+        # Компонуем прямой канал и координаты для связи
+        direct_channel = lpr_data.get("channel", "") if lpr_data else ""
+        direct_coord = lpr_data.get("link", "") or lpr_data.get("phone", "") or lpr_data.get("email", "") if lpr_data else ""
+        contact_display = f"[{direct_channel}] {direct_coord}".strip() if direct_channel else direct_coord
+
         row = [
             datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M"),
             str(oid),
@@ -489,7 +593,7 @@ def save_lead_to_results(oid, url, title, niche, total_score, lost_revenue, lpr_
             str(round(total_score, 1)).replace('.', ','),
             lpr_name,
             lpr_role,
-            lpr_contact,
+            contact_display,
             f"{lost_revenue:,}".replace(',', ' ') + " ₽",
             "1. Новый лид",
             f"'{inn}" if inn else ""
@@ -521,12 +625,11 @@ def save_progress_measurement(oid, title, audit_type, total_score, delta_start, 
         pass
 
 # ==========================================
-# 5. НОРМАЛИЗАЦИЯ, OID И ПАРСИНГ (С ДИАГНОСТИКОЙ)
+# 5. НОРМАЛИЗАЦИЯ, OID И ПАРСИНГ
 # ==========================================
 def extract_oid_and_url(raw_url):
     url = str(raw_url).strip()
     
-    # 1. Разворачиваем короткие ссылки Яндекса вида maps/-/CCU...
     if "/-/" in url:
         session = requests.Session()
         session.headers.update({
@@ -546,14 +649,12 @@ def extract_oid_and_url(raw_url):
     oid = "UNKNOWN"
     clean_url = url
     
-    # 2. Проверяем каноничный формат Яндекс Карт: /org/{slug}/{oid}
     org_match = re.search(r'/org/([^/?#]+)/(\d+)', url)
     if org_match:
         slug = org_match.group(1)
         oid = org_match.group(2)
         clean_url = f"https://yandex.ru/maps/org/{slug}/{oid}/"
     else:
-        # 3. Резервный поиск OID, если ссылка вида ?oid=123 или /org/123
         oid_match = re.search(r'(?:oid(?:%3D|=)|/org/)(\d{6,})', url)
         if not oid_match:
             oid_match = re.search(r'\b(\d{7,13})\b', url)
@@ -569,7 +670,7 @@ def extract_oid_and_url(raw_url):
     return oid, clean_url
 
 def get_apify_run_details(run_id):
-    """Извлекает statusMessage и последние строки лога запуска из Apify"""
+    """Извлекает statusMessage и консольный лог запуска для диагностики ошибок"""
     log_text = ""
     status_msg = ""
     try:
@@ -592,7 +693,6 @@ def get_apify_run_details(run_id):
     return status_msg, log_text
 
 def fetch_apify_data(cleaned_url):
-    # Передаем полный URL во внутренний поиск для защиты от сбоев резолва OID
     payload = {
         "startUrls": [{"url": cleaned_url}],
         "searchStringsArray": [cleaned_url],
@@ -645,7 +745,6 @@ def fetch_apify_data(cleaned_url):
     
     if not isinstance(dataset, list) or len(dataset) == 0:
         _, log_tail = get_apify_run_details(run_id)
-        
         if "captcha" in log_tail.lower():
             diag = "Яндекс запросил SmartCaptcha (IP датацентра заблокирован)"
         elif "navigation timeout" in log_tail.lower():
@@ -724,9 +823,9 @@ def rewrite_errors_by_ai(niche_label, company_name, failed_rules, engine):
     
     payload_text = "".join([f"ID: {r['Код']} | Ошибка: {r['Критерий']} | Текст: {r['Обоснование']}\n" for r in failed_rules[:15]])
     prompt = f"""Ты — эксперт по локальному маркетингу. Ниша: {niche_label}. Компания: {company_name}.
-Перепиши обоснование каждой ошибки под боли этой ниши простым языком руководителя без технического жаргона (без XML, LSI, B2B, контрактов). 
+Перепиши обоснование каждой ошибки под боли этой ниши простым языком руководителя без технического жаргона. 
 Опирайся на потери клиентов и выручки.
-Строго соблюдай правила Яндекса: не предлагай накрутку или скидки за отзывы, не советуй добавлять спам-слова в название (это запрещено модерацией).
+Строго соблюдай правила Яндекса: не предлагай накрутку или скидки за отзывы, не советуй добавлять спам-слова в название.
 
 Ошибки:
 {payload_text}
@@ -751,7 +850,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     raw_url = data.get('url') or data.get('website') or ''
     url = str(raw_url).lower()
     
-    # PROF-03.1 & PROF-03.2 (Основная рубрика и семантическое ядро 3+ из 5)
     cat_list = data.get('categories') or []
     cat_name = ""
     if isinstance(cat_list, list) and cat_list:
@@ -764,7 +862,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if data.get('isVerifiedOwner') or len(title) > 2:
         scores['PROF-01.1'] = True
         
-    # PROF-04.1 (Сайт компании) & PROF-04.2 (UTM-разметка)
     if url:
         scores['PROF-04.1'] = True
         if "utm_" in url:
@@ -788,7 +885,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if features:
         scores['PROF-08.1'] = True
 
-    # PROF-08.3 (Доступная среда и парковка)
     if isinstance(features, dict):
         if any(k in features for k in ['wheelchair_access', 'accessible_entrance', 'parking', 'parking_disabled', 'wheelchair_accessible']):
             scores['PROF-08.3'] = True
@@ -811,7 +907,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
             if len(client_unique_keys) >= 2:
                 send_telegram_business_alert(title, cat_name, client_unique_keys[:5])
     
-    # PROF-09.1 (Длина описания > 1200) & PROF-09.2 (Структурированное описание)
     if len(desc) > 1200:
         scores['PROF-09.1'] = True
     if desc.count('\n') >= 2 or any(bullet in desc for bullet in ['-', '—', '•', '1.', '2.', '*']):
@@ -820,7 +915,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if data.get('isVerifiedOwner'):
         scores['PROF-12.1'] = True
 
-    # PROF-15.1 (Юридические данные и ИНН)
     if data.get('legalInfo') or data.get('companyLegalInfo') or (inn_code and len(inn_code) in (10, 12)):
         scores['PROF-15.1'] = True
     
@@ -855,7 +949,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if len(str(data.get('address') or '')) > 5:
         scores['SEO-18.1'] = True
         
-    # GEO-18.4 (Точный маркер входа)
     if data.get('entrances') or data.get('entranceCoordinates') or data.get('doors'):
         scores['GEO-18.4'] = True
 
@@ -1174,7 +1267,6 @@ if data_to_process:
     cat = c_list[0].get('name', '') if (isinstance(c_list, list) and c_list and isinstance(c_list[0], dict)) else (str(c_list[0]) if (isinstance(c_list, list) and c_list) else '')
     client_reviews = safe_int(data.get('reviewsCount') or data.get('ratingsCount') or len(data.get('reviews') or []))
     
-    # Резервный поиск OID внутри данных Apify
     if current_oid == "UNKNOWN":
         for cand in [data.get('id'), data.get('yandexId'), data.get('permalink'), data.get('url'), data.get('uri')]:
             if cand:
@@ -1188,22 +1280,10 @@ if data_to_process:
     if not safe_title:
         safe_title = "Company"
 
-    # 1. Извлечение ИНН
-    inn_code = extract_inn(data, DADATA_API_KEY)
+    # Интеллектуальный поиск ЛПР, каналов связи и юридических данных
+    lpr_data, inn_code = resolve_lpr_profile(data, expert_engine, DADATA_API_KEY)
     
-    # 2. Каскадный поиск ЛПР (Отзывы -> VK -> DaData)
-    social_links = data.get('socialLinks') or data.get('links') or []
-    if not isinstance(social_links, list):
-        social_links = []
-        
-    lpr_data = extract_lpr_from_reviews(data.get('reviews') or [], expert_engine)
-    if not lpr_data or lpr_data.get("status") != "found":
-        lpr_data = enrich_lpr_contacts_from_vk(social_links)
-    if not lpr_data or lpr_data.get("status") != "found":
-        search_target = inn_code if inn_code else (data.get("legalName") or data.get("companyName") or title)
-        lpr_data = enrich_lpr_by_dadata(search_target, DADATA_API_KEY)
-    
-    # 3. Конкуренты
+    # Ближайшие конкуренты
     raw_related = data.get('relatedPlaces') or []
     if isinstance(raw_related, dict):
         raw_related = raw_related.get('items') or raw_related.get('places') or [raw_related]
@@ -1213,7 +1293,6 @@ if data_to_process:
     with st.spinner("Расчет юнит-экономики и запуск алгоритмов..."):
         niche_key = determine_niche_by_expert(title, cat, prompts_data)
         
-        # Передаем inn_code для расчета PROF-15.1
         raw_scores = calculate_hard_facts(data, niche_key, inn_code=inn_code)
         exp_sc = calculate_dynamic_expert_rules(data, prompts_data)
         raw_scores.update(exp_sc)
@@ -1290,11 +1369,29 @@ if data_to_process:
             else:
                 st.success("✨ **Новая организация.** Будет зафиксирована в CRM Results.")
                 
+            # Визуализация контактов ЛПР
             if lpr_data and lpr_data.get('status') == 'found':
-                contact_info = f" ({lpr_data.get('link')})" if lpr_data.get('link') else ""
-                st.success(f"🕵️‍♂️ **Найден ЛПР:** {lpr_data.get('name')} — {lpr_data.get('role')}{contact_info}")
+                lpr_fio = lpr_data.get('name') or 'Руководитель'
+                lpr_pos = lpr_data.get('role', 'Руководство')
+                src_info = f" *(источник: {lpr_data.get('source')})*"
+                st.success(f"🕵️‍♂️ **Найден ЛПР:** {lpr_fio} — {lpr_pos}{src_info}")
+                
+                # Дополнительные каналы связи
+                badges = []
+                if lpr_data.get('direct_tg'):
+                    badges.append(f"✈️ [Telegram]({lpr_data['direct_tg']})")
+                if lpr_data.get('direct_wa'):
+                    badges.append(f"💬 [WhatsApp]({lpr_data['direct_wa']})")
+                if lpr_data.get('link') and "vk.com" in lpr_data.get('link', ''):
+                    badges.append(f"🌐 [Профиль VK]({lpr_data['link']})")
+                if lpr_data.get('phone'):
+                    badges.append(f"📞 Телефон: `{lpr_data['phone']}`")
+                if badges:
+                    st.markdown("Прямые координаты: " + " | ".join(badges))
             elif lpr_data and lpr_data.get('status') == 'hidden':
                 st.warning("⚠️ **Группа ВК найдена, но блок «Контакты» скрыт.**")
+            else:
+                st.caption("ℹ️ Прямые контакты ЛПР в открытых источниках не найдены.")
             
         with col2:
             delta = "Отличный результат" if final_total_score >= 80 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
