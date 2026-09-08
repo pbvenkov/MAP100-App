@@ -525,6 +525,7 @@ def save_progress_measurement(oid, title, audit_type, total_score, delta_start, 
 def extract_oid_and_url(raw_url):
     url = str(raw_url).strip()
     
+    # 1. Разворачиваем короткие ссылки Яндекса вида maps/-/CCU...
     if "/-/" in url:
         session = requests.Session()
         session.headers.update({
@@ -542,17 +543,27 @@ def extract_oid_and_url(raw_url):
     url = url.replace("yandex.ru/navi/", "yandex.ru/maps/")
     
     oid = "UNKNOWN"
-    oid_match = re.search(r'(?:oid(?:%3D|=)|/org/(?:[^/]+/)?|/org/)(\d{6,})', url)
-    if not oid_match:
-        oid_match = re.search(r'(?:oid|org)[^\d]*(\d{7,})', url)
-        
-    if oid_match:
-        oid = oid_match.group(1)
-        clean_url = f"https://yandex.ru/maps/org/{oid}/"
+    clean_url = url
+    
+    # 2. Проверяем каноничный формат Яндекс Карт: /org/{slug}/{oid}
+    org_match = re.search(r'/org/([^/?#]+)/(\d+)', url)
+    if org_match:
+        slug = org_match.group(1)
+        oid = org_match.group(2)
+        clean_url = f"https://yandex.ru/maps/org/{slug}/{oid}/"
     else:
-        if "?" in url:
-            url = url.split("?")[0]
-        clean_url = re.sub(r'/(reviews|gallery|features|menu|goods|prices|posts)/?$', '', url).rstrip('/') + '/'
+        # 3. Резервный поиск OID, если ссылка вида ?oid=123 или /org/123
+        oid_match = re.search(r'(?:oid(?:%3D|=)|/org/)(\d{6,})', url)
+        if not oid_match:
+            oid_match = re.search(r'\b(\d{7,13})\b', url)
+            
+        if oid_match:
+            oid = oid_match.group(1)
+            clean_url = f"https://yandex.ru/maps/org/_/{oid}/"
+        else:
+            if "?" in url:
+                url = url.split("?")[0]
+            clean_url = re.sub(r'/(reviews|gallery|features|menu|goods|prices|posts)/?$', '', url).rstrip('/') + '/'
 
     return oid, clean_url
 
@@ -682,7 +693,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     raw_url = data.get('url') or data.get('website') or ''
     url = str(raw_url).lower()
     
-    # PROF-03.1 & PROF-03.2 (Рубрики)
+    # PROF-03.1 & PROF-03.2 (Основная рубрика и семантическое ядро 3+ из 5)
     cat_list = data.get('categories') or []
     cat_name = ""
     if isinstance(cat_list, list) and cat_list:
@@ -695,7 +706,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if data.get('isVerifiedOwner') or len(title) > 2:
         scores['PROF-01.1'] = True
         
-    # PROF-04.1 (Сайт) & PROF-04.2 (UTM-метки)
+    # PROF-04.1 (Сайт компании) & PROF-04.2 (UTM-разметка)
     if url:
         scores['PROF-04.1'] = True
         if "utm_" in url:
@@ -742,7 +753,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
             if len(client_unique_keys) >= 2:
                 send_telegram_business_alert(title, cat_name, client_unique_keys[:5])
     
-    # PROF-09.1 (Объем описания) & PROF-09.2 (Структура)
+    # PROF-09.1 (Длина описания > 1200) & PROF-09.2 (Структурированное описание)
     if len(desc) > 1200:
         scores['PROF-09.1'] = True
     if desc.count('\n') >= 2 or any(bullet in desc for bullet in ['-', '—', '•', '1.', '2.', '*']):
