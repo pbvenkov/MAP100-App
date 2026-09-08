@@ -88,7 +88,8 @@ def clean_typography(text):
         return ""
     t = str(text).replace(" - ", " — ").replace(">=", "≥").replace("<=", "≤").replace("->", "→")
     t = t.replace("<", " меньше ").replace(">", " больше ")
-    for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`', '~']:
+    # Экранирование и очистка спецсимволов для безопасной вставки в Typst
+    for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`', '~', '^']:
         t = t.replace(c, ' ')
     return " ".join(t.split())
 
@@ -204,7 +205,7 @@ def extract_lpr_from_reviews(reviews_data, engine=None):
 
     try:
         raw_res = engine.generate_content(prompt).text
-        match = re.search(r'\{.*\}', raw_res, re.DOTALL)
+        match = re.search(r'\{.*\}', raw_resp, re.DOTALL)
         if match:
             data = json.loads(match.group(0))
             if data.get("status") == "found" and data.get("name"):
@@ -591,12 +592,10 @@ def get_apify_run_details(run_id):
     return status_msg, log_text
 
 def fetch_apify_data(cleaned_url):
-    oid_match = re.search(r'\b(\d{7,13})\b', cleaned_url)
-    search_query = oid_match.group(1) if oid_match else cleaned_url
-
+    # Передаем полный URL во внутренний поиск для защиты от сбоев резолва OID
     payload = {
         "startUrls": [{"url": cleaned_url}],
-        "searchStringsArray": [search_query],
+        "searchStringsArray": [cleaned_url],
         "enrichBusinessData": True,
         "includeReviews": True,
         "maxReviews": 20,
@@ -948,7 +947,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
             if bc_text and bc_date and rev_date and 0 <= (bc_date - rev_date).days <= 3:
                 quick_reply = True
                 
-            # Проверка свежести ответа (< 30 дней) для REP-85.1
             if bc_text:
                 if bc_date and (now - bc_date).days <= 30:
                     recent_reply = True
@@ -1108,6 +1106,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         pdf_bytes = typst.compile(typ_path)
     except Exception as e:
         st.error(f"Ошибка компиляции Typst: {e}")
+        with st.expander("🔍 Диагностика Typst: исходный скомпилированный код"):
+            st.code(typ_source, language="typst", line_numbers=True)
         pdf_bytes = b""
     finally:
         if os.path.exists(typ_path):
