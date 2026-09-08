@@ -292,18 +292,17 @@ NICHE_ECONOMICS = {
     "OTHER": {"leads": 50, "check": 3000, "label": "Прочее", "ltv_months": 6}
 }
 
-# Несгораемый нижний порог чека первого визита для каждой ниши
 NICHE_MIN_FLOOR = {
-    "DENTISTRY": 4500,       # Стоматология (первичная пломба / чистка)
-    "AUTO": 3000,            # Автосервис (базовая диагностика / ТО)
-    "BEAUTY_MEDICAL": 2500,  # Медицина / косметология (первичный прием)
-    "EDUCATION": 8000,       # Курсы / обучение (месячный абонемент)
-    "B2B": 15000,            # Легкий B2B / опт (минимальный тестовый заказ)
-    "B2B_HEAVY": 100000,     # Производство / заводы (минимальная партия)
-    "HORECA": 900,           # Рестораны / кафе (средний чек на гостя с напитком)
+    "DENTISTRY": 4500,       # Первичная пломба / чистка
+    "AUTO": 3000,            # Базовая диагностика / мелкое ТО
+    "BEAUTY_MEDICAL": 2500,  # Первичный прием врача / косметолога
+    "EDUCATION": 8000,       # Месячный абонемент / базовый курс
+    "B2B": 15000,            # Пробный минимальный оптовый заказ
+    "B2B_HEAVY": 100000,     # Минимальная партия производства
+    "HORECA": 900,           # Чек гостя с напитком
     "RETAIL": 900,           # Розница
-    "SERVICES": 2000,        # Бытовые услуги B2C
-    "OTHER": 1500            # Прочее
+    "SERVICES": 2000,        # Бытовые услуги
+    "OTHER": 1500            # Общий порог
 }
 
 GEO_TIERS = {
@@ -550,8 +549,6 @@ def extract_oid_and_url(raw_url):
     url = url.replace("yandex.ru/navi/", "yandex.ru/maps/")
     
     oid = "UNKNOWN"
-    
-    # Регулярное выражение с поддержкой текстовых слагов вида /org/aidenta/1089283741/
     oid_match = re.search(r'(?:oid(?:%3D|=)|/org/(?:[^/]+/)?|/org/)(\d{6,})', url)
     if not oid_match:
         oid_match = re.search(r'(?:oid|org)[^\d]*(\d{7,})', url)
@@ -665,7 +662,10 @@ def rewrite_errors_by_ai(niche_label, company_name, failed_rules, engine):
     
     payload_text = "".join([f"ID: {r['Код']} | Ошибка: {r['Критерий']} | Текст: {r['Обоснование']}\n" for r in failed_rules[:15]])
     prompt = f"""Ты — эксперт по локальному маркетингу. Ниша: {niche_label}. Компания: {company_name}.
-Перепиши обоснование каждой ошибки под боли этой ниши простым языком руководителя без технического жаргона (без XML, LSI, B2B, контрактов). Опирайся на потери клиентов и выручки.
+Перепиши обоснование каждой ошибки под боли этой ниши простым языком руководителя без технического жаргона (без XML, LSI, B2B, контрактов). 
+Опирайся на потери клиентов и выручки.
+Строго соблюдай правила Яндекса: не предлагай накрутку или скидки за отзывы, не советуй добавлять спам-слова в название (это запрещено модерацией).
+
 Ошибки:
 {payload_text}
 Верни строго JSON объект: {{"Код_ошибки": "Новый текст обоснования"}}"""
@@ -694,11 +694,12 @@ def calculate_hard_facts(data, niche_key="OTHER"):
     if isinstance(cat_list, list) and cat_list:
         first_cat = cat_list[0]
         cat_name = first_cat.get('name', str(first_cat)) if isinstance(first_cat, dict) else str(first_cat)
+        scores['PROF-03.1'] = True  # Наличие основной рубрики
+        if len(cat_list) >= 3:
+            scores['PROF-03.2'] = True  # Задействовано 3+ рубрики из 5 доступных слотов Яндекса
     
     if data.get('isVerifiedOwner') or len(title) > 2:
         scores['PROF-01.1'] = True
-    if cat_list:
-        scores['PROF-03.1'] = True
     if url:
         scores['PROF-04.1'] = True
         
