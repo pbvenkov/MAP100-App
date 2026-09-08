@@ -135,53 +135,158 @@ def send_telegram_business_alert(title, category, unique_keys):
         pass
 
 # ==========================================
-# 3. ПОИСК ЛПР И КООРДИНАТ ДЛЯ СВЯЗИ (WATERFALL)
+# 3. КАСКАДНАЯ РАЗВЕДКА: DADATA, САЙТ И ЛПР
 # ==========================================
-def extract_inn(data, dadata_token=None):
-    """Каскадный поиск ИНН: Apify JSON -> Регулярные выражения -> DaData API"""
-    legal_info = data.get('legalInfo') or data.get('companyLegalInfo') or {}
-    if isinstance(legal_info, dict) and legal_info.get('inn'):
-        clean_inn = re.sub(r'[^\d]', '', str(legal_info.get('inn')))
-        if len(clean_inn) in (10, 12):
-            return clean_inn
-
-    text_corpus = " ".join([
-        str(data.get('description') or ''),
-        str(data.get('legalName') or ''),
-        str(data.get('companyName') or ''),
-        str(data.get('features') or '')
-    ])
-    
-    inn_match = re.search(r'(?:ИНН\D{0,5})?(\b\d{10}\b|\b\d{12}\b)', text_corpus, re.IGNORECASE)
-    if inn_match:
-        return inn_match.group(1)
-
-    if dadata_token:
-        query_target = data.get("legalName") or data.get("companyName") or data.get("title")
-        if query_target and len(query_target) > 3:
-            url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "Authorization": f"Token {dadata_token}"
-            }
-            try:
-                res = requests.post(url, json={"query": query_target, "count": 1}, headers=headers, timeout=4).json()
-                suggestions = res.get("suggestions", [])
-                if suggestions:
-                    inn_val = suggestions[0].get("data", {}).get("inn")
-                    if inn_val:
-                        return str(inn_val)
-            except Exception:
-                pass
-
+def extract_inn_from_text(text):
+    if not text:
+        return ""
+    matches = re.findall(r'(?:ИНН\D{0,5})?(\b\d{10}\b|\b\d{12}\b)', text, re.IGNORECASE)
+    for m in matches:
+        if len(m) in (10, 12):
+            return m
     return ""
 
+def scrape_inn_from_website(website_url):
+    """Поиск ИНН на официальном сайте клиники (подвал, лицензии, реквизиты)"""
+    if not website_url or not str(website_url).startswith("http"):
+        return ""
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        res = requests.get(website_url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            inn = extract_inn_from_text(res.text)
+            if inn:
+                return inn
+    except Exception:
+        pass
+    return ""
+
+def query_dadata_party(query_val, dadata_token):
+    """Прямой запрос к API DaData по ИНН или названию"""
+    if not dadata_token or not query_val:
+        return None
+    url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": f"Token {dadata_token}"
+    }
+    try:
+        res = requests.post(url, json={"query": str(query_val).strip(), "count": 1}, headers=headers, timeout=5).json()
+        suggestions = res.get("suggestions", [])
+        if suggestions:
+            return suggestions[0].get("data", {})
+    except Exception:
+        pass
+    return None
+
+def fetch_extended_dadata_info(data, dadata_token):
+    """
+    Каскадный сбор юридического досье компании:
+    1. ИНН из профиля Яндекса
+    2. Сканирование сайта клиники
+    3. Поиск юрлица в DaData
+    """
+    inn_code = ""
+    legal_info = data.get('legalInfo') or data.get('companyLegalInfo') or {}
+    if isinstance(legal_info, dict) and legal_info.get('inn'):
+        clean = re.sub(r'[^\d]', '', str(legal_info.get('inn')))
+        if len(clean) in (10, 12):
+            inn_code = clean
+
+    if not inn_code:
+        corpus = " ".join([str(data.get('description') or ''), str(data.get('legalName') or ''), str(data.get('companyName') or '')])
+        inn_code = extract_inn_from_text(corpus)
+
+    # Fallback: сканируем официальный сайт
+    website_url = data.get('url') or data.get('website')
+    if not inn_code and website_url:
+        inn_code = scrape_inn_from_website(website_url)
+
+    party_data = None
+    if inn_code:
+        party_data = query_dadata_party(inn_code, dadata_token)
+    
+    # Резервный поиск по коммерческому названию
+    if not party_data:
+        search_target = data.get("legalName") or data.get("companyName") or data.get("title")
+        if search_target and len(search_target) > 3:
+            party_data = query_dadata_party(search_target, dadata_token)
+            if party_data and party_data.get("inn"):
+                inn_code = party_data.get("inn")
+
+    dossier = {
+        "inn": inn_code if inn_code else "Поиск вручную",
+        "legal_name": "Не определено",
+        "lpr_name": "",
+        "lpr_role": "Руководство",
+        "business_age_str": "—",
+        "revenue_str": "—",
+        "employees_str": "—",
+        "okved_str": "—",
+        "legal_status": "—",
+        "found": False
+    }
+
+    if party_data:
+        dossier["found"] = True
+        dossier["inn"] = party_data.get("inn", inn_code or "Поиск вручную")
+        dossier["legal_name"] = party_data.get("name", {}).get("full_with_opf") or party_data.get("name", {}).get("short_with_opf") or "Юрлицо найдено"
+        
+        # ЛПР из реестра
+        management = party_data.get("management") or {}
+        if management.get("name"):
+            dossier["lpr_name"] = management.get("name")
+            dossier["lpr_role"] = management.get("post", "Генеральный директор")
+        elif party_data.get("type") == "INDIVIDUAL":
+            fio = party_data.get("name", {}).get("full", "").replace("ИП", "").strip()
+            dossier["lpr_name"] = fio
+            dossier["lpr_role"] = "Индивидуальный предприниматель"
+
+        # Возраст бизнеса
+        reg_date_raw = party_data.get("state", {}).get("registration_date")
+        if reg_date_raw:
+            reg_year = datetime.fromtimestamp(reg_date_raw / 1000, tz=timezone.utc).year
+            age = max(0, datetime.now().year - reg_year)
+            dossier["business_age_str"] = f"{age} лет (с {reg_year} г.)" if age > 0 else f"Менее 1 года (с {reg_year} г.)"
+
+        # Финансы (ФНС)
+        finance = party_data.get("finance") or {}
+        rev = finance.get("revenue")
+        if rev and safe_int(rev) > 0:
+            rev_val = safe_int(rev)
+            if rev_val >= 1_000_000:
+                dossier["revenue_str"] = f"{round(rev_val / 1_000_000, 1)} млн ₽/год"
+            else:
+                dossier["revenue_str"] = f"{rev_val:,} ₽/год".replace(',', ' ')
+
+        # Численность штата
+        emp = party_data.get("employee_count")
+        if emp:
+            dossier["employees_str"] = f"{emp} чел."
+
+        # ОКВЭД
+        okv = party_data.get("okved", "")
+        okv_name = party_data.get("okved_data", {}).get("name", "") if party_data.get("okved_data") else ""
+        if okv:
+            dossier["okved_str"] = f"{okv} {okv_name}".strip()
+
+        # Статус
+        st_val = party_data.get("state", {}).get("status", "ACTIVE")
+        status_map = {
+            "ACTIVE": "Действующее",
+            "LIQUIDATING": "В процессе ликвидации",
+            "LIQUIDATED": "Ликвидировано",
+            "BANKRUPT": "Банкротство"
+        }
+        dossier["legal_status"] = status_map.get(st_val, st_val)
+
+    return dossier
+
 def extract_direct_messengers(data):
-    """Извлечение прямых каналов связи (Telegram, WhatsApp) из карточки"""
+    """Поиск прямых ссылок на мессенджеры и телефонов в профиле Карт"""
     links = data.get('socialLinks') or data.get('links') or []
     candidate_links = []
-    
     if isinstance(links, list):
         for item in links:
             u = item.get('url', '') if isinstance(item, dict) else str(item)
@@ -296,89 +401,60 @@ def enrich_lpr_contacts_from_vk(social_links):
         pass
     return {}
 
-def enrich_lpr_by_dadata(query_str, dadata_token=None):
-    """Поиск ФИО генерального директора или ИП через DaData API по ИНН или названию"""
-    if not dadata_token or not query_str:
-        return {}
-        
-    url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Authorization": f"Token {dadata_token}"
-    }
-    try:
-        res = requests.post(url, json={"query": query_str, "count": 1}, headers=headers, timeout=4).json()
-        suggestions = res.get("suggestions", [])
-        if suggestions:
-            party_data = suggestions[0].get("data", {})
-            management = party_data.get("management") or {}
-            
-            if management.get("name"):
-                return {
-                    "name": management.get("name"),
-                    "role": management.get("post", "Генеральный директор"),
-                    "channel": "DaData / ЕГРЮЛ",
-                    "source": "ЕГРЮЛ",
-                    "status": "found"
-                }
-            if party_data.get("type") == "INDIVIDUAL":
-                fio = party_data.get("name", {}).get("full", "")
-                clean_fio = fio.replace("ИП", "").strip()
-                return {
-                    "name": clean_fio,
-                    "role": "Индивидуальный предприниматель",
-                    "channel": "DaData / ЕГРИП",
-                    "source": "ЕГРИП",
-                    "status": "found"
-                }
-    except Exception:
-        pass
-    return {}
-
-def resolve_lpr_profile(data, expert_engine, dadata_token):
-    """Сбор и приоритезация контактов руководителя по всем источникам"""
+def resolve_lpr_and_dossier(data, expert_engine, dadata_token):
+    """Единая точка сборки бизнес-досье и координат ЛПР"""
     social_links = data.get('socialLinks') or data.get('links') or []
     if not isinstance(social_links, list):
         social_links = []
         
     direct_messengers, phones = extract_direct_messengers(data)
-    inn_code = extract_inn(data, dadata_token)
+    dossier = fetch_extended_dadata_info(data, dadata_token)
 
-    # 1. Поиск подписи в ответах на отзывы
+    # 1. Поиск подписи в ответах на отзывы (наивысшая достоверность для клиник)
     lpr = extract_lpr_from_reviews(data.get('reviews') or [], expert_engine)
     if lpr and lpr.get("status") == "found":
         lpr["source"] = "Ответы на отзывы Яндекса"
         lpr["channel"] = "Яндекс Отзывы"
 
-    # 2. Поиск через сообщество VK
+    # 2. Поиск через VK
     if not lpr or lpr.get("status") != "found":
         lpr = enrich_lpr_contacts_from_vk(social_links)
 
-    # 3. Поиск через DaData (ЕГРЮЛ/ЕГРИП)
-    if not lpr or lpr.get("status") != "found":
-        search_target = inn_code if inn_code else (data.get("legalName") or data.get("companyName") or data.get("title"))
-        lpr = enrich_lpr_by_dadata(search_target, dadata_token)
+    # 3. Резерв: ЛПР из ЕГРЮЛ/ЕГРИП DaData
+    if (not lpr or lpr.get("status") != "found") and dossier["lpr_name"]:
+        lpr = {
+            "name": dossier["lpr_name"],
+            "role": dossier["lpr_role"],
+            "channel": "DaData / Реестр",
+            "source": "ЕГРЮЛ / ЕГРИП",
+            "status": "found"
+        }
 
     if not lpr:
         lpr = {"name": "", "role": "Руководство", "status": "not_found", "source": "Не определен"}
 
-    # Привязка прямых мессенджеров для моментального касания
     if direct_messengers.get("tg_link"):
         lpr["direct_tg"] = direct_messengers["tg_link"]
         if not lpr.get("link"):
             lpr["link"] = direct_messengers["tg_link"]
             lpr["channel"] = "Telegram"
+            
     if direct_messengers.get("wa_link"):
         lpr["direct_wa"] = direct_messengers["wa_link"]
         if not lpr.get("link"):
             lpr["link"] = direct_messengers["wa_link"]
             lpr["channel"] = "WhatsApp"
 
-    if phones and not lpr.get("phone"):
-        lpr["phone"] = phones[0]
+    # Извлечение основного email карточки
+    emails = data.get('emails') or []
+    direct_email = ""
+    if emails and isinstance(emails, list):
+        first_e = emails[0]
+        direct_email = first_e.get('address', str(first_e)) if isinstance(first_e, dict) else str(first_e)
 
-    return lpr, inn_code
+    clinic_phone = phones[0] if phones else ""
+
+    return lpr, dossier, direct_email, clinic_phone
 
 # ==========================================
 # 4. БАЗА ДАННЫХ, CRM И УМНАЯ ЭКОНОМИКА
@@ -570,8 +646,14 @@ def check_oid_history(oid):
 
     return {"exists": False, "source": None, "base_score": None, "last_score": None, "count": 0}
 
-def save_lead_to_results(oid, url, title, niche, total_score, lost_revenue, lpr_data=None, inn=""):
-    """Сохранение организации и обнаруженных координат ЛПР в Google Sheets"""
+def save_lead_to_results(oid, url, title, niche, total_score, lost_revenue, lpr_data, dossier, direct_email, clinic_phone):
+    """
+    Сохранение в CRM Results (ровно 20 колонок от A до T):
+    [A] Дата [B] OID [C] Компания [D] URL [E] Ниша [F] PIN Score [G] ЛПР [H] Должность
+    [I] Личный контакт [J] Кассовый разрыв [K] Статус [L] ИНН [M] Прямой Email
+    [N] Юр. наименование [O] Возраст бизнеса [P] Выручка за год (ФНС) [Q] Штат сотрудников
+    [R] Основной ОКВЭД [S] Телефон клиники [T] Статус юрлица
+    """
     try:
         client = gspread.authorize(get_google_credentials())
         ws = client.open_by_url(st.secrets["SPREADSHEET_URL"]).worksheet("Results")
@@ -579,24 +661,34 @@ def save_lead_to_results(oid, url, title, niche, total_score, lost_revenue, lpr_
         lpr_name = lpr_data.get("name", "") if lpr_data else ""
         lpr_role = lpr_data.get("role", "") if lpr_data else ""
         
-        # Компонуем прямой канал и координаты для связи
         direct_channel = lpr_data.get("channel", "") if lpr_data else ""
-        direct_coord = lpr_data.get("link", "") or lpr_data.get("phone", "") or lpr_data.get("email", "") if lpr_data else ""
+        direct_coord = lpr_data.get("link", "") or lpr_data.get("phone", "") if lpr_data else ""
         contact_display = f"[{direct_channel}] {direct_coord}".strip() if direct_channel else direct_coord
 
+        inn_val = dossier.get("inn", "Поиск вручную")
+        inn_formatted = f"'{inn_val}" if inn_val and inn_val != "Поиск вручную" else inn_val
+
         row = [
-            datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M"),
-            str(oid),
-            title,
-            url,
-            niche,
-            str(round(total_score, 1)).replace('.', ','),
-            lpr_name,
-            lpr_role,
-            contact_display,
-            f"{lost_revenue:,}".replace(',', ' ') + " ₽",
-            "1. Новый лид",
-            f"'{inn}" if inn else ""
+            datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M"), # A: Дата
+            str(oid),                                              # B: OID
+            title,                                                 # C: Компания
+            url,                                                   # D: URL
+            niche,                                                 # E: Ниша
+            str(round(total_score, 1)).replace('.', ','),          # F: PIN Score
+            lpr_name,                                              # G: ЛПР
+            lpr_role,                                              # H: Должность
+            contact_display,                                       # I: Личный контакт
+            f"{lost_revenue:,}".replace(',', ' ') + " ₽",          # J: Кассовый разрыв
+            "1. Новый лид",                                        # K: Статус
+            inn_formatted,                                         # L: ИНН
+            direct_email,                                          # M: Прямой Email
+            dossier.get("legal_name", "—"),                        # N: Юр. наименование
+            dossier.get("business_age_str", "—"),                  # O: Возраст бизнеса
+            dossier.get("revenue_str", "—"),                       # P: Выручка за год (ФНС)
+            dossier.get("employees_str", "—"),                     # Q: Штат сотрудников
+            dossier.get("okved_str", "—"),                         # R: Основной ОКВЭД
+            clinic_phone,                                          # S: Телефон клиники
+            dossier.get("legal_status", "—")                       # T: Статус юрлица
         ]
         ws.append_row(row)
     except Exception:
@@ -915,7 +1007,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if data.get('isVerifiedOwner'):
         scores['PROF-12.1'] = True
 
-    if data.get('legalInfo') or data.get('companyLegalInfo') or (inn_code and len(inn_code) in (10, 12)):
+    if data.get('legalInfo') or data.get('companyLegalInfo') or (inn_code and inn_code != "Поиск вручную" and len(inn_code) in (10, 12)):
         scores['PROF-15.1'] = True
     
     social_items = data.get('socialLinks') or data.get('links') or []
@@ -1280,8 +1372,8 @@ if data_to_process:
     if not safe_title:
         safe_title = "Company"
 
-    # Интеллектуальный поиск ЛПР, каналов связи и юридических данных
-    lpr_data, inn_code = resolve_lpr_profile(data, expert_engine, DADATA_API_KEY)
+    # Каскадная юридическая и контактная разведка
+    lpr_data, dossier, direct_email, clinic_phone = resolve_lpr_and_dossier(data, expert_engine, DADATA_API_KEY)
     
     # Ближайшие конкуренты
     raw_related = data.get('relatedPlaces') or []
@@ -1293,7 +1385,7 @@ if data_to_process:
     with st.spinner("Расчет юнит-экономики и запуск алгоритмов..."):
         niche_key = determine_niche_by_expert(title, cat, prompts_data)
         
-        raw_scores = calculate_hard_facts(data, niche_key, inn_code=inn_code)
+        raw_scores = calculate_hard_facts(data, niche_key, inn_code=dossier["inn"])
         exp_sc = calculate_dynamic_expert_rules(data, prompts_data)
         raw_scores.update(exp_sc)
         
@@ -1361,7 +1453,7 @@ if data_to_process:
         col1, col2 = st.columns([2, 1])
         with col1:
             st.subheader(f"🏢 {title}")
-            inn_badge = f" | 🏛 ИНН: **{inn_code}**" if inn_code else ""
+            inn_badge = f" | 🏛 ИНН: **{dossier['inn']}**" if dossier['inn'] != "Поиск вручную" else " | 🏛 ИНН: *поиск по сайту/вручную*"
             st.caption(f"🔑 Яндекс OID: **{current_oid}**{inn_badge} | 🧠 Сегмент: **{niche_label}**")
             
             if history_info["exists"]:
@@ -1369,14 +1461,13 @@ if data_to_process:
             else:
                 st.success("✨ **Новая организация.** Будет зафиксирована в CRM Results.")
                 
-            # Визуализация контактов ЛПР
+            # Блок ЛПР и каналов связи
             if lpr_data and lpr_data.get('status') == 'found':
                 lpr_fio = lpr_data.get('name') or 'Руководитель'
                 lpr_pos = lpr_data.get('role', 'Руководство')
                 src_info = f" *(источник: {lpr_data.get('source')})*"
                 st.success(f"🕵️‍♂️ **Найден ЛПР:** {lpr_fio} — {lpr_pos}{src_info}")
                 
-                # Дополнительные каналы связи
                 badges = []
                 if lpr_data.get('direct_tg'):
                     badges.append(f"✈️ [Telegram]({lpr_data['direct_tg']})")
@@ -1385,13 +1476,30 @@ if data_to_process:
                 if lpr_data.get('link') and "vk.com" in lpr_data.get('link', ''):
                     badges.append(f"🌐 [Профиль VK]({lpr_data['link']})")
                 if lpr_data.get('phone'):
-                    badges.append(f"📞 Телефон: `{lpr_data['phone']}`")
+                    badges.append(f"📞 Телефон ЛПР: `{lpr_data['phone']}`")
+                elif clinic_phone:
+                    badges.append(f"📞 Клиника: `{clinic_phone}`")
+                if direct_email:
+                    badges.append(f"✉️ `{direct_email}`")
                 if badges:
                     st.markdown("Прямые координаты: " + " | ".join(badges))
             elif lpr_data and lpr_data.get('status') == 'hidden':
                 st.warning("⚠️ **Группа ВК найдена, но блок «Контакты» скрыт.**")
             else:
-                st.caption("ℹ️ Прямые контакты ЛПР в открытых источниках не найдены.")
+                contact_fallbacks = []
+                if clinic_phone:
+                    contact_fallbacks.append(f"📞 Телефон: `{clinic_phone}`")
+                if direct_email:
+                    contact_fallbacks.append(f"✉️ Email: `{direct_email}`")
+                st.caption("ℹ️ Прямой контакт руководителя скрыт. Доступны контакты организации: " + (" | ".join(contact_fallbacks) if contact_fallbacks else "не найдены"))
+
+            # Блок «Юридическая разведка (DaData)»
+            if dossier["found"]:
+                with st.expander("🏛 Юридическое досье компании (ФНС / DaData)", expanded=True):
+                    dc1, dc2, dc3 = st.columns(3)
+                    dc1.markdown(f"**Юрлицо:** {dossier['legal_name']}\n\n**Статус:** {dossier['legal_status']}")
+                    dc2.markdown(f"**Возраст:** {dossier['business_age_str']}\n\n**Штат:** {dossier['employees_str']}")
+                    dc3.markdown(f"**Выручка ФНС:** {dossier['revenue_str']}\n\n**ОКВЭД:** {dossier['okved_str']}")
             
         with col2:
             delta = "Отличный результат" if final_total_score >= 80 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
@@ -1456,7 +1564,7 @@ if data_to_process:
                             if not history_info["exists"]:
                                 save_lead_to_results(
                                     current_oid, source_url, title, niche_key, 
-                                    final_total_score, lost_revenue, lpr_data, inn=inn_code
+                                    final_total_score, lost_revenue, lpr_data, dossier, direct_email, clinic_phone
                                 )
                             else:
                                 b_sc = history_info["base_score"] or final_total_score
