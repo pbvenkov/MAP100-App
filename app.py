@@ -72,24 +72,24 @@ try:
 except Exception:
     expert_engine = None
 
-# Реестр правил: 63 активных критерия (51 Hard + 12 AI)
+# Реестр правил: 63 активных критерия (52 Hard + 11 AI)
 PROGRAMMED_CODES = {
-    # Hard Facts 1.0 & 2.0
+    # Hard Facts (включая алгоритмизированный SEO-19.2)
     'PROF-01.1', 'PROF-03.1', 'PROF-03.2', 'PROF-04.1', 'PROF-04.2',
     'PROF-05.1', 'PROF-05.2', 'PROF-07.1', 'PROF-08.1', 'PROF-08.2',
     'PROF-08.3', 'PROF-09.1', 'PROF-09.2', 'PROF-11.1', 'PROF-11.2',
     'PROF-11.3', 'PROF-11.4', 'PROF-11.5', 'PROF-12.1', 'PROF-13.1',
     'PROF-13.2', 'PROF-14.1', 'PROF-15.1', 'SEO-18.1',  'SEO-18.2',
-    'SEO-18.3',  'GEO-18.4',  'REP-27.1',  'REP-27.2',  'REP-28.1',
-    'REP-29.1',  'REP-30.1',  'REP-30.2',  'REP-30.3',  'REP-30.4',
-    'REP-34.1',  'REP-35.1',  'CONT-36.1', 'CONT-36.2', 'CONT-37.2',
-    'CONT-37.3', 'CONT-38.1', 'CONT-42.1', 'CONV-46.1', 'CONV-48.1',
-    'CONV-50.1', 'CONV-51.1', 'CONV-52.1', 'CONV-53.1', 'ACT-68.1',
-    'REP-85.1',
-    # AI-Кластер (Этап 4)
+    'SEO-18.3',  'GEO-18.4',  'SEO-19.2',  'REP-27.1',  'REP-27.2',
+    'REP-28.1',  'REP-29.1',  'REP-30.1',  'REP-30.2',  'REP-30.3',
+    'REP-30.4',  'REP-34.1',  'REP-35.1',  'CONT-36.1', 'CONT-36.2',
+    'CONT-37.2', 'CONT-37.3', 'CONT-38.1', 'CONT-42.1', 'CONV-46.1',
+    'CONV-48.1', 'CONV-50.1', 'CONV-51.1', 'CONV-52.1', 'CONV-53.1',
+    'ACT-68.1',  'REP-85.1',
+    # AI-Кластер (11 смысловых критериев)
     'PROF-01.2', 'PROF-02.1', 'PROF-10.3', 'PROF-10.4', 'PROF-10.6',
     'CONV-49.1', 'CONV-49.2', 'CONV-49.4', 'REP-31.2',  'REP-32.2',
-    'REP-32.3',  'SEO-19.2'
+    'REP-32.3'
 }
 
 def plural_ru_gen(n, forms_gen):
@@ -1023,6 +1023,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
     if rev_count >= 40:
         scores['REP-28.1'] = True
     
+    # Анализ отзывов с адаптивным окном свежести и извлечением authorLevel
     raw_reviews = data.get('reviews') or []
     all_reviews = [r for r in raw_reviews if isinstance(r, dict)]
     if all_reviews:
@@ -1093,6 +1094,24 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
             scores['REP-30.4'] = True
         if recent_reply:
             scores['REP-85.1'] = True
+
+        # ==========================================
+        # АЛГОРИТМИЧЕСКАЯ ОЦЕНКА SEO-19.2 (УСЛУГИ В ОТЗЫВАХ)
+        # ==========================================
+        niche_service_stems = {
+            "DENTISTRY": ['кариес', 'чистк', 'удал', 'пломб', 'коронк', 'брекет', 'имплант', 'протез', 'винир', 'пульпит', 'отбеливан', 'гигиен', 'наркоз', 'анестези', 'снимок', 'зуб', 'десн'],
+            "AUTO": ['то ', 'масл', 'колодк', 'диагностик', 'ремонт', 'двигател', 'подвеск', 'шиномонтаж', 'балансировк', 'сход-развал', 'мойк', 'кузов', 'бампер'],
+            "HORECA": ['блюд', 'меню', 'пицц', 'паст', 'кофе', 'десерт', 'стейк', 'салат', 'суп', 'завтрак', 'ланч', 'коктейл', 'вино', 'банкет', 'подач'],
+            "BEAUTY_MEDICAL": ['стрижк', 'окрашиван', 'маникюр', 'педикюр', 'ресниц', 'бров', 'массаж', 'пилинг', 'инъекци', 'анализ', 'узи', 'прием', 'консультаци']
+        }
+        target_stems = niche_service_stems.get(niche_key, ['услуг', 'товар', 'заказ', 'работ', 'ремонт', 'прием', 'процедур', 'консультац'])
+        service_mentions = 0
+        for r in all_reviews:
+            r_text = str(r.get('text') or '').lower()
+            if any(stem in r_text for stem in target_stems):
+                service_mentions += 1
+        if service_mentions >= 3:
+            scores['SEO-19.2'] = True
             
     return scores
 
@@ -1102,8 +1121,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
 def evaluate_semantic_ai(data, niche_key="OTHER", engine=None):
     """
     Выполняет строго ОДИН пакетный запрос к Gemini Flash,
-    оценивая сразу 12 смысловых критериев. При сбое или отсутствии ключа
-    возвращает безопасные значения без падения пайплайна.
+    оценивая 11 смысловых критериев описания и коммуникации.
     """
     if not engine:
         return {}
@@ -1112,13 +1130,11 @@ def evaluate_semantic_ai(data, niche_key="OTHER", engine=None):
     categories = ", ".join([c.get('name', str(c)) if isinstance(c, dict) else str(c) for c in (data.get('categories') or [])])
     description = str(data.get('description') or '')
     
-    # Сборка репрезентативной выборки отзывов и официальных ответов
     reviews = data.get('reviews') or []
-    sample_reviews = []
     sample_replies = []
     negative_replies = []
     
-    for r in reviews[:15]:
+    for r in reviews[:20]:
         if not isinstance(r, dict):
             continue
         text = str(r.get('text') or '').strip()
@@ -1129,50 +1145,43 @@ def evaluate_semantic_ai(data, niche_key="OTHER", engine=None):
         else:
             reply = str(r.get('businessComment') or '').strip()
             
-        if text:
-            sample_reviews.append(f"[{rating}*] {text[:200]}")
         if reply:
             sample_replies.append(reply[:200])
             if rating <= 3.0:
-                negative_replies.append(f"Жалоба: {text[:150]} -> Ответ: {reply[:200]}")
+                negative_replies.append(f"Претензия: {text[:150]} -> Ответ клиники: {reply[:200]}")
 
-    reviews_text = "\n".join(sample_reviews[:6])
     replies_text = "\n".join(sample_replies[:5])
     negative_text = "\n".join(negative_replies[:3]) if negative_replies else "Официальных ответов на негатив нет."
 
-    prompt = f"""Ты — строгий аналитик поисковой выдачи Яндекс Карт. Проанализируй профиль организации и верни JSON с булевыми оценками (true/false) по 12 критериям.
+    prompt = f"""Ты — эксперт по локальному маркетингу в гео-сервисах. Проанализируй карточку компании и верни валидный JSON с булевыми значениями (true/false) по 11 критериям.
 
-ДАННЫЕ ПРОФИЛЯ:
+ДАННЫЕ КАРТОЧКИ:
 - Название: {title}
-- Рубрики: {categories}
+- Категория: {categories}
 - Ниша: {niche_key}
-- Описание организации:
-{description[:1800] if description else "Описание отсутствует"}
+- Описание профиля:
+{description[:1800] if len(description) > 20 else "Описание отсутствует или состоит только из адреса"}
 
-ОБРАЗЦЫ ОТЗЫВОВ КЛИЕНТОВ:
-{reviews_text if reviews_text else "Отзывы отсутствуют"}
-
-ОФИЦИАЛЬНЫЕ ОТВЕТЫ РУКОВОДСТВА:
+ОФИЦИАЛЬНЫЕ ОТВЕТЫ ВЛАДЕЛЬЦА НА ОТЗЫВЫ:
 {replies_text if replies_text else "Ответы руководства отсутствуют"}
 
-ОТРАБОТКА НЕГАТИВА (1-3 звезды):
+ОТРАБОТКА НЕГАТИВНЫХ ОТЗЫВОВ (1-3 звезды):
 {negative_text}
 
-КРИТЕРИИ ДЛЯ ОЦЕНКИ (верни true только при твердом соответствии):
-1. PROF-01.2: В названии компании НЕТ спама, городов, слоганов и набивки поисковых ключей (чистое брендовое имя).
-2. PROF-02.1: Описание компании точно соответствует заявленным рубрикам (нет смыслового рассинхрона).
-3. PROF-10.3: В описании перечислен конкретный перечень услуг/процедур (а не просто общие хвалебные слова).
-4. PROF-10.4: В описании указаны твердые преимущества (оборудование, стаж врачей, стандарты, факты).
-5. PROF-10.6: В описании есть явный призыв к действию (CTA: "запишитесь", "звоните", "приходите").
-6. CONV-49.1: Есть конкретное УТП без банальных фраз-штампов вроде "мы лучшие" или "индивидуальный подход".
-7. CONV-49.2: В тексте описания используются числительные и метрики (сроки, опыт, число специалистов, гарантии).
-8. CONV-49.4: Текст релевантен реальным болям пациентов/клиентов ниши (безопасность, безболезненность, точность).
+КРИТЕРИИ ОЦЕНКИ (true только при твердом соответствии):
+1. PROF-01.2: В названии компании НЕТ спама, городов, слоганов и набивки ключевых слов (чистый бренд).
+2. PROF-02.1: Описание бизнеса точно соответствует заявленной рубрике деятельности (нет рассинхрона).
+3. PROF-10.3: В описании явно перечислен перечень конкретных услуг/направлений (а не просто общие слова).
+4. PROF-10.4: В описании приведены конкретные преимущества и факты (оборудование, стаж, методики, гарантии).
+5. PROF-10.6: В описании есть понятный призыв к действию (CTA: "запишитесь", "звоните", "приходите").
+6. CONV-49.1: Есть четкое уникальное торговое предложение (УТП) без штампов ("индивидуальный подход", "мы лучшие").
+7. CONV-49.2: В описании используются конкретные числительные и метрики (сроки, опыт, число врачей, гарантии).
+8. CONV-49.4: Текст обращен к истинным страхам и болям клиентов ниши (безболезненность, прозрачные цены).
 9. REP-31.2: В ответах на отзывы выдержан вежливый, уважительный, единый корпоративный Tone of Voice.
-10. REP-32.2: В ответах полностью отсутствует токсичность, хамство, сарказм и открытые споры с клиентом.
-11. REP-32.3: При ответе на критику/негатив руководство проявляет эмпатию и предлагает решение проблемы (если негатива не было вовсе — ставь true).
-12. SEO-19.2: В текстах отзывов реальные клиенты прямо называют конкретные услуги и процедуры ниши.
+10. REP-32.2: В ответах на отзывы ПОЛНОСТЬЮ отсутствуют открытые споры, сарказм, токсичность и обвинения клиентов.
+11. REP-32.3: При ответе на претензии руководство проявляет эмпатию и предлагает решение ситуации (если негатива нет — ставь true).
 
-Ответь СТРОГО валидным JSON без маркдаун-разметки:
+Верни СТРОГО валидный JSON:
 {{
   "PROF-01.2": true,
   "PROF-02.1": true,
@@ -1184,8 +1193,7 @@ def evaluate_semantic_ai(data, niche_key="OTHER", engine=None):
   "CONV-49.4": true,
   "REP-31.2": true,
   "REP-32.2": true,
-  "REP-32.3": true,
-  "SEO-19.2": true
+  "REP-32.3": true
 }}"""
 
     try:
@@ -1279,17 +1287,19 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     with open(template_path, "r", encoding="utf-8") as f:
         typ_source = f.read()
 
+    # Защита от сбоя режима формул Typst ($P,$ -> ~₽) и удаление артефактов точек
     typ_source = typ_source.replace("$P,$", "~₽").replace("$P$", "~₽").replace(" $P ", " ~₽ ")
+    typ_source = typ_source.replace("([[SCORE]].)", "([[SCORE]])").replace("([[SCORE]]. )", "([[SCORE]]) ")
 
     replacements = {
         "[[TITLE]]": title_safe,
         "[[NICHE]]": niche_safe,
         "[[DATE]]": current_date,
-        "[[SCORE]]": str(round(score, 1)),
+        "[[SCORE]]": str(round(score, 1)).rstrip('.'),
         "[[SCORE_COLOR]]": score_color,
         "[[REV_LOSS_FMT]]": rev_loss_fmt,
         "[[WEEKLY_LOSS_FMT]]": weekly_loss_fmt,
-        "[[DEV]]": str(dev),
+        "[[DEV]]": str(dev).rstrip('.'),
         "[[LOST_LEADS]]": str(lost_leads),
         "[[AUDIENCE_DECLENSION]]": audience_declension,
         "[[CLIENT_LEADS]]": str(client_leads),
@@ -1410,10 +1420,10 @@ if data_to_process:
     with st.spinner("Расчет юнит-экономики и комплексный скоринг профиля..."):
         niche_key = determine_niche_by_expert(title, cat, prompts_data)
         
-        # 1. Алгоритмические проверки (Hard Facts)
+        # 1. Алгоритмические проверки (Hard Facts 1.0 + 2.0 + SEO-19.2)
         raw_scores = calculate_hard_facts(data, niche_key, inn_code=dossier["inn"], dossier=dossier)
         
-        # 2. Пакетная AI-оценка смысловых критериев (1 запрос)
+        # 2. Пакетная AI-оценка смысловых критериев (1 запрос на 11 критериев)
         ai_scores = evaluate_semantic_ai(data, niche_key, expert_engine)
         raw_scores.update(ai_scores)
         
