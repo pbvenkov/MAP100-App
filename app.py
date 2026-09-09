@@ -54,6 +54,19 @@ try:
 except Exception:
     expert_engine = None
 
+# Реестр правил, которые физически реализованы в коде
+PROGRAMMED_CODES = {
+    'PROF-01.1', 'PROF-03.1', 'PROF-03.2', 'PROF-04.1', 'PROF-04.2',
+    'PROF-05.1', 'PROF-05.2', 'PROF-07.1', 'PROF-08.1', 'PROF-08.2',
+    'PROF-08.3', 'PROF-09.1', 'PROF-09.2', 'PROF-11.1', 'PROF-11.2',
+    'PROF-11.3', 'PROF-11.4', 'PROF-11.5', 'PROF-12.1', 'PROF-13.1',
+    'PROF-13.2', 'PROF-15.1', 'SEO-18.1',  'GEO-18.4',  'REP-27.1',
+    'REP-27.2',  'REP-28.1',  'REP-29.1',  'REP-30.1',  'REP-30.2',
+    'REP-30.3',  'REP-30.4',  'REP-34.1',  'REP-35.1',  'CONT-36.1',
+    'CONT-36.2', 'CONT-37.2', 'CONT-37.3', 'CONT-38.1', 'CONT-42.1',
+    'CONV-50.1', 'CONV-51.1', 'ACT-68.1',  'REP-85.1'
+}
+
 def plural_ru(n, forms):
     """Склонение существительных: ('пациент', 'пациента', 'пациентов')"""
     n = abs(int(n)) % 100
@@ -287,7 +300,7 @@ def extract_lpr_from_reviews(reviews_data, engine=None):
 Найди, кем и как подписываются ответы (имя и должность ЛПР: главврач, директор, управляющий, владелица).
 Верни строго JSON:
 {{"name": "Имя или Имя Отчество", "role": "Должность", "status": "found"}}
-Если подписи нет или она обезличена (например, "Администрация" или "Команда"), верни: {{"status": "not_found"}}"""
+Если подписи нет или она обезличена, верни: {{"status": "not_found"}}"""
 
     try:
         raw_res = engine.generate_content(prompt).text
@@ -457,13 +470,16 @@ def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
     base_floor = NICHE_MIN_FLOOR.get(niche_key, 1500)
     floor_val = int(round(base_floor * geo_mult / 100) * 100)
 
-    # 1. Поиск консультаций и первичных приемов в каталоге
     menu_data = data.get('menu')
     m_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
     c_items = data.get('productCatalog') or []
     if not isinstance(c_items, list):
         c_items = []
-    all_items = [p for p in (m_items + c_items) if isinstance(p, dict)]
+    goods_items = data.get('goods') or []
+    if not isinstance(goods_items, list):
+        goods_items = []
+
+    all_items = [p for p in (m_items + c_items + goods_items) if isinstance(p, dict)]
 
     consultation_prices = []
     for item in all_items:
@@ -478,7 +494,6 @@ def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
         target_p = consultation_prices[len(consultation_prices) // 2]
         return max(target_p, floor_val), "Стоимость первичного приема из прейскуранта"
 
-    # 2. HORECA averageBill
     raw_bill = data.get("averageBill") or data.get("priceCategory") or ""
     bill_digits = re.findall(r'\d+', str(raw_bill).replace(' ', ''))
     if bill_digits:
@@ -487,7 +502,6 @@ def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
             avg_bill = int(sum(nums) / len(nums))
             return max(avg_bill, floor_val), "Средний счёт из профиля Яндекса"
 
-    # 3. Базис ниши
     eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
     calc_val = int(round(eco["check"] * geo_mult / 500) * 500)
     return max(calc_val, floor_val), "Консервативный порог первого визита"
@@ -732,7 +746,7 @@ def fetch_apify_data(cleaned_url):
     return first_item
 
 # ==========================================
-# 6. СКОРИНГ: ЭТАП 1 (ХОТФИКСЫ И FAIR SCORE)
+# 6. СКОРИНГ: ХОТФИКСЫ И FAIR SCORE
 # ==========================================
 def parse_yandex_date(date_val):
     if not date_val:
@@ -858,9 +872,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if any(s in owner_links for s in ["vk.com", "vk.ru", "youtube", "dzen", "instagram"]):
         scores['PROF-13.2'] = True
     
-    # ----------------------------------------------------
-    # ХОТФИКС 1: ОБНАРУЖЕНИЕ ОНЛАЙН-ЗАПИСИ (CONV-50.1)
-    # ----------------------------------------------------
+    # Онлайн-запись (CONV-50.1)
     has_booking = False
     if data.get('bookingUrl') or data.get('actionButtons') or data.get('appointmentUrl') or data.get('widgetUrl'):
         has_booking = True
@@ -870,9 +882,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if has_booking:
         scores['CONV-50.1'] = True
     
-    # ----------------------------------------------------
-    # ХОТФИКС 2: КАТАЛОГ И ПРЕЙСКУРАНТ (PROF-11)
-    # ----------------------------------------------------
+    # Каталог и прейскурант (PROF-11)
     menu_data = data.get('menu')
     menu_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
     catalog_items = data.get('productCatalog') or []
@@ -946,7 +956,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if rev_count >= 40:
         scores['REP-28.1'] = True
     
-    # Сортировка отзывов по дате перед анализом
     raw_reviews = data.get('reviews') or []
     all_reviews = [r for r in raw_reviews if isinstance(r, dict)]
     if all_reviews:
@@ -1025,10 +1034,16 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     current_date = datetime.now().strftime("%d.%m.%Y")
     score_color = "166534" if score >= 80 else ("8B7355" if score >= 50 else "9F1239")
     dev = round(100 - score, 1)
-    lost_leads = int(client_leads * (dev / 100))
     
+    # Для сильных карточек ставим минимальный консервативный люфт потерь
+    if score >= 80:
+        lost_leads = max(2, int(client_leads * (dev / 100)))
+        revenue_loss = max(revenue_loss, int(lost_leads * client_check))
+    else:
+        lost_leads = int(client_leads * (dev / 100))
+        
     rev_loss_fmt = f"{revenue_loss:,}".replace(',', ' ')
-    weekly_loss = int(revenue_loss / 4)
+    weekly_loss = max(1, int(revenue_loss / 4))
     weekly_loss_fmt = f"{weekly_loss:,}".replace(',', ' ')
     client_check_fmt = f"{client_check:,}".replace(',', ' ')
     ltv_loss = int(revenue_loss * max(1, client_ltv))
@@ -1057,10 +1072,11 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 
     audience_declension = plural_ru(lost_leads, target_forms)
 
-    # ----------------------------------------------------
-    # ХОТФИКС 3: ДИНАМИЧЕСКИЙ ПОДБОР ОШИБОК ДЛЯ СТР. 3
-    # ----------------------------------------------------
-    failed_items = [r for r in results_data if r['Результат'] == 'НЕТ' and r['Max'] > 0]
+    # Выборка ошибок строго из РЕАЛЬНО проверенных критериев
+    failed_items = [
+        r for r in results_data 
+        if r.get('Evaluated') and r['Результат'] == 'НЕТ' and r['Max'] > 0
+    ]
     failed_items.sort(key=lambda x: x['Max'], reverse=True)
 
     if score >= 75:
@@ -1072,7 +1088,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         p3_subtitle = f"Почему потенциальные клиенты из вашего района обращаются к прямым конкурентам{comp_safe}:"
         exec_summary = f"Прямо сейчас профиль скрыт от *{dev}% целевых клиентов* вашего района. Из-за технических недочетов в оформлении карточки вы каждый месяц отдаете конкурентам локации около *{lost_leads} {audience_declension}*. Высокий рейтинг подтверждает доверие постоянных гостей, однако по общим запросам алгоритмы опускают карточку ниже активных соседей."
 
-    # Заполнение трех динамических слотов
     slots = []
     for i in range(3):
         if i < len(failed_items):
@@ -1133,7 +1148,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         pdf_bytes = typst.compile(typ_path)
     except Exception as e:
         st.error(f"Ошибка компиляции Typst: {e}")
-        with st.expander("🔍 Диагностика Typst: исходный скомпилированный код"):
+        with st.expander("🔍 Диагностика Typst: исходный код"):
             st.code(typ_source, language="typst", line_numbers=True)
         pdf_bytes = b""
     finally:
@@ -1224,9 +1239,7 @@ if data_to_process:
     with st.spinner("Расчет юнит-экономики и скоринг профиля..."):
         niche_key = determine_niche_by_expert(title, cat, prompts_data)
         
-        # Реестр реально оцениваемых критериев в коде
         raw_scores = calculate_hard_facts(data, niche_key, inn_code=dossier["inn"])
-        evaluated_codes = set(raw_scores.keys())
         
         results = []
         earned_sum = 0.0
@@ -1251,11 +1264,9 @@ if data_to_process:
             stage_val = safe_int(r.get('Этап_Внедрения'), 3)
             max_s = safe_float(r.get(target_column, r.get('Балл', 0.0)))
             
-            # ----------------------------------------------------
-            # ХОТФИКС 4: FAIR SCORE (ЧЕСТНЫЙ ДЕЛИКАТНЫЙ БАЛЛ)
-            # ----------------------------------------------------
-            is_evaluated = code in evaluated_codes
-            is_passed = bool(raw_scores.get(code))
+            # Строгий реестр: проверяется ТОЛЬКО если есть в PROGRAMMED_CODES
+            is_evaluated = code in PROGRAMMED_CODES
+            is_passed = bool(raw_scores.get(code, False))
             earned_val = max_s if is_passed else 0.0
             
             if is_evaluated and max_s > 0.0:
@@ -1274,11 +1285,15 @@ if data_to_process:
                 "Evaluated": is_evaluated
             })
 
-        # Честный процент видимости от РЕАЛЬНО проверенных правил
+        # Расчет итогового балла
         if evaluated_max_sum > 0:
             final_total_score = round((earned_sum / evaluated_max_sum) * 100, 1)
         else:
             final_total_score = 50.0
+
+        # Страховка от искусственных 100.0, если есть невыполненные проверки
+        if earned_sum < evaluated_max_sum and final_total_score >= 100.0:
+            final_total_score = 94.0
 
         eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
         niche_label = eco.get("label", "Прочее")
@@ -1294,7 +1309,13 @@ if data_to_process:
             client_ltv = st.number_input("Цикл LTV (месяцев)", value=eco["ltv_months"], step=1)
 
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
-        lost_revenue = int(client_leads * lost_percentage * client_check)
+        
+        # Корректный расчет потерь для сильных карточек
+        if final_total_score >= 80:
+            lost_leads_calc = max(2, int(client_leads * lost_percentage))
+            lost_revenue = max(int(lost_leads_calc * client_check), int(client_leads * lost_percentage * client_check))
+        else:
+            lost_revenue = int(client_leads * lost_percentage * client_check)
 
         history_info = check_oid_history(current_oid)
 
@@ -1332,7 +1353,7 @@ if data_to_process:
                 if badges:
                     st.markdown("Прямые координаты: " + " | ".join(badges))
             else:
-                st.caption("ℹ️ Прямой контакт руководителя скрыт. Доступны общие контакты.")
+                st.caption("ℹ️ Прямой контакт руководителя скрыт. Доступны общие контакты организации.")
 
             if dossier["found"]:
                 with st.expander("🏛 Юридическое досье компании (ФНС / DaData)", expanded=False):
@@ -1347,9 +1368,8 @@ if data_to_process:
 
         st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно.".replace(',', ' '))
         
-        # Индикатор покрытия правил
-        with st.expander(f"🔍 Статус аудита критериев: проверено {len(evaluated_codes)} из {len(rules_data)}", expanded=False):
-            st.caption("Балл нормализован по фактически реализованным проверкам (Fair Score).")
+        with st.expander(f"🔍 Статус аудита критериев: проверено {len(PROGRAMMED_CODES)} из {len(rules_data)}", expanded=False):
+            st.caption("Балл нормализован строго по реализованным правилам (Fair Score).")
             active_list = [f"`{r['Код']}` {r['Критерий']} ({r['Результат']})" for r in results if r['Evaluated']]
             st.write(" | ".join(active_list[:25]) + " ...")
 
@@ -1370,8 +1390,16 @@ if data_to_process:
             
             comp_1 = competitors_list[0] if len(competitors_list) > 0 else ""
             comp_2 = competitors_list[1] if len(competitors_list) > 1 else ""
-            leads_min = max(3, int(client_leads * lost_percentage * 0.8))
-            leads_max = max(5, int(client_leads * lost_percentage))
+            
+            # Адаптивный расчет лидов и выручки для Icebreaker
+            if final_total_score >= 80:
+                leads_min = 2
+                leads_max = 4
+                lost_revenue_adj = max(lost_revenue, int(leads_min * client_check))
+            else:
+                leads_min = max(3, int(client_leads * lost_percentage * 0.8))
+                leads_max = max(5, int(client_leads * lost_percentage))
+                lost_revenue_adj = lost_revenue
 
             template_payload = {
                 "niche_key": niche_key,
@@ -1381,7 +1409,7 @@ if data_to_process:
                 "comp_1": comp_1,
                 "comp_2": comp_2,
                 "lost_leads": f"{leads_min}–{leads_max}",
-                "lost_revenue": lost_revenue,
+                "lost_revenue": lost_revenue_adj,
                 "sender_name": sender_name
             }
             
