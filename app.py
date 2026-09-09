@@ -72,8 +72,9 @@ try:
 except Exception:
     expert_engine = None
 
-# Реестр правил: 50 активных критериев (включая Hard Facts 2.0)
+# Реестр правил: 63 активных критерия (51 Hard + 12 AI)
 PROGRAMMED_CODES = {
+    # Hard Facts 1.0 & 2.0
     'PROF-01.1', 'PROF-03.1', 'PROF-03.2', 'PROF-04.1', 'PROF-04.2',
     'PROF-05.1', 'PROF-05.2', 'PROF-07.1', 'PROF-08.1', 'PROF-08.2',
     'PROF-08.3', 'PROF-09.1', 'PROF-09.2', 'PROF-11.1', 'PROF-11.2',
@@ -84,7 +85,11 @@ PROGRAMMED_CODES = {
     'REP-34.1',  'REP-35.1',  'CONT-36.1', 'CONT-36.2', 'CONT-37.2',
     'CONT-37.3', 'CONT-38.1', 'CONT-42.1', 'CONV-46.1', 'CONV-48.1',
     'CONV-50.1', 'CONV-51.1', 'CONV-52.1', 'CONV-53.1', 'ACT-68.1',
-    'REP-85.1'
+    'REP-85.1',
+    # AI-Кластер (Этап 4)
+    'PROF-01.2', 'PROF-02.1', 'PROF-10.3', 'PROF-10.4', 'PROF-10.6',
+    'CONV-49.1', 'CONV-49.2', 'CONV-49.4', 'REP-31.2',  'REP-32.2',
+    'REP-32.3',  'SEO-19.2'
 }
 
 def plural_ru_gen(n, forms_gen):
@@ -764,7 +769,7 @@ def fetch_apify_data(cleaned_url):
     return first_item
 
 # ==========================================
-# 6. СКОРИНГ: ВАЛИДАЦИЯ ПРАВИЛ И FAIR SCORE
+# 6. СКОРИНГ: АЛГОРИТМИЧЕСКИЕ И СЕМАНТИЧЕСКИЕ ПРАВИЛА
 # ==========================================
 def parse_yandex_date(date_val):
     if not date_val:
@@ -890,17 +895,13 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
     if any(s in owner_links for s in ["vk.com", "vk.ru", "youtube", "dzen", "instagram"]):
         scores['PROF-13.2'] = True
 
-    # ----------------------------------------------------
-    # HARD FACTS 2.0: PROF-14.1 (ГОД ОСНОВАНИЯ БИЗНЕСА)
-    # ----------------------------------------------------
+    # PROF-14.1 Год основания бизнеса
     if dossier and dossier.get("business_age_str") and dossier["business_age_str"] != "—":
         scores['PROF-14.1'] = True
     elif re.search(r'(?:с|основан[ао]?\s*в?|работаем\s*с)\s*(19\d\d|20\d\d)\s*г', desc.lower()):
         scores['PROF-14.1'] = True
     
-    # ----------------------------------------------------
-    # ОНЛАЙН-ЗАПИСЬ (CONV-48.1 - 3 БАЛЛА В DENTISTRY)
-    # ----------------------------------------------------
+    # Онлайн-запись (CONV-48.1 - 3 балла в DENTISTRY)
     has_booking = False
     if data.get('bookingUrl') or data.get('actionButtons') or data.get('appointmentUrl') or data.get('widgetUrl') or data.get('bookingLinks'):
         has_booking = True
@@ -910,13 +911,11 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
     if has_booking:
         scores['CONV-48.1'] = True
         
-    # ПРЯМОЙ ЧАТ В КАРТАХ (CONV-50.1)
+    # Прямой чат в картах (CONV-50.1)
     if data.get('isChatEnabled') or (isinstance(features, dict) and features.get('chat')) or data.get('chat'):
         scores['CONV-50.1'] = True
     
-    # ----------------------------------------------------
-    # КАТАЛОГ И ПРЕЙСКУРАНТ (PROF-11 + CONV-53.1 БЕЙДЖИ)
-    # ----------------------------------------------------
+    # Каталог и прейскурант (PROF-11)
     menu_data = data.get('menu')
     menu_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
     catalog_items = data.get('productCatalog') or []
@@ -940,7 +939,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
         if len(set(p.get('category') for p in valid_prods if p.get('category'))) >= 2:
             scores['PROF-11.5'] = True
 
-        # HARD FACTS 2.0: CONV-53.1 Маркетинговые бейджи и скидки в витрине
+        # CONV-53.1 Маркетинговые бейджи и скидки в витрине
         has_badges = False
         for p in valid_prods:
             p_text = f"{p.get('title', '')} {p.get('name', '')} {p.get('description', '')}".lower()
@@ -956,24 +955,18 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
     if data.get('entrances') or data.get('entranceCoordinates') or data.get('doors'):
         scores['GEO-18.4'] = True
 
-    # ----------------------------------------------------
-    # HARD FACTS 2.0: SEO-18.2 (ЗОНА ОБСЛУЖИВАНИЯ / ВЫЕЗД)
-    # ----------------------------------------------------
+    # SEO-18.2 Зона обслуживания / парковка
     if data.get('serviceArea') or data.get('delivery') or (isinstance(features, dict) and any(k in features for k in ['delivery', 'car_park', 'street_entrance', 'parking'])):
         scores['SEO-18.2'] = True
 
-    # ----------------------------------------------------
-    # HARD FACTS 2.0: SEO-18.3 (ТОПОНИМЫ В ТЕКСТЕ ОПИСАНИЯ)
-    # ----------------------------------------------------
+    # SEO-18.3 Топонимы в тексте описания
     corpus_geo = f"{desc} {title} {data.get('address', '')}".lower()
     metro_names = [str(m.get('name', '')).lower() for m in (data.get('nearbyMetro') or []) if isinstance(m, dict)]
     toponym_stems = ['улиц', 'проспект', 'набережн', 'переулок', 'линия', 'шоссе', 'бульвар', 'площад', 'район', 'остров', 'метро', 'в.о.', 'васильевск', 'москва', 'петербург', 'спб']
     if any(mn in corpus_geo for mn in metro_names if len(mn) > 3) or any(ts in corpus_geo for ts in toponym_stems):
         scores['SEO-18.3'] = True
 
-    # ----------------------------------------------------
-    # HARD FACTS 2.0: CONV-52.1 (НАЛИЧИЕ БЛОКА FAQ)
-    # ----------------------------------------------------
+    # CONV-52.1 Наличие блока FAQ
     if data.get('faq') or data.get('questionsAndAnswers') or data.get('qna'):
         scores['CONV-52.1'] = True
 
@@ -1002,9 +995,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
         scores['CONT-37.2'] = True
         scores['CONT-37.3'] = True
 
-    # ----------------------------------------------------
-    # HARD FACTS 2.0: CONV-46.1 (КАСТОМНАЯ ОБЛОЖКА ПРОФИЛЯ)
-    # ----------------------------------------------------
+    # CONV-46.1 Кастомная обложка профиля
     if photos:
         first_p = photos[0] if isinstance(photos[0], dict) else {}
         first_tags = [t.get('id', '') for t in (first_p.get('tags') or []) if isinstance(t, dict)]
@@ -1032,7 +1023,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
     if rev_count >= 40:
         scores['REP-28.1'] = True
     
-    # Анализ отзывов с адаптивным окном свежести и извлечением authorLevel
     raw_reviews = data.get('reviews') or []
     all_reviews = [r for r in raw_reviews if isinstance(r, dict)]
     if all_reviews:
@@ -1056,7 +1046,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
         recent_reply = False
         
         for r in top_20:
-            # Парсинг уровня автора (прямое поле authorLevel в Apify)
             author_lvl = safe_int(r.get('authorLevel') or r.get('author', {}).get('level') or r.get('userLevel') or 0)
             if author_lvl >= 3:
                 expert_authors += 1
@@ -1106,6 +1095,108 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
             scores['REP-85.1'] = True
             
     return scores
+
+# ==========================================
+# ЭТАП 4: ЕДИНЫЙ ПАКЕТНЫЙ ВЫЗОВ GEMINI (RESOURCE-SAFE)
+# ==========================================
+def evaluate_semantic_ai(data, niche_key="OTHER", engine=None):
+    """
+    Выполняет строго ОДИН пакетный запрос к Gemini Flash,
+    оценивая сразу 12 смысловых критериев. При сбое или отсутствии ключа
+    возвращает безопасные значения без падения пайплайна.
+    """
+    if not engine:
+        return {}
+
+    title = str(data.get('title') or '')
+    categories = ", ".join([c.get('name', str(c)) if isinstance(c, dict) else str(c) for c in (data.get('categories') or [])])
+    description = str(data.get('description') or '')
+    
+    # Сборка репрезентативной выборки отзывов и официальных ответов
+    reviews = data.get('reviews') or []
+    sample_reviews = []
+    sample_replies = []
+    negative_replies = []
+    
+    for r in reviews[:15]:
+        if not isinstance(r, dict):
+            continue
+        text = str(r.get('text') or '').strip()
+        rating = safe_float(r.get('rating'), 5.0)
+        reply = ""
+        if isinstance(r.get('reply'), dict):
+            reply = str(r.get('reply', {}).get('text') or '').strip()
+        else:
+            reply = str(r.get('businessComment') or '').strip()
+            
+        if text:
+            sample_reviews.append(f"[{rating}*] {text[:200]}")
+        if reply:
+            sample_replies.append(reply[:200])
+            if rating <= 3.0:
+                negative_replies.append(f"Жалоба: {text[:150]} -> Ответ: {reply[:200]}")
+
+    reviews_text = "\n".join(sample_reviews[:6])
+    replies_text = "\n".join(sample_replies[:5])
+    negative_text = "\n".join(negative_replies[:3]) if negative_replies else "Официальных ответов на негатив нет."
+
+    prompt = f"""Ты — строгий аналитик поисковой выдачи Яндекс Карт. Проанализируй профиль организации и верни JSON с булевыми оценками (true/false) по 12 критериям.
+
+ДАННЫЕ ПРОФИЛЯ:
+- Название: {title}
+- Рубрики: {categories}
+- Ниша: {niche_key}
+- Описание организации:
+{description[:1800] if description else "Описание отсутствует"}
+
+ОБРАЗЦЫ ОТЗЫВОВ КЛИЕНТОВ:
+{reviews_text if reviews_text else "Отзывы отсутствуют"}
+
+ОФИЦИАЛЬНЫЕ ОТВЕТЫ РУКОВОДСТВА:
+{replies_text if replies_text else "Ответы руководства отсутствуют"}
+
+ОТРАБОТКА НЕГАТИВА (1-3 звезды):
+{negative_text}
+
+КРИТЕРИИ ДЛЯ ОЦЕНКИ (верни true только при твердом соответствии):
+1. PROF-01.2: В названии компании НЕТ спама, городов, слоганов и набивки поисковых ключей (чистое брендовое имя).
+2. PROF-02.1: Описание компании точно соответствует заявленным рубрикам (нет смыслового рассинхрона).
+3. PROF-10.3: В описании перечислен конкретный перечень услуг/процедур (а не просто общие хвалебные слова).
+4. PROF-10.4: В описании указаны твердые преимущества (оборудование, стаж врачей, стандарты, факты).
+5. PROF-10.6: В описании есть явный призыв к действию (CTA: "запишитесь", "звоните", "приходите").
+6. CONV-49.1: Есть конкретное УТП без банальных фраз-штампов вроде "мы лучшие" или "индивидуальный подход".
+7. CONV-49.2: В тексте описания используются числительные и метрики (сроки, опыт, число специалистов, гарантии).
+8. CONV-49.4: Текст релевантен реальным болям пациентов/клиентов ниши (безопасность, безболезненность, точность).
+9. REP-31.2: В ответах на отзывы выдержан вежливый, уважительный, единый корпоративный Tone of Voice.
+10. REP-32.2: В ответах полностью отсутствует токсичность, хамство, сарказм и открытые споры с клиентом.
+11. REP-32.3: При ответе на критику/негатив руководство проявляет эмпатию и предлагает решение проблемы (если негатива не было вовсе — ставь true).
+12. SEO-19.2: В текстах отзывов реальные клиенты прямо называют конкретные услуги и процедуры ниши.
+
+Ответь СТРОГО валидным JSON без маркдаун-разметки:
+{{
+  "PROF-01.2": true,
+  "PROF-02.1": true,
+  "PROF-10.3": true,
+  "PROF-10.4": true,
+  "PROF-10.6": true,
+  "CONV-49.1": true,
+  "CONV-49.2": true,
+  "CONV-49.4": true,
+  "REP-31.2": true,
+  "REP-32.2": true,
+  "REP-32.3": true,
+  "SEO-19.2": true
+}}"""
+
+    try:
+        raw_res = engine.generate_content(prompt).text
+        match = re.search(r'\{.*\}', raw_res, re.DOTALL)
+        if match:
+            ai_dict = json.loads(match.group(0))
+            return {k: bool(v) for k, v in ai_dict.items() if k in PROGRAMMED_CODES}
+    except Exception:
+        pass
+    return {}
 
 # ==========================================
 # 7. ГЕНЕРАЦИЯ ДИНАМИЧЕСКОГО PDF (TYPST)
@@ -1188,7 +1279,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     with open(template_path, "r", encoding="utf-8") as f:
         typ_source = f.read()
 
-    # Защита от сбоя режима формул Typst ($P,$ -> ~₽)
     typ_source = typ_source.replace("$P,$", "~₽").replace("$P$", "~₽").replace(" $P ", " ~₽ ")
 
     replacements = {
@@ -1317,11 +1407,15 @@ if data_to_process:
     competitors_list = [str(c.get('name')).strip() for c in raw_related if isinstance(c, dict) and c.get('name')][:2] if isinstance(raw_related, list) else []
     competitors_text = f" (например, {', '.join(competitors_list)})" if competitors_list else ""
     
-    with st.spinner("Расчет юнит-экономики и скоринг профиля..."):
+    with st.spinner("Расчет юнит-экономики и комплексный скоринг профиля..."):
         niche_key = determine_niche_by_expert(title, cat, prompts_data)
         
-        # Запуск скоринга с передачей досье DaData для Hard Facts 2.0
+        # 1. Алгоритмические проверки (Hard Facts)
         raw_scores = calculate_hard_facts(data, niche_key, inn_code=dossier["inn"], dossier=dossier)
+        
+        # 2. Пакетная AI-оценка смысловых критериев (1 запрос)
+        ai_scores = evaluate_semantic_ai(data, niche_key, expert_engine)
+        raw_scores.update(ai_scores)
         
         results = []
         earned_sum = 0.0
@@ -1346,7 +1440,6 @@ if data_to_process:
             stage_val = safe_int(r.get('Этап_Внедрения'), 3)
             max_s = safe_float(r.get(target_column, r.get('Балл', 0.0)))
             
-            # Строгий фильтр: оцениваются только реализованные правила
             is_evaluated = code in PROGRAMMED_CODES
             is_passed = bool(raw_scores.get(code, False))
             earned_val = max_s if is_passed else 0.0
@@ -1367,7 +1460,7 @@ if data_to_process:
                 "Evaluated": is_evaluated
             })
 
-        # Расчет итогового балла (Fair Score)
+        # Честный процент видимости (Fair Score)
         if evaluated_max_sum > 0:
             final_total_score = round((earned_sum / evaluated_max_sum) * 100, 1)
         else:
@@ -1391,7 +1484,7 @@ if data_to_process:
 
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
         
-        # Унифицированный порог 75 баллов для лидеров
+        # Порог 75 баллов для лидерского статуса
         if final_total_score >= 75:
             lost_leads_calc = max(2, int(client_leads * lost_percentage))
             lost_revenue = max(int(lost_leads_calc * client_check), int(client_leads * lost_percentage * client_check))
@@ -1450,7 +1543,7 @@ if data_to_process:
         st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно.".replace(',', ' '))
         
         with st.expander(f"🔍 Статус аудита критериев: проверено {len(PROGRAMMED_CODES)} из {len(rules_data)}", expanded=False):
-            st.caption("Балл нормализован строго по реализованным правилам (Fair Score).")
+            st.caption("Балл нормализован строго по реализованным проверкам (Fair Score).")
             active_list = [f"`{r['Код']}` {r['Критерий']} ({r['Результат']})" for r in results if r['Evaluated']]
             st.write(" | ".join(active_list[:30]) + " ...")
 
