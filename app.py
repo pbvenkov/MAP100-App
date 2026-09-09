@@ -25,7 +25,25 @@ try:
     from utils import generate_icebreaker_text
 except ImportError:
     def generate_icebreaker_text(data, templates_dict=None):
-        return f"Здравствуйте! Подготовлен аудит для {data.get('title', 'организации')}."
+        if data.get("score", 0) >= 75:
+            return (
+                f"Добрый день!\n\n"
+                f"Меня зовут {data.get('sender_name', 'Павел')}. Анализирую поисковую гео-выдачу Яндекса в вашем районе.\n\n"
+                f"У «{data.get('title', 'организации')}» сформирована сильная репутация (оценка {data.get('rating', '5.0')}), "
+                f"однако в карточке есть несколько скрытых технических точек роста, из-за которых часть первичных обращений "
+                f"перехватывают ближайшие соседи ({data.get('comp_1', 'конкуренты')}).\n\n"
+                f"По трафику локации клиника недополучает порядка {data.get('lost_leads', '2–4')} первичных пациентов в месяц "
+                f"(около {data.get('lost_revenue', 0):,} ₽ выручки).\n\n"
+                f"Свели детальный аудит в короткий 4-страничный отчет. Отправить PDF руководителю?"
+            ).replace(',', ' ')
+        return (
+            f"Добрый день!\n\n"
+            f"Меня зовут {data.get('sender_name', 'Павел')}. Анализирую поисковую выдачу стоматологий на Яндекс Картах вашего района.\n\n"
+            f"У «{data.get('title', 'организации')}» отличная репутация, но по общим целевым запросам карточка уступает ТОП-позиции конкурентам.\n\n"
+            f"Клиника ежемесячно упускает около {data.get('lost_leads', '3–5')} первичных обращений "
+            f"(порядка {data.get('lost_revenue', 0):,} ₽ недополученной выручки первого визита).\n\n"
+            f"Подготовили 4-страничный аналитический разбор с точками роста. Куда удобнее прислать PDF?"
+        ).replace(',', ' ')
 
 try:
     from drive_manager import DriveManager
@@ -54,7 +72,7 @@ try:
 except Exception:
     expert_engine = None
 
-# Реестр правил, которые физически реализованы в коде
+# Реестр правил, которые физически реализованы и валидируются алгоритмом
 PROGRAMMED_CODES = {
     'PROF-01.1', 'PROF-03.1', 'PROF-03.2', 'PROF-04.1', 'PROF-04.2',
     'PROF-05.1', 'PROF-05.2', 'PROF-07.1', 'PROF-08.1', 'PROF-08.2',
@@ -64,7 +82,7 @@ PROGRAMMED_CODES = {
     'REP-27.2',  'REP-28.1',  'REP-29.1',  'REP-30.1',  'REP-30.2',
     'REP-30.3',  'REP-30.4',  'REP-34.1',  'REP-35.1',  'CONT-36.1',
     'CONT-36.2', 'CONT-37.2', 'CONT-37.3', 'CONT-38.1', 'CONT-42.1',
-    'CONV-50.1', 'CONV-51.1', 'ACT-68.1',  'REP-85.1'
+    'CONV-48.1', 'CONV-50.1', 'CONV-51.1', 'ACT-68.1',  'REP-85.1'
 }
 
 def plural_ru(n, forms):
@@ -101,6 +119,7 @@ def clean_typography(text):
         return ""
     t = str(text).replace(" - ", " — ").replace(">=", "≥").replace("<=", "≤").replace("->", "→")
     t = t.replace("<", " меньше ").replace(">", " больше ")
+    # Очистка спецсимволов Typst (включая знак $, чтобы избежать перехода в режим формул)
     for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`', '~', '^']:
         t = t.replace(c, ' ')
     return " ".join(t.split())
@@ -746,7 +765,7 @@ def fetch_apify_data(cleaned_url):
     return first_item
 
 # ==========================================
-# 6. СКОРИНГ: ХОТФИКСЫ И FAIR SCORE
+# 6. СКОРИНГ: ВАЛИДАЦИЯ ПРАВИЛ И FAIR SCORE
 # ==========================================
 def parse_yandex_date(date_val):
     if not date_val:
@@ -872,7 +891,9 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if any(s in owner_links for s in ["vk.com", "vk.ru", "youtube", "dzen", "instagram"]):
         scores['PROF-13.2'] = True
     
-    # Онлайн-запись (CONV-50.1)
+    # ----------------------------------------------------
+    # ОНЛАЙН-ЗАПИСЬ (CONV-48.1 - 3 БАЛЛА В DENTISTRY)
+    # ----------------------------------------------------
     has_booking = False
     if data.get('bookingUrl') or data.get('actionButtons') or data.get('appointmentUrl') or data.get('widgetUrl'):
         has_booking = True
@@ -880,9 +901,13 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if any(bd in owner_links for bd in booking_domains):
         has_booking = True
     if has_booking:
+        scores['CONV-48.1'] = True
+        
+    # ПРЯМОЙ ЧАТ В КАРТАХ (CONV-50.1)
+    if data.get('isChatEnabled') or (isinstance(features, dict) and features.get('chat')) or data.get('chat'):
         scores['CONV-50.1'] = True
     
-    # Каталог и прейскурант (PROF-11)
+    # КАТАЛОГ И ПРЕЙСКУРАНТ (PROF-11)
     menu_data = data.get('menu')
     menu_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
     catalog_items = data.get('productCatalog') or []
@@ -956,6 +981,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if rev_count >= 40:
         scores['REP-28.1'] = True
     
+    # Анализ отзывов с адаптивным окном свежести
     raw_reviews = data.get('reviews') or []
     all_reviews = [r for r in raw_reviews if isinstance(r, dict)]
     if all_reviews:
@@ -965,7 +991,10 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
         )
         top_20 = all_reviews[:20]
         first_date = parse_yandex_date(all_reviews[0].get('date'))
-        if first_date and (now - first_date).days <= 21:
+        
+        # В медицине цикл написания отзыва длительнее (окно свежести 30 дней)
+        freshness_window = 30 if niche_key in ["DENTISTRY", "BEAUTY_MEDICAL"] else 21
+        if first_date and (now - first_date).days <= freshness_window:
             scores['REP-29.1'] = True
             
         replied = 0
@@ -1035,7 +1064,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     score_color = "166534" if score >= 80 else ("8B7355" if score >= 50 else "9F1239")
     dev = round(100 - score, 1)
     
-    # Для сильных карточек ставим минимальный консервативный люфт потерь
     if score >= 80:
         lost_leads = max(2, int(client_leads * (dev / 100)))
         revenue_loss = max(revenue_loss, int(lost_leads * client_check))
@@ -1072,7 +1100,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 
     audience_declension = plural_ru(lost_leads, target_forms)
 
-    # Выборка ошибок строго из РЕАЛЬНО проверенных критериев
+    # Выборка ошибок строго из РЕАЛЬНО проверенных критериев (Evaluated == True)
     failed_items = [
         r for r in results_data 
         if r.get('Evaluated') and r['Результат'] == 'НЕТ' and r['Max'] > 0
@@ -1264,7 +1292,7 @@ if data_to_process:
             stage_val = safe_int(r.get('Этап_Внедрения'), 3)
             max_s = safe_float(r.get(target_column, r.get('Балл', 0.0)))
             
-            # Строгий реестр: проверяется ТОЛЬКО если есть в PROGRAMMED_CODES
+            # Строгий фильтр: оцениваются только реализованные правила
             is_evaluated = code in PROGRAMMED_CODES
             is_passed = bool(raw_scores.get(code, False))
             earned_val = max_s if is_passed else 0.0
@@ -1285,13 +1313,12 @@ if data_to_process:
                 "Evaluated": is_evaluated
             })
 
-        # Расчет итогового балла
+        # Расчет итогового балла (Fair Score)
         if evaluated_max_sum > 0:
             final_total_score = round((earned_sum / evaluated_max_sum) * 100, 1)
         else:
             final_total_score = 50.0
 
-        # Страховка от искусственных 100.0, если есть невыполненные проверки
         if earned_sum < evaluated_max_sum and final_total_score >= 100.0:
             final_total_score = 94.0
 
@@ -1310,7 +1337,6 @@ if data_to_process:
 
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
         
-        # Корректный расчет потерь для сильных карточек
         if final_total_score >= 80:
             lost_leads_calc = max(2, int(client_leads * lost_percentage))
             lost_revenue = max(int(lost_leads_calc * client_check), int(client_leads * lost_percentage * client_check))
@@ -1391,7 +1417,6 @@ if data_to_process:
             comp_1 = competitors_list[0] if len(competitors_list) > 0 else ""
             comp_2 = competitors_list[1] if len(competitors_list) > 1 else ""
             
-            # Адаптивный расчет лидов и выручки для Icebreaker
             if final_total_score >= 80:
                 leads_min = 2
                 leads_max = 4
@@ -1405,6 +1430,7 @@ if data_to_process:
                 "niche_key": niche_key,
                 "lpr_name": lpr_data.get("name") if (lpr_data and lpr_data.get("name")) else "",
                 "title": title,
+                "score": final_total_score,
                 "rating": round(safe_float(data.get("rating"), 4.5), 1),
                 "comp_1": comp_1,
                 "comp_2": comp_2,
