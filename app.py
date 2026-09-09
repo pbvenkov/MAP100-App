@@ -85,17 +85,15 @@ PROGRAMMED_CODES = {
     'CONV-48.1', 'CONV-50.1', 'CONV-51.1', 'ACT-68.1',  'REP-85.1'
 }
 
-def plural_ru(n, forms):
-    """Склонение существительных: ('пациент', 'пациента', 'пациентов')"""
+def plural_ru_gen(n, forms_gen):
+    """Склонение в родительном падеже после предлогов 'около', 'порядка' ('пациента', 'пациентов')"""
     n = abs(int(n)) % 100
     n1 = n % 10
     if 10 < n < 20:
-        return forms[2]
-    if 1 < n1 < 5:
-        return forms[1]
+        return forms_gen[1]
     if n1 == 1:
-        return forms[0]
-    return forms[2]
+        return forms_gen[0]
+    return forms_gen[1]
 
 def safe_float(val, default=0.0):
     if val is None:
@@ -892,7 +890,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     
     # Онлайн-запись (CONV-48.1 - 3 балла в DENTISTRY)
     has_booking = False
-    if data.get('bookingUrl') or data.get('actionButtons') or data.get('appointmentUrl') or data.get('widgetUrl'):
+    if data.get('bookingUrl') or data.get('actionButtons') or data.get('appointmentUrl') or data.get('widgetUrl') or data.get('bookingLinks'):
         has_booking = True
     booking_domains = ["yclients", "medesk", "booking", "dikidi", "infoclinica", "dental-booking", "online-zapis"]
     if any(bd in owner_links for bd in booking_domains):
@@ -978,6 +976,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if rev_count >= 40:
         scores['REP-28.1'] = True
     
+    # Анализ отзывов с адаптивным окном свежести и извлечением authorLevel
     raw_reviews = data.get('reviews') or []
     all_reviews = [r for r in raw_reviews if isinstance(r, dict)]
     if all_reviews:
@@ -1001,7 +1000,8 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
         recent_reply = False
         
         for r in top_20:
-            author_lvl = safe_int(r.get('author', {}).get('level') or r.get('userLevel') or 0)
+            # Парсинг уровня автора (прямое поле authorLevel в Apify)
+            author_lvl = safe_int(r.get('authorLevel') or r.get('author', {}).get('level') or r.get('userLevel') or 0)
             if author_lvl >= 3:
                 expert_authors += 1
 
@@ -1079,21 +1079,21 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     niche_str = str(niche).lower()
     if "стом" in niche_str or "зуб" in niche_str:
         quality_phrase = "стоматологических услуг, квалификации врачей и стандартов лечения"
-        target_forms = ("пациент", "пациента", "пациентов")
+        target_forms_gen = ("пациента", "пациентов")
     elif "мед" in niche_str or "клиник" in niche_str or "бьют" in niche_str or "салон" in niche_str:
         quality_phrase = "медицинских услуг, опыта специалистов и уровня заботы о клиентах"
-        target_forms = ("пациент", "пациента", "пациентов")
+        target_forms_gen = ("пациента", "пациентов")
     elif "horeca" in niche_str or "ресторан" in niche_str or "кафе" in niche_str or "бар" in niche_str:
         quality_phrase = "кухни, сервиса и гостеприимной атмосферы заведения"
-        target_forms = ("гость", "гостя", "гостей")
+        target_forms_gen = ("гостя", "гостей")
     elif "авто" in niche_str or "мойка" in niche_str or "сервис" in niche_str:
         quality_phrase = "ремонта, запчастей и квалификации автомехаников"
-        target_forms = ("автовладелец", "автовладельца", "автовладельцев")
+        target_forms_gen = ("автовладельца", "автовладельцев")
     else:
         quality_phrase = "товаров, услуг и стандартов клиентского сервиса"
-        target_forms = ("клиент", "клиента", "клиентов")
+        target_forms_gen = ("клиента", "клиентов")
 
-    audience_declension = plural_ru(lost_leads, target_forms)
+    audience_declension = plural_ru_gen(lost_leads, target_forms_gen)
 
     failed_items = [
         r for r in results_data 
@@ -1387,7 +1387,6 @@ if data_to_process:
                     dc3.markdown(f"**Выручка ФНС:** {dossier['revenue_str']}\n\n**ОКВЭД:** {dossier['okved_str']}")
             
         with col2:
-            # Синхронизированный с PDF статус (порог 75)
             delta = "Отличный результат (Лидер)" if final_total_score >= 75 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
             st.metric(f"Индекс {PROJECT_NAME}", f"{round(final_total_score, 1)} / 100", delta=delta, delta_color="normal" if final_total_score >= 75 else "inverse")
 
@@ -1416,7 +1415,6 @@ if data_to_process:
             comp_1 = competitors_list[0] if len(competitors_list) > 0 else ""
             comp_2 = competitors_list[1] if len(competitors_list) > 1 else ""
             
-            # Адаптивный расчет лидов и выручки для Icebreaker (порог 75)
             if final_total_score >= 75:
                 leads_min = 2
                 leads_max = 4
