@@ -72,7 +72,7 @@ try:
 except Exception:
     expert_engine = None
 
-# Реестр правил, которые физически реализованы и валидируются алгоритмом
+# Реестр правил, которые физически реализованы в коде
 PROGRAMMED_CODES = {
     'PROF-01.1', 'PROF-03.1', 'PROF-03.2', 'PROF-04.1', 'PROF-04.2',
     'PROF-05.1', 'PROF-05.2', 'PROF-07.1', 'PROF-08.1', 'PROF-08.2',
@@ -119,7 +119,6 @@ def clean_typography(text):
         return ""
     t = str(text).replace(" - ", " — ").replace(">=", "≥").replace("<=", "≤").replace("->", "→")
     t = t.replace("<", " меньше ").replace(">", " больше ")
-    # Очистка спецсимволов Typst (включая знак $, чтобы избежать перехода в режим формул)
     for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`', '~', '^']:
         t = t.replace(c, ' ')
     return " ".join(t.split())
@@ -891,9 +890,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if any(s in owner_links for s in ["vk.com", "vk.ru", "youtube", "dzen", "instagram"]):
         scores['PROF-13.2'] = True
     
-    # ----------------------------------------------------
-    # ОНЛАЙН-ЗАПИСЬ (CONV-48.1 - 3 БАЛЛА В DENTISTRY)
-    # ----------------------------------------------------
+    # Онлайн-запись (CONV-48.1 - 3 балла в DENTISTRY)
     has_booking = False
     if data.get('bookingUrl') or data.get('actionButtons') or data.get('appointmentUrl') or data.get('widgetUrl'):
         has_booking = True
@@ -903,11 +900,11 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if has_booking:
         scores['CONV-48.1'] = True
         
-    # ПРЯМОЙ ЧАТ В КАРТАХ (CONV-50.1)
+    # Прямой чат в картах (CONV-50.1)
     if data.get('isChatEnabled') or (isinstance(features, dict) and features.get('chat')) or data.get('chat'):
         scores['CONV-50.1'] = True
     
-    # КАТАЛОГ И ПРЕЙСКУРАНТ (PROF-11)
+    # Каталог и прейскурант (PROF-11)
     menu_data = data.get('menu')
     menu_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
     catalog_items = data.get('productCatalog') or []
@@ -981,7 +978,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if rev_count >= 40:
         scores['REP-28.1'] = True
     
-    # Анализ отзывов с адаптивным окном свежести
     raw_reviews = data.get('reviews') or []
     all_reviews = [r for r in raw_reviews if isinstance(r, dict)]
     if all_reviews:
@@ -992,7 +988,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
         top_20 = all_reviews[:20]
         first_date = parse_yandex_date(all_reviews[0].get('date'))
         
-        # В медицине цикл написания отзыва длительнее (окно свежести 30 дней)
         freshness_window = 30 if niche_key in ["DENTISTRY", "BEAUTY_MEDICAL"] else 21
         if first_date and (now - first_date).days <= freshness_window:
             scores['REP-29.1'] = True
@@ -1061,10 +1056,10 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
 # ==========================================
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, client_ltv, competitors_text=""):
     current_date = datetime.now().strftime("%d.%m.%Y")
-    score_color = "166534" if score >= 80 else ("8B7355" if score >= 50 else "9F1239")
+    score_color = "166534" if score >= 75 else ("8B7355" if score >= 50 else "9F1239")
     dev = round(100 - score, 1)
     
-    if score >= 80:
+    if score >= 75:
         lost_leads = max(2, int(client_leads * (dev / 100)))
         revenue_loss = max(revenue_loss, int(lost_leads * client_check))
     else:
@@ -1100,7 +1095,6 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 
     audience_declension = plural_ru(lost_leads, target_forms)
 
-    # Выборка ошибок строго из РЕАЛЬНО проверенных критериев (Evaluated == True)
     failed_items = [
         r for r in results_data 
         if r.get('Evaluated') and r['Результат'] == 'НЕТ' and r['Max'] > 0
@@ -1137,6 +1131,9 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 
     with open(template_path, "r", encoding="utf-8") as f:
         typ_source = f.read()
+
+    # Защита от сбоя режима формул Typst ($P,$ -> ~₽)
+    typ_source = typ_source.replace("$P,$", "~₽").replace("$P$", "~₽").replace(" $P ", " ~₽ ")
 
     replacements = {
         "[[TITLE]]": title_safe,
@@ -1337,7 +1334,8 @@ if data_to_process:
 
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
         
-        if final_total_score >= 80:
+        # Унифицированный порог 75 баллов для лидеров
+        if final_total_score >= 75:
             lost_leads_calc = max(2, int(client_leads * lost_percentage))
             lost_revenue = max(int(lost_leads_calc * client_check), int(client_leads * lost_percentage * client_check))
         else:
@@ -1389,8 +1387,9 @@ if data_to_process:
                     dc3.markdown(f"**Выручка ФНС:** {dossier['revenue_str']}\n\n**ОКВЭД:** {dossier['okved_str']}")
             
         with col2:
-            delta = "Отличный результат (Лидер)" if final_total_score >= 80 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
-            st.metric(f"Индекс {PROJECT_NAME}", f"{round(final_total_score, 1)} / 100", delta=delta, delta_color="normal" if final_total_score >= 80 else "inverse")
+            # Синхронизированный с PDF статус (порог 75)
+            delta = "Отличный результат (Лидер)" if final_total_score >= 75 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
+            st.metric(f"Индекс {PROJECT_NAME}", f"{round(final_total_score, 1)} / 100", delta=delta, delta_color="normal" if final_total_score >= 75 else "inverse")
 
         st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно.".replace(',', ' '))
         
@@ -1417,7 +1416,8 @@ if data_to_process:
             comp_1 = competitors_list[0] if len(competitors_list) > 0 else ""
             comp_2 = competitors_list[1] if len(competitors_list) > 1 else ""
             
-            if final_total_score >= 80:
+            # Адаптивный расчет лидов и выручки для Icebreaker (порог 75)
+            if final_total_score >= 75:
                 leads_min = 2
                 leads_max = 4
                 lost_revenue_adj = max(lost_revenue, int(leads_min * client_check))
@@ -1431,6 +1431,7 @@ if data_to_process:
                 "lpr_name": lpr_data.get("name") if (lpr_data and lpr_data.get("name")) else "",
                 "title": title,
                 "score": final_total_score,
+                "is_leader": final_total_score >= 75,
                 "rating": round(safe_float(data.get("rating"), 4.5), 1),
                 "comp_1": comp_1,
                 "comp_2": comp_2,
