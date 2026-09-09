@@ -72,17 +72,19 @@ try:
 except Exception:
     expert_engine = None
 
-# Реестр правил, которые физически реализованы в коде
+# Реестр правил: 50 активных критериев (включая Hard Facts 2.0)
 PROGRAMMED_CODES = {
     'PROF-01.1', 'PROF-03.1', 'PROF-03.2', 'PROF-04.1', 'PROF-04.2',
     'PROF-05.1', 'PROF-05.2', 'PROF-07.1', 'PROF-08.1', 'PROF-08.2',
     'PROF-08.3', 'PROF-09.1', 'PROF-09.2', 'PROF-11.1', 'PROF-11.2',
     'PROF-11.3', 'PROF-11.4', 'PROF-11.5', 'PROF-12.1', 'PROF-13.1',
-    'PROF-13.2', 'PROF-15.1', 'SEO-18.1',  'GEO-18.4',  'REP-27.1',
-    'REP-27.2',  'REP-28.1',  'REP-29.1',  'REP-30.1',  'REP-30.2',
-    'REP-30.3',  'REP-30.4',  'REP-34.1',  'REP-35.1',  'CONT-36.1',
-    'CONT-36.2', 'CONT-37.2', 'CONT-37.3', 'CONT-38.1', 'CONT-42.1',
-    'CONV-48.1', 'CONV-50.1', 'CONV-51.1', 'ACT-68.1',  'REP-85.1'
+    'PROF-13.2', 'PROF-14.1', 'PROF-15.1', 'SEO-18.1',  'SEO-18.2',
+    'SEO-18.3',  'GEO-18.4',  'REP-27.1',  'REP-27.2',  'REP-28.1',
+    'REP-29.1',  'REP-30.1',  'REP-30.2',  'REP-30.3',  'REP-30.4',
+    'REP-34.1',  'REP-35.1',  'CONT-36.1', 'CONT-36.2', 'CONT-37.2',
+    'CONT-37.3', 'CONT-38.1', 'CONT-42.1', 'CONV-46.1', 'CONV-48.1',
+    'CONV-50.1', 'CONV-51.1', 'CONV-52.1', 'CONV-53.1', 'ACT-68.1',
+    'REP-85.1'
 }
 
 def plural_ru_gen(n, forms_gen):
@@ -807,7 +809,7 @@ def determine_niche_by_expert(title, category, prompts_data):
         pass
     return "OTHER"
 
-def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
+def calculate_hard_facts(data, niche_key="OTHER", inn_code="", dossier=None):
     scores = {}
     now = datetime.now(timezone.utc)
     title = str(data.get('title') or '')
@@ -887,8 +889,18 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
         scores['PROF-13.1'] = True
     if any(s in owner_links for s in ["vk.com", "vk.ru", "youtube", "dzen", "instagram"]):
         scores['PROF-13.2'] = True
+
+    # ----------------------------------------------------
+    # HARD FACTS 2.0: PROF-14.1 (ГОД ОСНОВАНИЯ БИЗНЕСА)
+    # ----------------------------------------------------
+    if dossier and dossier.get("business_age_str") and dossier["business_age_str"] != "—":
+        scores['PROF-14.1'] = True
+    elif re.search(r'(?:с|основан[ао]?\s*в?|работаем\s*с)\s*(19\d\d|20\d\d)\s*г', desc.lower()):
+        scores['PROF-14.1'] = True
     
-    # Онлайн-запись (CONV-48.1 - 3 балла в DENTISTRY)
+    # ----------------------------------------------------
+    # ОНЛАЙН-ЗАПИСЬ (CONV-48.1 - 3 БАЛЛА В DENTISTRY)
+    # ----------------------------------------------------
     has_booking = False
     if data.get('bookingUrl') or data.get('actionButtons') or data.get('appointmentUrl') or data.get('widgetUrl') or data.get('bookingLinks'):
         has_booking = True
@@ -898,11 +910,13 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if has_booking:
         scores['CONV-48.1'] = True
         
-    # Прямой чат в картах (CONV-50.1)
+    # ПРЯМОЙ ЧАТ В КАРТАХ (CONV-50.1)
     if data.get('isChatEnabled') or (isinstance(features, dict) and features.get('chat')) or data.get('chat'):
         scores['CONV-50.1'] = True
     
-    # Каталог и прейскурант (PROF-11)
+    # ----------------------------------------------------
+    # КАТАЛОГ И ПРЕЙСКУРАНТ (PROF-11 + CONV-53.1 БЕЙДЖИ)
+    # ----------------------------------------------------
     menu_data = data.get('menu')
     menu_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
     catalog_items = data.get('productCatalog') or []
@@ -925,12 +939,43 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
             scores['PROF-11.4'] = True
         if len(set(p.get('category') for p in valid_prods if p.get('category'))) >= 2:
             scores['PROF-11.5'] = True
+
+        # HARD FACTS 2.0: CONV-53.1 Маркетинговые бейджи и скидки в витрине
+        has_badges = False
+        for p in valid_prods:
+            p_text = f"{p.get('title', '')} {p.get('name', '')} {p.get('description', '')}".lower()
+            if p.get('oldPrice') or p.get('badge') or p.get('badges') or any(w in p_text for w in ['скидк', 'акци', 'хит', 'спецпредложен', 'выгод', '%']):
+                has_badges = True
+                break
+        if has_badges or (isinstance(features, dict) and features.get('promotions')):
+            scores['CONV-53.1'] = True
         
     if len(str(data.get('address') or '')) > 5:
         scores['SEO-18.1'] = True
         
     if data.get('entrances') or data.get('entranceCoordinates') or data.get('doors'):
         scores['GEO-18.4'] = True
+
+    # ----------------------------------------------------
+    # HARD FACTS 2.0: SEO-18.2 (ЗОНА ОБСЛУЖИВАНИЯ / ВЫЕЗД)
+    # ----------------------------------------------------
+    if data.get('serviceArea') or data.get('delivery') or (isinstance(features, dict) and any(k in features for k in ['delivery', 'car_park', 'street_entrance', 'parking'])):
+        scores['SEO-18.2'] = True
+
+    # ----------------------------------------------------
+    # HARD FACTS 2.0: SEO-18.3 (ТОПОНИМЫ В ТЕКСТЕ ОПИСАНИЯ)
+    # ----------------------------------------------------
+    corpus_geo = f"{desc} {title} {data.get('address', '')}".lower()
+    metro_names = [str(m.get('name', '')).lower() for m in (data.get('nearbyMetro') or []) if isinstance(m, dict)]
+    toponym_stems = ['улиц', 'проспект', 'набережн', 'переулок', 'линия', 'шоссе', 'бульвар', 'площад', 'район', 'остров', 'метро', 'в.о.', 'васильевск', 'москва', 'петербург', 'спб']
+    if any(mn in corpus_geo for mn in metro_names if len(mn) > 3) or any(ts in corpus_geo for ts in toponym_stems):
+        scores['SEO-18.3'] = True
+
+    # ----------------------------------------------------
+    # HARD FACTS 2.0: CONV-52.1 (НАЛИЧИЕ БЛОКА FAQ)
+    # ----------------------------------------------------
+    if data.get('faq') or data.get('questionsAndAnswers') or data.get('qna'):
+        scores['CONV-52.1'] = True
 
     if safe_int(data.get('videoCount')) > 0 or data.get('videos') or data.get('mobileVideos'):
         scores['CONT-42.1'] = True
@@ -956,6 +1001,17 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if photo_count >= 25:
         scores['CONT-37.2'] = True
         scores['CONT-37.3'] = True
+
+    # ----------------------------------------------------
+    # HARD FACTS 2.0: CONV-46.1 (КАСТОМНАЯ ОБЛОЖКА ПРОФИЛЯ)
+    # ----------------------------------------------------
+    if photos:
+        first_p = photos[0] if isinstance(photos[0], dict) else {}
+        first_tags = [t.get('id', '') for t in (first_p.get('tags') or []) if isinstance(t, dict)]
+        if "Panorama" not in first_tags and first_p.get('copyright') != "Яндекс":
+            scores['CONV-46.1'] = True
+        elif data.get('logoUrl') or (len(photos) > 1 and any(p.get('copyright') != "Яндекс" for p in photos[:3])):
+            scores['CONV-46.1'] = True
     
     posts = data.get('mobilePosts') or data.get('posts') or []
     if posts:
@@ -1264,7 +1320,8 @@ if data_to_process:
     with st.spinner("Расчет юнит-экономики и скоринг профиля..."):
         niche_key = determine_niche_by_expert(title, cat, prompts_data)
         
-        raw_scores = calculate_hard_facts(data, niche_key, inn_code=dossier["inn"])
+        # Запуск скоринга с передачей досье DaData для Hard Facts 2.0
+        raw_scores = calculate_hard_facts(data, niche_key, inn_code=dossier["inn"], dossier=dossier)
         
         results = []
         earned_sum = 0.0
@@ -1395,7 +1452,7 @@ if data_to_process:
         with st.expander(f"🔍 Статус аудита критериев: проверено {len(PROGRAMMED_CODES)} из {len(rules_data)}", expanded=False):
             st.caption("Балл нормализован строго по реализованным правилам (Fair Score).")
             active_list = [f"`{r['Код']}` {r['Критерий']} ({r['Результат']})" for r in results if r['Evaluated']]
-            st.write(" | ".join(active_list[:25]) + " ...")
+            st.write(" | ".join(active_list[:30]) + " ...")
 
         pdf_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check, client_ltv, competitors_text)
         
