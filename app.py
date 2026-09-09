@@ -106,34 +106,6 @@ def send_telegram_alert(error_msg, target_url="Неизвестно"):
         except Exception:
             pass
 
-def send_telegram_business_alert(title, category, unique_keys):
-    tg_token = st.secrets.get("TG_BOT_TOKEN")
-    tg_admin_id = st.secrets.get("TG_ADMIN_ID")
-    if not (tg_token and tg_admin_id):
-        return
-
-    ai_reasoning = "Потенциально высокий LTV. Требует ручной бизнес-оценки."
-    if expert_engine:
-        try:
-            prompt = f"Кратко (в 2 предложениях) оцени нишу '{category}' (компания '{title}'). Почему B2B-консалтинг окупится в этом сегменте?"
-            response = expert_engine.generate_content(prompt)
-            ai_reasoning = response.text.strip()
-        except Exception:
-            pass
-
-    tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-    text = (
-        f"🚨 *Обнаружена новая ниша!*\n\n"
-        f"🏢 *Компания:* {title}\n"
-        f"🏷 *Категория:* {category}\n"
-        f"🔑 *Ключи:* {', '.join(unique_keys)}\n\n"
-        f"💡 *Оценка ИИ:*\n_{ai_reasoning}_"
-    )
-    try:
-        requests.post(tg_url, json={"chat_id": tg_admin_id, "text": text, "parse_mode": "Markdown"}, timeout=5)
-    except Exception:
-        pass
-
 # ==========================================
 # 3. КАСКАДНАЯ РАЗВЕДКА: DADATA, САЙТ И ЛПР
 # ==========================================
@@ -147,7 +119,6 @@ def extract_inn_from_text(text):
     return ""
 
 def scrape_inn_from_website(website_url):
-    """Поиск ИНН на официальном сайте клиники (подвал, лицензии, реквизиты)"""
     if not website_url or not str(website_url).startswith("http"):
         return ""
     try:
@@ -162,7 +133,6 @@ def scrape_inn_from_website(website_url):
     return ""
 
 def query_dadata_party(query_val, dadata_token):
-    """Прямой запрос к API DaData по ИНН или названию"""
     if not dadata_token or not query_val:
         return None
     url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
@@ -181,12 +151,6 @@ def query_dadata_party(query_val, dadata_token):
     return None
 
 def fetch_extended_dadata_info(data, dadata_token):
-    """
-    Каскадный сбор юридического досье компании:
-    1. ИНН из профиля Яндекса
-    2. Сканирование сайта клиники
-    3. Поиск юрлица в DaData
-    """
     inn_code = ""
     legal_info = data.get('legalInfo') or data.get('companyLegalInfo') or {}
     if isinstance(legal_info, dict) and legal_info.get('inn'):
@@ -198,7 +162,6 @@ def fetch_extended_dadata_info(data, dadata_token):
         corpus = " ".join([str(data.get('description') or ''), str(data.get('legalName') or ''), str(data.get('companyName') or '')])
         inn_code = extract_inn_from_text(corpus)
 
-    # Fallback: сканируем официальный сайт
     website_url = data.get('url') or data.get('website')
     if not inn_code and website_url:
         inn_code = scrape_inn_from_website(website_url)
@@ -207,7 +170,6 @@ def fetch_extended_dadata_info(data, dadata_token):
     if inn_code:
         party_data = query_dadata_party(inn_code, dadata_token)
     
-    # Резервный поиск по коммерческому названию
     if not party_data:
         search_target = data.get("legalName") or data.get("companyName") or data.get("title")
         if search_target and len(search_target) > 3:
@@ -233,7 +195,6 @@ def fetch_extended_dadata_info(data, dadata_token):
         dossier["inn"] = party_data.get("inn", inn_code or "Поиск вручную")
         dossier["legal_name"] = party_data.get("name", {}).get("full_with_opf") or party_data.get("name", {}).get("short_with_opf") or "Юрлицо найдено"
         
-        # ЛПР из реестра
         management = party_data.get("management") or {}
         if management.get("name"):
             dossier["lpr_name"] = management.get("name")
@@ -243,14 +204,12 @@ def fetch_extended_dadata_info(data, dadata_token):
             dossier["lpr_name"] = fio
             dossier["lpr_role"] = "Индивидуальный предприниматель"
 
-        # Возраст бизнеса
         reg_date_raw = party_data.get("state", {}).get("registration_date")
         if reg_date_raw:
             reg_year = datetime.fromtimestamp(reg_date_raw / 1000, tz=timezone.utc).year
             age = max(0, datetime.now().year - reg_year)
             dossier["business_age_str"] = f"{age} лет (с {reg_year} г.)" if age > 0 else f"Менее 1 года (с {reg_year} г.)"
 
-        # Финансы (ФНС)
         finance = party_data.get("finance") or {}
         rev = finance.get("revenue")
         if rev and safe_int(rev) > 0:
@@ -260,18 +219,15 @@ def fetch_extended_dadata_info(data, dadata_token):
             else:
                 dossier["revenue_str"] = f"{rev_val:,} ₽/год".replace(',', ' ')
 
-        # Численность штата
         emp = party_data.get("employee_count")
         if emp:
             dossier["employees_str"] = f"{emp} чел."
 
-        # ОКВЭД
         okv = party_data.get("okved", "")
         okv_name = party_data.get("okved_data", {}).get("name", "") if party_data.get("okved_data") else ""
         if okv:
             dossier["okved_str"] = f"{okv} {okv_name}".strip()
 
-        # Статус
         st_val = party_data.get("state", {}).get("status", "ACTIVE")
         status_map = {
             "ACTIVE": "Действующее",
@@ -284,7 +240,6 @@ def fetch_extended_dadata_info(data, dadata_token):
     return dossier
 
 def extract_direct_messengers(data):
-    """Поиск прямых ссылок на мессенджеры и телефонов в профиле Карт"""
     links = data.get('socialLinks') or data.get('links') or []
     candidate_links = []
     if isinstance(links, list):
@@ -312,10 +267,8 @@ def extract_direct_messengers(data):
     return contact_info, phone_numbers
 
 def extract_lpr_from_reviews(reviews_data, engine=None):
-    """Поиск подписи руководства в официальных ответах на отзывы"""
     if not reviews_data or not engine:
         return {}
-        
     replies = []
     for r in reviews_data[:20]:
         if not isinstance(r, dict):
@@ -348,7 +301,6 @@ def extract_lpr_from_reviews(reviews_data, engine=None):
     return {}
 
 def enrich_lpr_contacts_from_vk(social_links):
-    """Поиск руководителя через VK API с получением мобильного и Telegram"""
     if not VK_API_TOKEN or not social_links:
         return {}
     vk_url = next((link.get('url', '') for link in social_links if isinstance(link, dict) and ('vk.com' in link.get('url', '') or 'vk.ru' in link.get('url', ''))), None)
@@ -402,7 +354,6 @@ def enrich_lpr_contacts_from_vk(social_links):
     return {}
 
 def resolve_lpr_and_dossier(data, expert_engine, dadata_token):
-    """Единая точка сборки бизнес-досье и координат ЛПР"""
     social_links = data.get('socialLinks') or data.get('links') or []
     if not isinstance(social_links, list):
         social_links = []
@@ -410,17 +361,14 @@ def resolve_lpr_and_dossier(data, expert_engine, dadata_token):
     direct_messengers, phones = extract_direct_messengers(data)
     dossier = fetch_extended_dadata_info(data, dadata_token)
 
-    # 1. Поиск подписи в ответах на отзывы (наивысшая достоверность для клиник)
     lpr = extract_lpr_from_reviews(data.get('reviews') or [], expert_engine)
     if lpr and lpr.get("status") == "found":
         lpr["source"] = "Ответы на отзывы Яндекса"
         lpr["channel"] = "Яндекс Отзывы"
 
-    # 2. Поиск через VK
     if not lpr or lpr.get("status") != "found":
         lpr = enrich_lpr_contacts_from_vk(social_links)
 
-    # 3. Резерв: ЛПР из ЕГРЮЛ/ЕГРИП DaData
     if (not lpr or lpr.get("status") != "found") and dossier["lpr_name"]:
         lpr = {
             "name": dossier["lpr_name"],
@@ -445,7 +393,6 @@ def resolve_lpr_and_dossier(data, expert_engine, dadata_token):
             lpr["link"] = direct_messengers["wa_link"]
             lpr["channel"] = "WhatsApp"
 
-    # Извлечение основного email карточки
     emails = data.get('emails') or []
     direct_email = ""
     if emails and isinstance(emails, list):
@@ -453,30 +400,29 @@ def resolve_lpr_and_dossier(data, expert_engine, dadata_token):
         direct_email = first_e.get('address', str(first_e)) if isinstance(first_e, dict) else str(first_e)
 
     clinic_phone = phones[0] if phones else ""
-
     return lpr, dossier, direct_email, clinic_phone
 
 # ==========================================
 # 4. БАЗА ДАННЫХ, CRM И УМНАЯ ЭКОНОМИКА
 # ==========================================
 NICHE_ECONOMICS = {
-    "DENTISTRY": {"leads": 70, "check": 6500, "label": "Стоматология", "ltv_months": 12},
+    "DENTISTRY": {"leads": 70, "check": 4500, "label": "Стоматология", "ltv_months": 12},
     "HORECA": {"leads": 150, "check": 1500, "label": "HORECA / Рестораны", "ltv_months": 12},
     "B2B": {"leads": 40, "check": 25000, "label": "Легкий B2B / Опт", "ltv_months": 12},
     "B2B_HEAVY": {"leads": 10, "check": 300000, "label": "Сложный B2B / Производство", "ltv_months": 1},
     "RETAIL": {"leads": 200, "check": 1200, "label": "Ритейл", "ltv_months": 12},
-    "AUTO": {"leads": 100, "check": 5500, "label": "Автосервис / Автосалон", "ltv_months": 6},
-    "SERVICES": {"leads": 60, "check": 4000, "label": "Услуги B2C", "ltv_months": 6},
+    "AUTO": {"leads": 100, "check": 4500, "label": "Автосервис / Автосалон", "ltv_months": 6},
+    "SERVICES": {"leads": 60, "check": 3500, "label": "Услуги B2C", "ltv_months": 6},
     "BEAUTY_MEDICAL": {"leads": 80, "check": 3500, "label": "Медицина / Бьюти", "ltv_months": 12},
     "EDUCATION": {"leads": 30, "check": 18000, "label": "Образование", "ltv_months": 12},
     "OTHER": {"leads": 50, "check": 3000, "label": "Прочее", "ltv_months": 6}
 }
 
 NICHE_MIN_FLOOR = {
-    "DENTISTRY": 4500,
-    "AUTO": 3000,
+    "DENTISTRY": 3500,
+    "AUTO": 2500,
     "BEAUTY_MEDICAL": 2500,
-    "EDUCATION": 8000,
+    "EDUCATION": 6000,
     "B2B": 15000,
     "B2B_HEAVY": 100000,
     "HORECA": 900,
@@ -488,7 +434,7 @@ NICHE_MIN_FLOOR = {
 GEO_TIERS = {
     "TIER_1": {
         "cities": ["москва", "санкт-петербург", "петербург", "зеленоград", "сочи"],
-        "multiplier": 1.45
+        "multiplier": 1.25
     },
     "TIER_2": {
         "cities": [
@@ -496,27 +442,9 @@ GEO_TIERS = {
             "красноярск", "самара", "уфа", "ростов-на-дону", "омск", "краснодар",
             "воронеж", "пермь", "волгоград", "тюмень", "владивосток"
         ],
-        "multiplier": 1.15
+        "multiplier": 1.10
     }
 }
-
-def _calculate_geo_check(data: dict, niche_key: str) -> tuple[int, str]:
-    base_eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
-    base_check = base_eco["check"]
-    
-    address = str(data.get("address") or "").lower()
-    geo_mult = 1.0
-    geo_label = "Регионы РФ"
-
-    if any(city in address for city in GEO_TIERS["TIER_1"]["cities"]):
-        geo_mult = GEO_TIERS["TIER_1"]["multiplier"]
-        geo_label = "Москва / СПб"
-    elif any(city in address for city in GEO_TIERS["TIER_2"]["cities"]):
-        geo_mult = GEO_TIERS["TIER_2"]["multiplier"]
-        geo_label = "Город-миллионник"
-
-    final_check = int(round(base_check * geo_mult / 500) * 500)
-    return final_check, f"Консервативный базис ({geo_label})"
 
 def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
     address = str(data.get("address") or "").lower()
@@ -529,49 +457,40 @@ def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
     base_floor = NICHE_MIN_FLOOR.get(niche_key, 1500)
     floor_val = int(round(base_floor * geo_mult / 100) * 100)
 
-    if niche_key in ["B2B", "B2B_HEAVY"]:
-        val, src = _calculate_geo_check(data, niche_key)
-        return max(val, floor_val), src
+    # 1. Поиск консультаций и первичных приемов в каталоге
+    menu_data = data.get('menu')
+    m_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
+    c_items = data.get('productCatalog') or []
+    if not isinstance(c_items, list):
+        c_items = []
+    all_items = [p for p in (m_items + c_items) if isinstance(p, dict)]
 
+    consultation_prices = []
+    for item in all_items:
+        name = str(item.get("name") or item.get("title") or "").lower()
+        if any(w in name for w in ["консультац", "осмотр", "первичн", "диагностик", "прием"]):
+            clean_p = re.sub(r'[^\d]', '', str(item.get("price") or item.get("cost") or ""))
+            if clean_p and 500 <= int(clean_p) <= 15000:
+                consultation_prices.append(int(clean_p))
+
+    if consultation_prices:
+        consultation_prices.sort()
+        target_p = consultation_prices[len(consultation_prices) // 2]
+        return max(target_p, floor_val), "Стоимость первичного приема из прейскуранта"
+
+    # 2. HORECA averageBill
     raw_bill = data.get("averageBill") or data.get("priceCategory") or ""
     bill_digits = re.findall(r'\d+', str(raw_bill).replace(' ', ''))
     if bill_digits:
         nums = [int(n) for n in bill_digits if int(n) >= 300]
         if nums:
             avg_bill = int(sum(nums) / len(nums))
-            final_val = max(avg_bill, floor_val)
-            return final_val, "Средний счёт из профиля Яндекса"
+            return max(avg_bill, floor_val), "Средний счёт из профиля Яндекса"
 
-    menu_data = data.get('menu')
-    m_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
-    c_items = data.get('productCatalog') or []
-    all_items = [p for p in (m_items + c_items) if isinstance(p, dict)]
-
-    extracted_prices = []
-    lower_price_limit = max(400, int(base_floor * 0.5))
-
-    for item in all_items:
-        raw_price = str(item.get("price") or item.get("cost") or "")
-        clean_p = re.sub(r'[^\d]', '', raw_price)
-        if clean_p:
-            p_val = int(clean_p)
-            if lower_price_limit <= p_val <= 90000:
-                extracted_prices.append(p_val)
-
-    if len(extracted_prices) >= 5:
-        extracted_prices.sort()
-        idx = int(len(extracted_prices) * 0.35)
-        smart_price = round(extracted_prices[idx] / 100) * 100
-        multiplier = 1.8 if niche_key == "HORECA" else 1.0
-        final_val = int(round(smart_price * multiplier / 100) * 100)
-        
-        if final_val < floor_val:
-            return floor_val, f"Базовый порог ниши ({floor_val:,} ₽)".replace(',', ' ')
-            
-        return final_val, f"Прайс-лист карточки ({len(extracted_prices)} позиций)"
-
-    val, src = _calculate_geo_check(data, niche_key)
-    return max(val, floor_val), src
+    # 3. Базис ниши
+    eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
+    calc_val = int(round(eco["check"] * geo_mult / 500) * 500)
+    return max(calc_val, floor_val), "Консервативный порог первого визита"
 
 def get_google_credentials():
     creds_raw = st.secrets.get("GCP_CREDENTIALS", {})
@@ -610,14 +529,11 @@ def fetch_cached_database():
         return [], [], {}
 
 def check_oid_history(oid):
-    """Каскадная проверка наличия OID в CRM и истории замеров"""
     if not oid or oid == "UNKNOWN":
         return {"exists": False, "source": None, "base_score": None, "last_score": None, "count": 0}
-    
     try:
         client = gspread.authorize(get_google_credentials())
         doc = client.open_by_url(st.secrets["SPREADSHEET_URL"])
-        
         try:
             cp_ws = doc.worksheet("Client_Progress")
             cp_rows = cp_ws.get_all_values()
@@ -640,20 +556,11 @@ def check_oid_history(oid):
                         return {"exists": True, "source": "Results", "base_score": base_score, "last_score": base_score, "count": 1}
         except Exception:
             pass
-
     except Exception:
         pass
-
     return {"exists": False, "source": None, "base_score": None, "last_score": None, "count": 0}
 
 def save_lead_to_results(oid, url, title, niche, total_score, lost_revenue, lpr_data, dossier, direct_email, clinic_phone):
-    """
-    Сохранение в CRM Results (ровно 20 колонок от A до T):
-    [A] Дата [B] OID [C] Компания [D] URL [E] Ниша [F] PIN Score [G] ЛПР [H] Должность
-    [I] Личный контакт [J] Кассовый разрыв [K] Статус [L] ИНН [M] Прямой Email
-    [N] Юр. наименование [O] Возраст бизнеса [P] Выручка за год (ФНС) [Q] Штат сотрудников
-    [R] Основной ОКВЭД [S] Телефон клиники [T] Статус юрлица
-    """
     try:
         client = gspread.authorize(get_google_credentials())
         ws = client.open_by_url(st.secrets["SPREADSHEET_URL"]).worksheet("Results")
@@ -698,7 +605,6 @@ def save_progress_measurement(oid, title, audit_type, total_score, delta_start, 
     try:
         client = gspread.authorize(get_google_credentials())
         ws = client.open_by_url(st.secrets["SPREADSHEET_URL"]).worksheet("Client_Progress")
-        
         row = [
             datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M"),
             str(oid),
@@ -721,7 +627,6 @@ def save_progress_measurement(oid, title, audit_type, total_score, delta_start, 
 # ==========================================
 def extract_oid_and_url(raw_url):
     url = str(raw_url).strip()
-    
     if "/-/" in url:
         session = requests.Session()
         session.headers.update({
@@ -761,29 +666,6 @@ def extract_oid_and_url(raw_url):
 
     return oid, clean_url
 
-def get_apify_run_details(run_id):
-    """Извлекает statusMessage и консольный лог запуска для диагностики ошибок"""
-    log_text = ""
-    status_msg = ""
-    try:
-        meta_res = requests.get(
-            f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}",
-            timeout=8
-        ).json()
-        status_msg = meta_res.get("data", {}).get("statusMessage", "")
-
-        log_res = requests.get(
-            f"https://api.apify.com/v2/actor-runs/{run_id}/log?token={APIFY_API_TOKEN}",
-            timeout=8
-        )
-        if log_res.status_code == 200:
-            lines = [line.strip() for line in log_res.text.strip().split("\n") if line.strip()]
-            log_text = " | ".join(lines[-6:])
-    except Exception:
-        pass
-        
-    return status_msg, log_text
-
 def fetch_apify_data(cleaned_url):
     payload = {
         "startUrls": [{"url": cleaned_url}],
@@ -815,8 +697,7 @@ def fetch_apify_data(cleaned_url):
     
     while status not in ["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"]:
         if retries >= 75:
-            _, log_tail = get_apify_run_details(run_id)
-            raise Exception(f"Таймаут сбора данных. Лог Apify: {log_tail or 'нет ответа'}")
+            raise Exception("Таймаут сбора данных от Яндекс Карт.")
         time.sleep(4)
         status_req = requests.get(
             f"https://api.apify.com/v2/actor-runs/{run_id}?token={APIFY_API_TOKEN}", 
@@ -826,9 +707,7 @@ def fetch_apify_data(cleaned_url):
         retries += 1
         
     if status != "SUCCEEDED":
-        status_msg, log_tail = get_apify_run_details(run_id)
-        reason = status_msg or log_tail or "Неизвестная ошибка контейнера"
-        raise Exception(f"Актор завершился со статусом [{status}]: {reason}")
+        raise Exception(f"Актор завершился со статусом [{status}].")
         
     dataset = requests.get(
         f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={APIFY_API_TOKEN}", 
@@ -836,17 +715,7 @@ def fetch_apify_data(cleaned_url):
     ).json()
     
     if not isinstance(dataset, list) or len(dataset) == 0:
-        _, log_tail = get_apify_run_details(run_id)
-        if "captcha" in log_tail.lower():
-            diag = "Яндекс запросил SmartCaptcha (IP датацентра заблокирован)"
-        elif "navigation timeout" in log_tail.lower():
-            diag = "Страница организации не загрузилась вовремя (таймаут сети)"
-        elif "found 0" in log_tail.lower() or "not found" in log_tail.lower():
-            diag = "Организация не найдена поисковым селектором Яндекса"
-        else:
-            diag = log_tail or "Датасет пуст"
-            
-        raise Exception(f"Яндекс вернул пустой ответ (Run ID: {run_id}). Диагностика: {diag}")
+        raise Exception(f"Яндекс вернул пустой ответ (Run ID: {run_id}).")
         
     first_item = dataset[0]
     if not isinstance(first_item, dict):
@@ -863,7 +732,7 @@ def fetch_apify_data(cleaned_url):
     return first_item
 
 # ==========================================
-# 6. СКОРИНГ И СЕМАНТИЧЕСКИЙ АНАЛИЗ
+# 6. СКОРИНГ: ЭТАП 1 (ХОТФИКСЫ И FAIR SCORE)
 # ==========================================
 def parse_yandex_date(date_val):
     if not date_val:
@@ -877,7 +746,6 @@ def parse_yandex_date(date_val):
 
 def determine_niche_by_expert(title, category, prompts_data):
     full_context = f"{title} {category}".lower()
-    
     if any(w in full_context for w in ["стомат", "зуб", "дентал", "ортодонт"]):
         return "DENTISTRY"
     if any(w in full_context for w in ["авто", "сервис", "шиномонтаж", "мойка", "сто "]):
@@ -909,39 +777,15 @@ def determine_niche_by_expert(title, category, prompts_data):
         pass
     return "OTHER"
 
-def rewrite_errors_by_ai(niche_label, company_name, failed_rules, engine):
-    if not engine or not failed_rules:
-        return
-    
-    payload_text = "".join([f"ID: {r['Код']} | Ошибка: {r['Критерий']} | Текст: {r['Обоснование']}\n" for r in failed_rules[:15]])
-    prompt = f"""Ты — эксперт по локальному маркетингу. Ниша: {niche_label}. Компания: {company_name}.
-Перепиши обоснование каждой ошибки под боли этой ниши простым языком руководителя без технического жаргона. 
-Опирайся на потери клиентов и выручки.
-Строго соблюдай правила Яндекса: не предлагай накрутку или скидки за отзывы, не советуй добавлять спам-слова в название.
-
-Ошибки:
-{payload_text}
-Верни строго JSON объект: {{"Код_ошибки": "Новый текст обоснования"}}"""
-    try:
-        raw_resp = engine.generate_content(prompt).text
-        match = re.search(r'\{.*\}', raw_resp, re.DOTALL)
-        if match:
-            new_texts = json.loads(match.group(0))
-            for r in failed_rules:
-                if r['Код'] in new_texts and str(new_texts[r['Код']]).strip():
-                    r['Обоснование'] = new_texts[r['Код']]
-    except Exception:
-        pass
-
 def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     scores = {}
     now = datetime.now(timezone.utc)
     title = str(data.get('title') or '')
     desc = str(data.get('description') or '')
-    
     raw_url = data.get('url') or data.get('website') or ''
     url = str(raw_url).lower()
     
+    # PROF-03.1 & 03.2 Рубрикатор
     cat_list = data.get('categories') or []
     cat_name = ""
     if isinstance(cat_list, list) and cat_list:
@@ -954,6 +798,7 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if data.get('isVerifiedOwner') or len(title) > 2:
         scores['PROF-01.1'] = True
         
+    # PROF-04.1 & 04.2 Сайт и UTM
     if url:
         scores['PROF-04.1'] = True
         if "utm_" in url:
@@ -993,11 +838,6 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
             if features.get(k):
                 scores['PROF-08.2'] = True
                 break
-        if niche_key in ["OTHER", "SERVICES"]:
-            std_keys = {'payment_method', 'wi_fi', 'toilet', 'parking', 'street_entrance', 'parking_disabled', 'promotions', 'wheelchair_access'}
-            client_unique_keys = [k for k in features.keys() if k not in std_keys]
-            if len(client_unique_keys) >= 2:
-                send_telegram_business_alert(title, cat_name, client_unique_keys[:5])
     
     if len(desc) > 1200:
         scores['PROF-09.1'] = True
@@ -1018,13 +858,31 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if any(s in owner_links for s in ["vk.com", "vk.ru", "youtube", "dzen", "instagram"]):
         scores['PROF-13.2'] = True
     
+    # ----------------------------------------------------
+    # ХОТФИКС 1: ОБНАРУЖЕНИЕ ОНЛАЙН-ЗАПИСИ (CONV-50.1)
+    # ----------------------------------------------------
+    has_booking = False
+    if data.get('bookingUrl') or data.get('actionButtons') or data.get('appointmentUrl') or data.get('widgetUrl'):
+        has_booking = True
+    booking_domains = ["yclients", "medesk", "booking", "dikidi", "infoclinica", "dental-booking", "online-zapis"]
+    if any(bd in owner_links for bd in booking_domains):
+        has_booking = True
+    if has_booking:
+        scores['CONV-50.1'] = True
+    
+    # ----------------------------------------------------
+    # ХОТФИКС 2: КАТАЛОГ И ПРЕЙСКУРАНТ (PROF-11)
+    # ----------------------------------------------------
     menu_data = data.get('menu')
     menu_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
     catalog_items = data.get('productCatalog') or []
     if not isinstance(catalog_items, list):
         catalog_items = []
-    
-    valid_prods = [p for p in (menu_items + catalog_items) if isinstance(p, dict)]
+    goods_items = data.get('goods') or []
+    if not isinstance(goods_items, list):
+        goods_items = []
+        
+    valid_prods = [p for p in (menu_items + catalog_items + goods_items) if isinstance(p, dict)]
     if valid_prods:
         total_vp = len(valid_prods)
         if total_vp >= 10:
@@ -1088,14 +946,17 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
     if rev_count >= 40:
         scores['REP-28.1'] = True
     
+    # Сортировка отзывов по дате перед анализом
     raw_reviews = data.get('reviews') or []
     all_reviews = [r for r in raw_reviews if isinstance(r, dict)]
-    if not all_reviews:
-        scores['META_NO_RECENT_REVIEWS'] = True
-    else:
+    if all_reviews:
+        all_reviews.sort(
+            key=lambda x: parse_yandex_date(x.get('date')) or datetime(1970, 1, 1, tzinfo=timezone.utc), 
+            reverse=True
+        )
         top_20 = all_reviews[:20]
         first_date = parse_yandex_date(all_reviews[0].get('date'))
-        if first_date and (now - first_date).days <= 14:
+        if first_date and (now - first_date).days <= 21:
             scores['REP-29.1'] = True
             
         replied = 0
@@ -1133,9 +994,9 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
                 quick_reply = True
                 
             if bc_text:
-                if bc_date and (now - bc_date).days <= 30:
+                if bc_date and (now - bc_date).days <= 45:
                     recent_reply = True
-                elif not bc_date and rev_date and (now - rev_date).days <= 30:
+                elif not bc_date and rev_date and (now - rev_date).days <= 45:
                     recent_reply = True
         
         if top_20:
@@ -1143,57 +1004,22 @@ def calculate_hard_facts(data, niche_key="OTHER", inn_code=""):
                 scores['REP-30.1'] = True
             if has_photos / len(top_20) >= 0.05:
                 scores['REP-35.1'] = True
-            if expert_authors / len(top_20) >= 0.25:
+            if expert_authors / len(top_20) >= 0.20:
                 scores['REP-34.1'] = True
                 
         if good_reply:
             scores['REP-30.3'] = True
         if quick_reply:
             scores['REP-30.2'] = True
-        if reply_lengths and (sum(reply_lengths) / len(reply_lengths)) >= 80:
+        if reply_lengths and (sum(reply_lengths) / len(reply_lengths)) >= 60:
             scores['REP-30.4'] = True
         if recent_reply:
             scores['REP-85.1'] = True
             
     return scores
 
-def calculate_dynamic_expert_rules(data, prompts_data):
-    if not expert_engine or not prompts_data:
-        return {}
-    title = str(data.get('title') or '')
-    desc = str(data.get('description') or '')[:1000]
-    recent_reviews = [r for r in (data.get('reviews') or []) if isinstance(r, dict)][:10]
-    
-    reviews_lines = []
-    for r in recent_reviews:
-        r_text = r.get('text', '')
-        rep_text = r.get('reply', {}).get('text', '') if isinstance(r.get('reply'), dict) else (r.get('businessComment') or r.get('reply') or '')
-        reviews_lines.append(f"Отзыв: {r_text}\nОтвет: {rep_text}\n")
-    
-    menu_data = data.get('menu')
-    m_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
-    c_items = data.get('productCatalog') or []
-    if not isinstance(c_items, list):
-        c_items = []
-    prods = [p for p in m_items + c_items if isinstance(p, dict)][:20]
-    prods_text = ", ".join([str(p.get('name') or p.get('title')) for p in prods])
-    
-    rules_list = [f'"{p.get("Код")}": {p.get("Промпт для ИИ")}' for p in prompts_data if p.get("Код") and p.get("Код") != 'NICHE_PROMPT']
-    if not rules_list:
-        return {}
-        
-    prompt = f"Контекст:\nНазвание: {title}\nОписание: {desc}\nТовары: {prods_text}\nОтзывы:\n{''.join(reviews_lines)[:1500]}\nКритерии:\n{chr(10).join(rules_list)}\nВерни строго JSON объект {{CODE: true/false}}."
-    try:
-        raw_resp = expert_engine.generate_content(prompt).text
-        match = re.search(r'\{.*\}', raw_resp, re.DOTALL)
-        if match:
-            return {k: True for k, v in json.loads(match.group(0)).items() if str(v).lower() in ["1", "true"]}
-    except Exception:
-        pass
-    return {}
-
 # ==========================================
-# 7. ГЕНЕРАЦИЯ PDF (ШАБЛОН TYPST, 4 СТР.)
+# 7. ГЕНЕРАЦИЯ ДИНАМИЧЕСКОГО PDF (TYPST)
 # ==========================================
 def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, client_ltv, competitors_text=""):
     current_date = datetime.now().strftime("%d.%m.%Y")
@@ -1216,41 +1042,50 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     if "стом" in niche_str or "зуб" in niche_str:
         quality_phrase = "стоматологических услуг, квалификации врачей и стандартов лечения"
         target_forms = ("пациент", "пациента", "пациентов")
-        service_example = "имплантацию, лечение кариеса, коронки или брекеты"
     elif "мед" in niche_str or "клиник" in niche_str or "бьют" in niche_str or "салон" in niche_str:
         quality_phrase = "медицинских услуг, опыта специалистов и уровня заботы о клиентах"
         target_forms = ("пациент", "пациента", "пациентов")
-        service_example = "прием врачей, комплексные чекапы или косметологические процедуры"
     elif "horeca" in niche_str or "ресторан" in niche_str or "кафе" in niche_str or "бар" in niche_str:
         quality_phrase = "кухни, сервиса и гостеприимной атмосферы заведения"
         target_forms = ("гость", "гостя", "гостей")
-        service_example = "банкеты, меню кухни, бизнес-ланчи или бронь столов"
     elif "авто" in niche_str or "мойка" in niche_str or "сервис" in niche_str:
         quality_phrase = "ремонта, запчастей и квалификации автомехаников"
         target_forms = ("автовладелец", "автовладельца", "автовладельцев")
-        service_example = "диагностику, ремонт ходовой, сход-развал или ТО"
-    elif "образ" in niche_str or "школ" in niche_str or "курс" in niche_str:
-        quality_phrase = "учебной программы и преподавательского состава"
-        target_forms = ("ученик", "ученика", "учеников")
-        service_example = "подготовку к экзаменам, профильные курсы или интенсивы"
-    elif "b2b_heavy" in niche_str or "производ" in niche_str or "завод" in niche_str:
-        quality_phrase = "производственных мощностей, стандартов ГОСТ и надежности поставок"
-        target_forms = ("заказчик", "заказчика", "заказчиков")
-        service_example = "серийное производство, изготовление партий или поставку под проект"
-    elif "b2b" in niche_str or "опт" in niche_str:
-        quality_phrase = "надежности поставок, ассортимента склада и условий отгрузки"
-        target_forms = ("партнер", "партнера", "партнеров")
-        service_example = "оптовые закупки, регулярные поставки или спецзаказы"
-    elif "ритейл" in niche_str or "retail" in niche_str or "магазин" in niche_str:
-        quality_phrase = "качества товаров, широты ассортимента и обслуживания"
-        target_forms = ("покупатель", "покупателя", "покупателей")
-        service_example = "наличие нужного ассортимента, цены и условия доставки"
     else:
         quality_phrase = "товаров, услуг и стандартов клиентского сервиса"
         target_forms = ("клиент", "клиента", "клиентов")
-        service_example = "ключевой перечень услуг и условия сотрудничества"
 
     audience_declension = plural_ru(lost_leads, target_forms)
+
+    # ----------------------------------------------------
+    # ХОТФИКС 3: ДИНАМИЧЕСКИЙ ПОДБОР ОШИБОК ДЛЯ СТР. 3
+    # ----------------------------------------------------
+    failed_items = [r for r in results_data if r['Результат'] == 'НЕТ' and r['Max'] > 0]
+    failed_items.sort(key=lambda x: x['Max'], reverse=True)
+
+    if score >= 75:
+        p3_heading = "Точки скрытого роста и удержания лидерства"
+        p3_subtitle = f"Профиль занимает прочные позиции в районе, однако следующие детали позволят закрепить преимущество над конкурентами{comp_safe}:"
+        exec_summary = f"Карточка входит в группу лидеров локации (Индекс: *{round(score, 1)} / 100*). Репутация и рейтинг сформированы на высоком уровне. Выявленные недочеты носят точечный характер, однако их устранение позволит защитить кассу от перехвата трафика ближайшими соседями."
+    else:
+        p3_heading = "Три главные причины потери клиентов"
+        p3_subtitle = f"Почему потенциальные клиенты из вашего района обращаются к прямым конкурентам{comp_safe}:"
+        exec_summary = f"Прямо сейчас профиль скрыт от *{dev}% целевых клиентов* вашего района. Из-за технических недочетов в оформлении карточки вы каждый месяц отдаете конкурентам локации около *{lost_leads} {audience_declension}*. Высокий рейтинг подтверждает доверие постоянных гостей, однако по общим запросам алгоритмы опускают карточку ниже активных соседей."
+
+    # Заполнение трех динамических слотов
+    slots = []
+    for i in range(3):
+        if i < len(failed_items):
+            item = failed_items[i]
+            slots.append({
+                "title": clean_typography(item["Критерий"]),
+                "desc": clean_typography(item["Обоснование"])
+            })
+        else:
+            slots.append({
+                "title": "Резерв для масштабирования видимости",
+                "desc": "Регулярный аудит актуальности услуг, фотографий интерьера и защиты карточки от недостоверных правок со стороны конкурентов."
+            })
 
     template_path = os.path.join(os.path.dirname(__file__), "report_template.typ")
     if not os.path.exists(template_path):
@@ -1276,8 +1111,15 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         "[[CLIENT_LTV]]": str(client_ltv),
         "[[LTV_LOSS_FMT]]": ltv_loss_fmt,
         "[[QUALITY_PHRASE]]": quality_phrase,
-        "[[SERVICE_EXAMPLE]]": service_example,
-        "[[COMP_SAFE]]": comp_safe
+        "[[EXECUTIVE_SUMMARY]]": exec_summary,
+        "[[PAGE_3_HEADING]]": p3_heading,
+        "[[PAGE_3_SUBTITLE]]": p3_subtitle,
+        "[[FAIL_1_TITLE]]": slots[0]["title"],
+        "[[FAIL_1_DESC]]": slots[0]["desc"],
+        "[[FAIL_2_TITLE]]": slots[1]["title"],
+        "[[FAIL_2_DESC]]": slots[1]["desc"],
+        "[[FAIL_3_TITLE]]": slots[2]["title"],
+        "[[FAIL_3_DESC]]": slots[2]["desc"]
     }
 
     for marker, val in replacements.items():
@@ -1357,7 +1199,6 @@ if data_to_process:
     title = data.get('title', 'Без названия')
     c_list = data.get('categories', [])
     cat = c_list[0].get('name', '') if (isinstance(c_list, list) and c_list and isinstance(c_list[0], dict)) else (str(c_list[0]) if (isinstance(c_list, list) and c_list) else '')
-    client_reviews = safe_int(data.get('reviewsCount') or data.get('ratingsCount') or len(data.get('reviews') or []))
     
     if current_oid == "UNKNOWN":
         for cand in [data.get('id'), data.get('yandexId'), data.get('permalink'), data.get('url'), data.get('uri')]:
@@ -1372,25 +1213,24 @@ if data_to_process:
     if not safe_title:
         safe_title = "Company"
 
-    # Каскадная юридическая и контактная разведка
     lpr_data, dossier, direct_email, clinic_phone = resolve_lpr_and_dossier(data, expert_engine, DADATA_API_KEY)
     
-    # Ближайшие конкуренты
     raw_related = data.get('relatedPlaces') or []
     if isinstance(raw_related, dict):
         raw_related = raw_related.get('items') or raw_related.get('places') or [raw_related]
     competitors_list = [str(c.get('name')).strip() for c in raw_related if isinstance(c, dict) and c.get('name')][:2] if isinstance(raw_related, list) else []
     competitors_text = f" (например, {', '.join(competitors_list)})" if competitors_list else ""
     
-    with st.spinner("Расчет юнит-экономики и запуск алгоритмов..."):
+    with st.spinner("Расчет юнит-экономики и скоринг профиля..."):
         niche_key = determine_niche_by_expert(title, cat, prompts_data)
         
+        # Реестр реально оцениваемых критериев в коде
         raw_scores = calculate_hard_facts(data, niche_key, inn_code=dossier["inn"])
-        exp_sc = calculate_dynamic_expert_rules(data, prompts_data)
-        raw_scores.update(exp_sc)
+        evaluated_codes = set(raw_scores.keys())
         
         results = []
-        final_total_score = 0.0
+        earned_sum = 0.0
+        evaluated_max_sum = 0.0
         target_column = niche_key if (rules_data and niche_key in rules_data[0]) else 'Балл'
         
         for r in rules_data:
@@ -1411,28 +1251,37 @@ if data_to_process:
             stage_val = safe_int(r.get('Этап_Внедрения'), 3)
             max_s = safe_float(r.get(target_column, r.get('Балл', 0.0)))
             
-            if max_s > 0.0:
-                val = max_s if raw_scores.get(code) else 0.0
-                final_total_score += val
+            # ----------------------------------------------------
+            # ХОТФИКС 4: FAIR SCORE (ЧЕСТНЫЙ ДЕЛИКАТНЫЙ БАЛЛ)
+            # ----------------------------------------------------
+            is_evaluated = code in evaluated_codes
+            is_passed = bool(raw_scores.get(code))
+            earned_val = max_s if is_passed else 0.0
+            
+            if is_evaluated and max_s > 0.0:
+                earned_sum += earned_val
+                evaluated_max_sum += max_s
                 
-                results.append({
-                    "Код": code,
-                    "Критерий": name,
-                    "Результат": "ДА" if val > 0 else "НЕТ",
-                    "Обоснование": reason_success if val > 0 else reason_error,
-                    "Группа": group,
-                    "Этап": stage_val,
-                    "Earned": val,
-                    "Max": max_s
-                })
+            results.append({
+                "Код": code,
+                "Критерий": name,
+                "Результат": "ДА" if is_passed else "НЕТ",
+                "Обоснование": reason_success if is_passed else reason_error,
+                "Группа": group,
+                "Этап": stage_val,
+                "Earned": earned_val,
+                "Max": max_s,
+                "Evaluated": is_evaluated
+            })
+
+        # Честный процент видимости от РЕАЛЬНО проверенных правил
+        if evaluated_max_sum > 0:
+            final_total_score = round((earned_sum / evaluated_max_sum) * 100, 1)
+        else:
+            final_total_score = 50.0
 
         eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
         niche_label = eco.get("label", "Прочее")
-
-        failed_items = [r for r in results if r['Результат'] == 'НЕТ' and r['Max'] > 0]
-        if failed_items and expert_engine:
-            with st.spinner("ИИ адаптирует выводы под специфику ниши..."):
-                rewrite_errors_by_ai(niche_label, title, failed_items, expert_engine)
 
         smart_check_val, check_source = determine_smart_check(data, niche_key)
 
@@ -1441,7 +1290,7 @@ if data_to_process:
             st.markdown(f"### 🧮 Экономика: {niche_key}")
             st.caption(f"Источник чека: *{check_source}*")
             client_leads = st.number_input("Потенциал лидов/мес", value=eco["leads"], step=10)
-            client_check = st.number_input("Средний чек (₽)", value=smart_check_val, step=500)
+            client_check = st.number_input("Средний чек первого визита (₽)", value=smart_check_val, step=500)
             client_ltv = st.number_input("Цикл LTV (месяцев)", value=eco["ltv_months"], step=1)
 
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
@@ -1461,7 +1310,6 @@ if data_to_process:
             else:
                 st.success("✨ **Новая организация.** Будет зафиксирована в CRM Results.")
                 
-            # Блок ЛПР и каналов связи
             if lpr_data and lpr_data.get('status') == 'found':
                 lpr_fio = lpr_data.get('name') or 'Руководитель'
                 lpr_pos = lpr_data.get('role', 'Руководство')
@@ -1483,30 +1331,28 @@ if data_to_process:
                     badges.append(f"✉️ `{direct_email}`")
                 if badges:
                     st.markdown("Прямые координаты: " + " | ".join(badges))
-            elif lpr_data and lpr_data.get('status') == 'hidden':
-                st.warning("⚠️ **Группа ВК найдена, но блок «Контакты» скрыт.**")
             else:
-                contact_fallbacks = []
-                if clinic_phone:
-                    contact_fallbacks.append(f"📞 Телефон: `{clinic_phone}`")
-                if direct_email:
-                    contact_fallbacks.append(f"✉️ Email: `{direct_email}`")
-                st.caption("ℹ️ Прямой контакт руководителя скрыт. Доступны контакты организации: " + (" | ".join(contact_fallbacks) if contact_fallbacks else "не найдены"))
+                st.caption("ℹ️ Прямой контакт руководителя скрыт. Доступны общие контакты.")
 
-            # Блок «Юридическая разведка (DaData)»
             if dossier["found"]:
-                with st.expander("🏛 Юридическое досье компании (ФНС / DaData)", expanded=True):
+                with st.expander("🏛 Юридическое досье компании (ФНС / DaData)", expanded=False):
                     dc1, dc2, dc3 = st.columns(3)
                     dc1.markdown(f"**Юрлицо:** {dossier['legal_name']}\n\n**Статус:** {dossier['legal_status']}")
                     dc2.markdown(f"**Возраст:** {dossier['business_age_str']}\n\n**Штат:** {dossier['employees_str']}")
                     dc3.markdown(f"**Выручка ФНС:** {dossier['revenue_str']}\n\n**ОКВЭД:** {dossier['okved_str']}")
             
         with col2:
-            delta = "Отличный результат" if final_total_score >= 80 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
+            delta = "Отличный результат (Лидер)" if final_total_score >= 80 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
             st.metric(f"Индекс {PROJECT_NAME}", f"{round(final_total_score, 1)} / 100", delta=delta, delta_color="normal" if final_total_score >= 80 else "inverse")
 
         st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно.".replace(',', ' '))
         
+        # Индикатор покрытия правил
+        with st.expander(f"🔍 Статус аудита критериев: проверено {len(evaluated_codes)} из {len(rules_data)}", expanded=False):
+            st.caption("Балл нормализован по фактически реализованным проверкам (Fair Score).")
+            active_list = [f"`{r['Код']}` {r['Критерий']} ({r['Результат']})" for r in results if r['Evaluated']]
+            st.write(" | ".join(active_list[:25]) + " ...")
+
         pdf_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check, client_ltv, competitors_text)
         
         if pdf_bytes:
@@ -1524,8 +1370,8 @@ if data_to_process:
             
             comp_1 = competitors_list[0] if len(competitors_list) > 0 else ""
             comp_2 = competitors_list[1] if len(competitors_list) > 1 else ""
-            leads_min = max(5, int(client_leads * lost_percentage * 0.8))
-            leads_max = max(10, int(client_leads * lost_percentage))
+            leads_min = max(3, int(client_leads * lost_percentage * 0.8))
+            leads_max = max(5, int(client_leads * lost_percentage))
 
             template_payload = {
                 "niche_key": niche_key,
@@ -1556,7 +1402,6 @@ if data_to_process:
                             st.warning("Файл drive_manager.py не обнаружен. Сохранение на Диск пропущено.")
                         else:
                             dm = DriveManager()
-                            
                             pdf_url = dm.upload_file(f"{file_prefix}_{date_str}_audit.pdf", pdf_bytes, "application/pdf", dm.pdf_root_id)
                             json_url = dm.upload_file(f"{file_prefix}_{date_str}_audit.json", json.dumps(data, ensure_ascii=False, indent=2), "application/json", dm.json_root_id)
                             txt_url = dm.upload_file(f"{file_prefix}_{date_str}_icebreaker.txt", icebreaker_text, "text/plain", dm.letters_root_id)
