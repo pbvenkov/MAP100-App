@@ -1,7 +1,7 @@
 import streamlit as st
 
 # ==========================================
-# 0. ИНИЦИАЛИЗАЦИЯ СТРАНИЦЫ
+# 0. ИНИЦИАЛИЗАЦИЯ СТРАНИЦЫ (СТРОГО ПЕРВЫЙ ВЫЗОВ)
 # ==========================================
 st.set_page_config(
     page_title="PIN100 | Аналитический Отчет",
@@ -91,6 +91,7 @@ PROGRAMMED_CODES = {
 }
 
 def plural_ru_gen(n, forms_gen):
+    """Склонение в родительном падеже после предлогов 'около', 'порядка' ('пациента', 'пациентов')"""
     n = abs(int(n)) % 100
     n1 = n % 10
     if 10 < n < 20:
@@ -100,6 +101,7 @@ def plural_ru_gen(n, forms_gen):
     return forms_gen[1]
 
 def plural_table(n):
+    """Склонение для таблицы без предлога ('пациент', 'пациента', 'пациентов')"""
     n_mod = abs(int(n)) % 100
     n1 = n_mod % 10
     if 10 < n_mod < 20:
@@ -504,13 +506,8 @@ def determine_smart_check(data: dict, niche_key: str) -> tuple[int, str]:
     menu_data = data.get('menu')
     m_items = menu_data.get('items', []) if isinstance(menu_data, dict) else []
     c_items = data.get('productCatalog') or []
-    if not isinstance(c_items, list):
-        c_items = []
     goods_items = data.get('goods') or []
-    if not isinstance(goods_items, list):
-        goods_items = []
-
-    all_items = [p for p in (m_items + c_items + goods_items) if isinstance(p, dict)]
+    all_items = [p for p in (m_items + (c_items if isinstance(c_items, list) else []) + (goods_items if isinstance(goods_items, list) else [])) if isinstance(p, dict)]
 
     consultation_prices = []
     for item in all_items:
@@ -1041,13 +1038,21 @@ def calculate_hard_facts_40(data, niche_key="OTHER", inn_code=""):
 
 def evaluate_semantic_ai_4(data, niche_key="OTHER", engine=None):
     """Строго 4 ключевых смысловых критерия через Gemini Flash"""
-    if not engine:
-        return {}
-
     title = str(data.get('title') or '')
     description = str(data.get('description') or '')
     rating = safe_float(data.get('rating'), 0.0)
-    
+
+    # Безопасный фолбэк при недоступности API или ошибке парсинга
+    fallback = {
+        "PROF-01.2": len(title.split()) <= 4,
+        "PROF-10.3": len(description) > 300,
+        "CONV-49.1": len(description) > 500,
+        "REP-32.2": rating >= 4.8
+    }
+
+    if not engine:
+        return fallback
+
     reviews = data.get('reviews') or []
     negative_replies = []
     has_negative = False
@@ -1107,12 +1112,7 @@ def evaluate_semantic_ai_4(data, niche_key="OTHER", engine=None):
     except Exception:
         pass
         
-    return {
-        "PROF-01.2": len(title.split()) <= 4,
-        "PROF-10.3": len(desc) > 300,
-        "CONV-49.1": len(desc) > 500,
-        "REP-32.2": rating >= 4.8
-    }
+    return fallback
 
 # ==========================================
 # 7. ГЕНЕРАЦИЯ ДИНАМИЧЕСКОГО PDF (TYPST)
@@ -1212,6 +1212,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         "[[DEV]]": str(dev).rstrip('.'),
         "[[LOST_LEADS]]": str(lost_leads),
         "[[AUDIENCE_DECLENSION]]": table_declension,
+        "[[TABLE_DECLENSION]]": table_declension,
         "[[CLIENT_LEADS]]": str(client_leads),
         "[[CLIENT_CHECK_FMT]]": client_check_fmt,
         "[[CLIENT_LTV]]": str(client_ltv),
