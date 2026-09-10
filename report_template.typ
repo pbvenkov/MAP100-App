@@ -93,7 +93,8 @@
     stroke: 1pt + rgb("e2e8f0"),
     inset: 12pt,
     [
-      #text(size: 8.5pt, weight: "bold", fill: rgb("64748b"))[ВИДИМОСТЬ КАРТОЧКИ В ПОИСКЕ] \
+      #set par(justify: false)
+      #text(size: 8pt, weight: "bold", fill: rgb("64748b"))[ВИДИМОСТЬ КАРТОЧКИ В ПОИСКЕ] \
       #v(3pt)
       #text(size: 24pt, weight: "bold", fill: rgb("[[SCORE_COLOR]]"))[[[SCORE]]/100] \
       #v(1pt)
@@ -107,7 +108,8 @@
     stroke: 1pt + rgb("e2e8f0"),
     inset: 12pt,
     [
-      #text(size: 8.5pt, weight: "bold", fill: rgb("64748b"))[ПРЯМЫЕ ПОТЕРИ ВЫРУЧКИ] \
+      #set par(justify: false)
+      #text(size: 8pt, weight: "bold", fill: rgb("64748b"))[ПРЯМЫЕ ПОТЕРИ ВЫРУЧКИ] \
       #v(3pt)
       #text(size: 22pt, weight: "bold", fill: rgb("991b1b"))[[[REV_LOSS_FMT]] ₽/мес] \
       #v(1pt)
@@ -136,7 +138,7 @@
   [*Параметр расчета*], [*Значение*], [*Как считаем*],
   [Пул спроса лидеров района], [[[CLIENT_LEADS]] обр./мес], [Поток обращений в ТОП-3 клиники локации],
   [Дефицит видимости профиля], [[[DEV]]%], [100% минус текущий балл ([[SCORE]])],
-  [Клиенты, ушедшие к конкурентам], [[[LOST_LEADS]] [[TABLE_DECLENSION]]], [Спрос лидеров × Дефицит видимости],
+  [Клиенты, ушедшие к конкурентам], [[[LOST_LEADS]] [[TABLE_DECLENSION]]], [Спрос лидеров #sym.times Дефицит видимости],
   [Базовый чек первого визита], [[[CLIENT_CHECK_FMT]] ₽], [Консервативный порог первого визита],
   [Прямые потери в месяц], [*[[REV_LOSS_FMT]] ₽/мес*], [Недополученная выручка первого визита]
 )
@@ -240,6 +242,7 @@
     stroke: 1pt + rgb("e2e8f0"),
     inset: 8pt,
     [
+      #set par(justify: false, leading: 0.5em)
       #text(size: 8.5pt, weight: "bold", fill: rgb("0f172a"))[ЭТАП 1: СТАРТ] \
       #v(1pt)
       #text(size: 8pt, weight: "bold", fill: rgb("0284c7"))[3-5 дней] \
@@ -254,6 +257,7 @@
     stroke: 1pt + rgb("e2e8f0"),
     inset: 8pt,
     [
+      #set par(justify: false, leading: 0.5em)
       #text(size: 8.5pt, weight: "bold", fill: rgb("0f172a"))[ЭТАП 2: ОЦИФРОВКА] \
       #v(1pt)
       #text(size: 8pt, weight: "bold", fill: rgb("0284c7"))[14 дней] \
@@ -268,6 +272,7 @@
     stroke: 1pt + rgb("e2e8f0"),
     inset: 8pt,
     [
+      #set par(justify: false, leading: 0.5em)
       #text(size: 8.5pt, weight: "bold", fill: rgb("0f172a"))[ЭТАП 3: ЗАКРЕПЛЕНИЕ] \
       #v(1pt)
       #text(size: 8pt, weight: "bold", fill: rgb("0284c7"))[Постоянно] \
