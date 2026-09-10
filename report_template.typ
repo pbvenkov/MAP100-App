@@ -85,7 +85,7 @@
 
 #text(size: 15pt, weight: "bold", fill: rgb("0f172a"))[Резюме для руководителя]
 
-#v(8pt)
+#v(7pt)
 
 #grid(
   columns: (1fr, 1fr),
@@ -95,7 +95,7 @@
     radius: 6pt,
     fill: rgb("f8fafc"),
     stroke: 1pt + rgb("e2e8f0"),
-    inset: 12pt,
+    inset: 11pt,
     [
       #set par(justify: false)
       #text(size: 8pt, weight: "bold", fill: rgb("64748b"))[ГОТОВНОСТЬ КАРТОЧКИ К ПРИЕМУ ТРАФИКА] \
@@ -110,7 +110,7 @@
     radius: 6pt,
     fill: rgb("f8fafc"),
     stroke: 1pt + rgb("e2e8f0"),
-    inset: 12pt,
+    inset: 11pt,
     [
       #set par(justify: false)
       #text(size: 8pt, weight: "bold", fill: rgb("64748b"))[ПРЯМЫЕ ПОТЕРИ ВЫРУЧКИ] \
@@ -122,14 +122,14 @@
   )
 )
 
-#v(8pt)
+#v(6pt)
 
 #rect(
   width: 100%,
   radius: 6pt,
   fill: rgb("f8fafc"),
   stroke: (left: 3pt + rgb("0284c7")),
-  inset: 11pt,
+  inset: 10pt,
   [
     #text(weight: "bold", size: 9.5pt, fill: rgb("0f172a"))[Парадокс локального поиска: почему высокого рейтинга больше недостаточно] \
     #v(3pt)
@@ -139,13 +139,13 @@
   ]
 )
 
-#v(8pt)
+#v(6pt)
 
 #text(size: 9.5pt, weight: "bold", fill: rgb("0f172a"))[Критический вывод анализа:] \
 #v(2pt)
 #text(size: 9pt, fill: rgb("334155"))[[[EXECUTIVE_SUMMARY]]]
 
-#v(8pt)
+#v(6pt)
 
 #text(size: 10pt, weight: "bold", fill: rgb("0f172a"))[Воронка потерь: где именно карточка теряет клиентов]
 
@@ -159,7 +159,7 @@
     radius: 6pt,
     fill: rgb("f8fafc"),
     stroke: 0.5pt + rgb("e2e8f0"),
-    inset: 9pt,
+    inset: 8pt,
     [
       #set par(justify: false)
       #text(size: 7.5pt, weight: "bold", fill: rgb("64748b"))[1. ТРАФИК ЛИДЕРОВ РАЙОНА] \
@@ -174,7 +174,7 @@
     radius: 6pt,
     fill: rgb("f8fafc"),
     stroke: 0.5pt + rgb("e2e8f0"),
-    inset: 9pt,
+    inset: 8pt,
     [
       #set par(justify: false)
       #text(size: 7.5pt, weight: "bold", fill: rgb("64748b"))[2. ЭКРАННЫЙ ФИЛЬТР] \
@@ -189,7 +189,7 @@
     radius: 6pt,
     fill: rgb("f8fafc"),
     stroke: 0.5pt + rgb("e2e8f0"),
-    inset: 9pt,
+    inset: 8pt,
     [
       #set par(justify: false)
       #text(size: 7.5pt, weight: "bold", fill: rgb("64748b"))[3. УХОД К СОСЕДЯМ] \
@@ -201,19 +201,19 @@
   )
 )
 
-#v(4pt)
+#v(3pt)
 #text(size: 7.5pt, fill: rgb("64748b"))[
-  \* Консервативный расчет первого визита (базовый чек [[CLIENT_CHECK_FMT]] ₽). С учетом повторных визитов и прикрепления пациентов годовой отток районного бюджета составляет до [[LTV_LOSS_FMT]] ₽.
+  \* Консервативный расчет первого визита (базовый чек [[CLIENT_CHECK_FMT]] ₽). С учетом повторных визитов и прикрепления клиентов годовой отток районного бюджета составляет до [[LTV_LOSS_FMT]] ₽.
 ]
 
-#v(6pt)
+#v(5pt)
 
 #rect(
   width: 100%,
   radius: 6pt,
   fill: rgb("f8fafc"),
   stroke: 1pt + rgb("e2e8f0"),
-  inset: 8pt,
+  inset: 7pt,
   [
     #text(size: 8pt, fill: rgb("475569"))[
       *Важное примечание:* Оценка [[SCORE]] / 100 фиксирует исключительно техническую готовность профиля в гео-выдаче Яндекса, а не реальное высокое качество [[QUALITY_PHRASE]]. Это программные особенности поисковой системы, которые не зависят от работы администраторов и специалистов.
@@ -280,15 +280,15 @@
 #pagebreak()
 
 // ==========================================================
-// СТРАНИЦА 4: ПЛАН УСТРАНЕНИЯ РАЗРЫВА И CTA
+// СТРАНИЦА 4: ДОРОЖНАЯ КАРТА И ДЕЙСТВИЕ
 // ==========================================================
 
-#text(size: 15pt, weight: "bold", fill: rgb("0f172a"))[План устранения кассового разрыва]
+#text(size: 15pt, weight: "bold", fill: rgb("0f172a"))[Дорожная карта перехвата локального спроса]
 
-#v(3pt)
-#text(size: 9pt, fill: rgb("475569"))[Пошаговый план возврата районного потока обращений в кассу организации:]
+#v(2pt)
+#text(size: 9pt, fill: rgb("475569"))[Пошаговый план возврата первичных клиентов в кассу организации:]
 
-#v(8pt)
+#v(7pt)
 
 #grid(
   columns: (1fr, 1fr, 1fr),
@@ -340,25 +340,44 @@
   )
 )
 
-#v(8pt)
+#v(6pt)
 
-#text(size: 9pt)[
-  *Цена недели бездействия:* Каждая неделя промедления с исправлением технических недочетов обходится организации примерно в *[[WEEKLY_LOSS_FMT]] ₽*, которые безвозвратно переходят к вашим прямым конкурентам.
-]
+#rect(
+  width: 100%,
+  radius: 6pt,
+  fill: rgb("fef2f2"),
+  stroke: 1pt + rgb("fecaca"),
+  inset: (x: 10pt, y: 7pt),
+  [
+    #grid(
+      columns: (1fr, 1.2fr),
+      gutter: 10pt,
+      align: (left + horizon, left + horizon),
+      [
+        #text(size: 8pt, weight: "bold", fill: rgb("991b1b"))[ЦЕНА НЕДЕЛИ ПРОМЕДЛЕНИЯ:] \
+        #v(1pt)
+        #text(size: 11pt, weight: "bold", fill: rgb("991b1b"))[~[[WEEKLY_LOSS_FMT]] ₽ / нед] \
+        #v(1pt)
+        #text(size: 7.5pt, fill: rgb("7f1d1d"))[Сумма, которая безвозвратно переходит к прямым конкурентам локации.]
+      ],
+      [
+        #text(size: 8pt, weight: "bold", fill: rgb("15803d"))[БЫСТРАЯ ОКУПАЕМОСТЬ:] \
+        #v(1pt)
+        #text(size: 9.5pt, weight: "bold", fill: rgb("166534"))[Всего 2–3 первичных визита] \
+        #v(1pt)
+        #text(size: 7.5pt, fill: rgb("166534"))[полностью перекрывают любые затраты на техническую оптимизацию профиля.]
+      ]
+    )
+  ]
+)
 
-#v(4pt)
-
-#text(size: 9pt)[
-  *Экономика окупаемости:* При текущих потерях порядка *[[REV_LOSS_FMT]] ₽/мес*, привлечение даже 4-6 дополнительных первичных клиентов полностью окупает любые сервисные расходы на настройку уже в первые 30 дней.
-]
-
-#v(8pt)
+#v(6pt)
 
 #rect(
   width: 100%,
   radius: 6pt,
   fill: rgb("f8fafc"),
-  stroke: 1pt + rgb("e2e8f0"),
+  stroke: 1pt + rgb("cbd5e1"),
   inset: (x: 12pt, y: 9pt),
   [
     #grid(
@@ -366,14 +385,14 @@
       gutter: 10pt,
       align: (left + horizon, right + horizon),
       [
-        #text(size: 9.5pt, weight: "bold", fill: rgb("0f172a"))[Персональный видеоразбор профиля] \
+        #text(size: 9.5pt, weight: "bold", fill: rgb("0f172a"))[Персональный 3-минутный видеоразбор] \
         #v(2pt)
         #text(size: 8.5pt, fill: rgb("334155"))[
-          Напишите в Telegram — пришлем 3-минутное видео по вашей карточке с разбором конкретных точек утечки пациентов и ответим на вопросы руководителя.
+          Отправьте слово *«РАЗБОР»* в Telegram — покажем на экране 3 скрытые ошибки вашей карточки и ответим на вопросы руководителя.
         ]
       ],
       [
-        #text(size: 9.5pt, weight: "bold", fill: rgb("0284c7"))[
+        #text(size: 10pt, weight: "bold", fill: rgb("0284c7"))[
           Telegram: #link("https://t.me/paulvenkov")[\@paulvenkov]
         ]
       ]
@@ -382,7 +401,7 @@
     #line(length: 100%, stroke: 0.5pt + rgb("e2e8f0"))
     #v(2pt)
     #text(size: 7.5pt, fill: rgb("64748b"))[
-      \* По запросу также подготовим комплект готовых материалов для администратора (шаблон прейскуранта для импорта в 1 клик, продающее описание и регламент связки МИС с онлайн-записью).
+      \* По запросу также предоставим готовый комплект для администратора (файл прейскуранта под импорт в 1 клик, продающее описание и регламент подключения онлайн-записи).
     ]
   ]
 )
