@@ -307,6 +307,6 @@
       Напишите в Telegram — пришлем короткое 3-минутное персональное видео по вашей карточке с разбором скрытых технических ошибок профиля.
     ] \
     #v(6pt)
-    #text(size: 10pt, weight: "bold", fill: rgb("0284c7"))[Telegram: @paulvenkov]
+    #text(size: 10pt, weight: "bold", fill: rgb("0284c7"))[Telegram: \@paulvenkov]
   ]
 )
