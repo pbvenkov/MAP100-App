@@ -320,16 +320,32 @@
 #rect(
   width: 100%,
   radius: 6pt,
-  fill: rgb("f1f5f9"),
-  stroke: 1pt + rgb("cbd5e1"),
-  inset: 10pt,
+  fill: rgb("f8fafc"),
+  stroke: 1pt + rgb("e2e8f0"),
+  inset: (x: 12pt, y: 9pt),
   [
-    #text(size: 10pt, weight: "bold", fill: rgb("0f172a"))[Получить пошаговый план исправления (ТЗ)] \
-    #v(3pt)
-    #text(size: 9pt, fill: rgb("334155"))[
-      Напишите в Telegram — пришлем короткое 3-минутное персональное видео по вашей карточке с разбором скрытых технических ошибок профиля.
-    ] \
+    #grid(
+      columns: (1fr, auto),
+      gutter: 10pt,
+      align: (left + horizon, right + horizon),
+      [
+        #text(size: 9.5pt, weight: "bold", fill: rgb("0f172a"))[Персональный видеоразбор профиля] \
+        #v(2pt)
+        #text(size: 8.5pt, fill: rgb("334155"))[
+          Напишите в Telegram — пришлем 3-минутное видео по вашей карточке с разбором конкретных точек утечки пациентов и ответим на вопросы руководителя.
+        ]
+      ],
+      [
+        #text(size: 9.5pt, weight: "bold", fill: rgb("0284c7"))[
+          Telegram: #link("https://t.me/paulvenkov")[\@paulvenkov]
+        ]
+      ]
+    )
     #v(4pt)
-    #text(size: 9.5pt, weight: "bold", fill: rgb("0284c7"))[Telegram: #link("https://t.me/paulvenkov")[\@paulvenkov]]
+    #line(length: 100%, stroke: 0.5pt + rgb("e2e8f0"))
+    #v(2pt)
+    #text(size: 7.5pt, fill: rgb("64748b"))[
+      \* По запросу также подготовим комплект готовых материалов для администратора (шаблон прейскуранта для импорта в 1 клик, продающее описание и регламент связки МИС с онлайн-записью).
+    ]
   ]
 )
