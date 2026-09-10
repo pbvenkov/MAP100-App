@@ -80,7 +80,7 @@
 #pagebreak()
 
 // ==========================================================
-// СТРАНИЦА 2: РЕЗЮМЕ ДЛЯ РУКОВОДИТЕЛЯ И РАСЧЕТ ПОТЕРЬ
+// СТРАНИЦА 2: РЕЗЮМЕ ДЛЯ РУКОВОДИТЕЛЯ И ВОРОНКА ПОТЕРЬ
 // ==========================================================
 
 #text(size: 15pt, weight: "bold", fill: rgb("0f172a"))[Резюме для руководителя]
@@ -139,37 +139,74 @@
   ]
 )
 
-#v(6pt)
+#v(8pt)
 
 #text(size: 9.5pt, weight: "bold", fill: rgb("0f172a"))[Критический вывод анализа:] \
 #v(2pt)
 #text(size: 9pt, fill: rgb("334155"))[[[EXECUTIVE_SUMMARY]]]
 
-#v(6pt)
+#v(8pt)
 
-#text(size: 9.5pt, weight: "bold", fill: rgb("0f172a"))[Экономика потерь (расчет на основе спроса локации):]
+#text(size: 10pt, weight: "bold", fill: rgb("0f172a"))[Воронка потерь: где именно карточка теряет пациентов]
 
-#v(3pt)
+#v(4pt)
 
-#table(
-  columns: (2.2fr, 1.2fr, 2.6fr),
-  inset: (x: 8pt, y: 6pt),
-  stroke: 0.5pt + rgb("e2e8f0"),
-  fill: (x, y) => if y == 0 { rgb("f8fafc") } else { none },
-  [*Параметр расчета*], [*Значение*], [*Источник и логика*],
-  [Пул спроса лидеров района], [[[CLIENT_LEADS]] обр./мес], [Обращения в ТОП-3 организации локации],
-  [Дефицит конверсии профиля], [[[DEV]]%], [100% минус текущий балл ([[SCORE]])],
-  [Клиенты, ушедшие к конкурентам], [[[LOST_LEADS]] [[TABLE_DECLENSION]]], [Спрос лидеров #sym.times Дефицит конверсии],
-  [Базовый чек первого визита], [[[CLIENT_CHECK_FMT]] ₽], [Консервативный порог первого визита],
-  [Прямые потери в месяц], [*[[REV_LOSS_FMT]] ₽/мес*], [Недополученная выручка первого визита]
+#grid(
+  columns: (1fr, 1fr, 1fr),
+  gutter: 8pt,
+  rect(
+    width: 100%,
+    radius: 6pt,
+    fill: rgb("f8fafc"),
+    stroke: 0.5pt + rgb("e2e8f0"),
+    inset: 9pt,
+    [
+      #set par(justify: false)
+      #text(size: 7.5pt, weight: "bold", fill: rgb("64748b"))[1. СПРОС ЛОКАЦИИ] \
+      #v(2pt)
+      #text(size: 12pt, weight: "bold", fill: rgb("0f172a"))[~[[CLIENT_LEADS]] обр./мес] \
+      #v(2pt)
+      #text(size: 7.5pt, fill: rgb("334155"))[Пул первичных пациентов, которые ищут врачей в радиусе 1.5–2 км.]
+    ]
+  ),
+  rect(
+    width: 100%,
+    radius: 6pt,
+    fill: rgb("f8fafc"),
+    stroke: 0.5pt + rgb("e2e8f0"),
+    inset: 9pt,
+    [
+      #set par(justify: false)
+      #text(size: 7.5pt, weight: "bold", fill: rgb("64748b"))[2. ЭКРАННЫЙ ФИЛЬТР] \
+      #v(2pt)
+      #text(size: 12pt, weight: "bold", fill: rgb("d97706"))[Отказ от звонка] \
+      #v(2pt)
+      #text(size: 7.5pt, fill: rgb("334155"))[65% людей не звонят, если нет онлайн-записи или не виден понятный прайс.]
+    ]
+  ),
+  rect(
+    width: 100%,
+    radius: 6pt,
+    fill: rgb("f8fafc"),
+    stroke: 0.5pt + rgb("e2e8f0"),
+    inset: 9pt,
+    [
+      #set par(justify: false)
+      #text(size: 7.5pt, weight: "bold", fill: rgb("64748b"))[3. УХОД К СОСЕДЯМ] \
+      #v(2pt)
+      #text(size: 12pt, weight: "bold", fill: rgb("991b1b"))[-[[REV_LOSS_FMT]] ₽/мес] \
+      #v(2pt)
+      #text(size: 7.5pt, fill: rgb("334155"))[~[[LOST_LEADS]] [[TABLE_DECLENSION]] ежемесячно перетекают в активные карточки района.]
+    ]
+  )
 )
 
-#v(2pt)
+#v(4pt)
 #text(size: 7.5pt, fill: rgb("64748b"))[
-  \* Расчет выполнен строго по первому чеку. С учетом повторных визитов и прикрепления клиентов ([[CLIENT_LTV]] мес.) совокупный отток выручки в пользу прямых конкурентов района составляет до [[LTV_LOSS_FMT]] ₽ в год.
+  \* Консервативный расчет первого визита (базовый чек [[CLIENT_CHECK_FMT]] ₽). С учетом повторных визитов и прикрепления пациентов годовой отток районного бюджета составляет до [[LTV_LOSS_FMT]] ₽.
 ]
 
-#v(5pt)
+#v(6pt)
 
 #rect(
   width: 100%,
