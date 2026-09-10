@@ -826,6 +826,7 @@ def calculate_hard_facts_40(data, niche_key="OTHER", inn_code=""):
     desc = str(data.get('description') or '')
     raw_url = data.get('url') or data.get('website') or ''
     url = str(raw_url).lower()
+    features = data.get('features') or {}
 
     # 1. Паспорт и гигиена
     if data.get('isVerifiedOwner') or len(title) > 2:
@@ -863,13 +864,14 @@ def calculate_hard_facts_40(data, niche_key="OTHER", inn_code=""):
     has_booking = False
     if data.get('bookingUrl') or data.get('actionButtons') or data.get('appointmentUrl') or data.get('widgetUrl') or data.get('bookingLinks'):
         has_booking = True
-    booking_domains = ["yclients", "medesk", "booking", "dikidi", "infoclinica", "dental-booking", "online-zapis"]
+    booking_domains = ["yclients", "medesk", "booking", "dikidi", "infoclinica", "dental-booking", "online-zapis", "sign"]
     if any(bd in owner_links for bd in booking_domains):
+        has_booking = True
+    if isinstance(features, dict) and features.get('view_medicine_booking'):
         has_booking = True
     if has_booking:
         scores['CONV-48.1'] = True
 
-    features = data.get('features') or {}
     if data.get('isChatEnabled') or (isinstance(features, dict) and features.get('chat')) or data.get('chat'):
         scores['CONV-50.1'] = True
 
@@ -909,13 +911,20 @@ def calculate_hard_facts_40(data, niche_key="OTHER", inn_code=""):
         if sum(1 for p in valid_prods if len(str(p.get('description') or '')) > 40) / total_vp >= 0.6:
             scores['PROF-11.4'] = True
 
+        # CONV-53.1: Промо-акции, бейджи, бесплатный осмотр и скидки
         has_badges = False
+        promo_obj = data.get('promo') or {}
+        if promo_obj and isinstance(promo_obj, dict) and (promo_obj.get('name') or promo_obj.get('description')):
+            has_badges = True
+        if isinstance(features, dict) and (features.get('promotions') or features.get('free examination') or features.get('free_examination')):
+            has_badges = True
+
         for p in valid_prods:
             p_text = f"{p.get('title', '')} {p.get('name', '')} {p.get('description', '')}".lower()
-            if p.get('oldPrice') or p.get('badge') or p.get('badges') or any(w in p_text for w in ['скидк', 'акци', 'хит', 'спецпредложен', 'выгод', '%']):
+            if p.get('oldPrice') or p.get('badge') or p.get('badges') or any(w in p_text for w in ['скидк', 'акци', 'хит', 'спецпредложен', 'выгод', '%', 'бесплатн']):
                 has_badges = True
                 break
-        if has_badges or (isinstance(features, dict) and features.get('promotions')):
+        if has_badges:
             scores['CONV-53.1'] = True
 
     # 4. Репутация и сервис
@@ -981,8 +990,12 @@ def calculate_hard_facts_40(data, niche_key="OTHER", inn_code=""):
             if expert_authors / len(top_20) >= 0.20:
                 scores['REP-34.1'] = True
                 
+        # Оперативность ответов руководства (с фолбэком на охват при пустой дате в Apify)
         if quick_reply:
             scores['REP-30.2'] = True
+        elif top_20 and (replied / len(top_20) >= 0.75):
+            scores['REP-30.2'] = True
+
         if reply_lengths and (sum(reply_lengths) / len(reply_lengths)) >= 60:
             scores['REP-30.4'] = True
 
@@ -1037,16 +1050,42 @@ def calculate_hard_facts_40(data, niche_key="OTHER", inn_code=""):
     return scores
 
 def evaluate_semantic_ai_4(data, niche_key="OTHER", engine=None):
-    """Строго 4 ключевых смысловых критерия через Gemini Flash"""
+    """Строго 4 ключевых смысловых критерия через Gemini Flash с поддержкой промо и постов"""
     title = str(data.get('title') or '')
-    description = str(data.get('description') or '')
+    raw_desc = str(data.get('description') or '').strip()
     rating = safe_float(data.get('rating'), 0.0)
 
-    # Безопасный фолбэк при недоступности API или ошибке парсинга
+    promo = data.get('promo') or {}
+    promo_text = ""
+    if isinstance(promo, dict):
+        p_name = promo.get('name', '')
+        p_desc = promo.get('description', '')
+        if p_name or p_desc:
+            promo_text = f"Промо-акция / Оффер клиники: {p_name}. {p_desc}".strip()
+
+    posts = data.get('posts') or data.get('mobilePosts') or []
+    latest_post_text = ""
+    if posts and isinstance(posts, list) and len(posts) > 0 and isinstance(posts[0], dict):
+        p_txt = str(posts[0].get('text') or '').strip()
+        if p_txt:
+            latest_post_text = f"Публикация из ленты новостей: {p_txt[:600]}"
+
+    combined_desc_parts = []
+    if raw_desc and len(raw_desc) > 10:
+        combined_desc_parts.append(f"Основное описание: {raw_desc}")
+    if promo_text:
+        combined_desc_parts.append(promo_text)
+    if latest_post_text:
+        combined_desc_parts.append(latest_post_text)
+
+    full_semantic_text = "\n\n".join(combined_desc_parts)
+    if not full_semantic_text:
+        full_semantic_text = "Описание отсутствует или состоит только из адреса."
+
     fallback = {
         "PROF-01.2": len(title.split()) <= 4,
-        "PROF-10.3": len(description) > 300,
-        "CONV-49.1": len(description) > 500,
+        "PROF-10.3": len(full_semantic_text) > 300,
+        "CONV-49.1": len(full_semantic_text) > 350 or bool(promo_text),
         "REP-32.2": rating >= 4.8
     }
 
@@ -1079,16 +1118,16 @@ def evaluate_semantic_ai_4(data, niche_key="OTHER", engine=None):
 ДАННЫЕ ПРОФИЛЯ:
 - Название: {title}
 - Ниша: {niche_key}
-- Описание карточки:
-{description[:1800] if len(description) > 20 else "Описание отсутствует или состоит только из адреса"}
+- Текстовое наполнение (описание, промо-блок, новости):
+{full_semantic_text[:2000]}
 
 ОТРАБОТКА НЕГАТИВА РУКОВОДСТВОМ (1-3 звезды):
 {negative_text}
 
 КРИТЕРИИ:
 1. PROF-01.2: В названии НЕТ поискового спама, городов, слоганов и набивки ключей (чистый бренд).
-2. PROF-10.3: В описании явно перечислен перечень конкретных процедур/услуг ниши (а не только общие хвалебные слова).
-3. CONV-49.1: В описании есть понятное УТП с твердыми фактами (стаж, оборудование, гарантии) и призывом к действию (CTA).
+2. PROF-10.3: В карточке (в описании, промо-блоке или публикациях) явно перечислен перечень конкретных процедур/услуг ниши.
+3. CONV-49.1: Есть понятное УТП с твердыми фактами, гарантией/оффером или призывом к действию (CTA).
 4. REP-32.2: В ответах на отзывы руководство держит уважительный тон, полностью отсутствуют токсичность, споры с пациентами и сарказм (если негатива нет вовсе — ставь true).
 
 Верни СТРОГО валидный JSON:
@@ -1105,7 +1144,6 @@ def evaluate_semantic_ai_4(data, niche_key="OTHER", engine=None):
         if match:
             ai_dict = json.loads(match.group(0))
             res = {k: bool(v) for k, v in ai_dict.items() if k in PROGRAMMED_CODES}
-            # Автозачет этики для карточек с безупречным рейтингом 5.0
             if rating >= 4.9 and not has_negative:
                 res['REP-32.2'] = True
             return res
@@ -1165,6 +1203,24 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     ]
     failed_items.sort(key=lambda x: x['Max'], reverse=True)
 
+    # Диверсификация топ-3 замечаний: не берем подряд правила из одной группы
+    selected_failed = []
+    seen_groups = set()
+    for item in failed_items:
+        grp = item.get('Группа', '')
+        if grp not in seen_groups:
+            selected_failed.append(item)
+            seen_groups.add(grp)
+        if len(selected_failed) == 3:
+            break
+
+    if len(selected_failed) < 3:
+        for item in failed_items:
+            if item not in selected_failed:
+                selected_failed.append(item)
+            if len(selected_failed) == 3:
+                break
+
     if score >= 75:
         p3_heading = "Точки скрытого роста и удержания лидерства"
         p3_subtitle = f"Профиль занимает прочные позиции в районе, однако следующие детали позволят закрепить преимущество над конкурентами{comp_safe}:"
@@ -1176,8 +1232,8 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
 
     slots = []
     for i in range(3):
-        if i < len(failed_items):
-            item = failed_items[i]
+        if i < len(selected_failed):
+            item = selected_failed[i]
             slots.append({
                 "title": clean_typography(item["Критерий"]),
                 "desc": clean_typography(item["Обоснование"])
@@ -1196,10 +1252,11 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     with open(template_path, "r", encoding="utf-8") as f:
         typ_source = f.read()
 
-    # Тотальная зачистка артефактов формул Typst
+    # Тотальная зачистка артефактов формул Typst и знака умножения
     for bad_curr in ["$P,$", "$Р,$", "$P$", "$Р$", " $P ", " $Р "]:
         typ_source = typ_source.replace(bad_curr, "~₽")
     typ_source = typ_source.replace("([[SCORE]].)", "([[SCORE]])").replace("([[SCORE]]. )", "([[SCORE]]) ")
+    typ_source = typ_source.replace("Спрос лидеров Дефицит видимости", "Спрос лидеров × Дефицит видимости")
 
     replacements = {
         "[[TITLE]]": title_safe,
