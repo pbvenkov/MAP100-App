@@ -8,7 +8,7 @@
       columns: (1fr, auto),
       align: (left, right),
       [PIN100 Analytics | Независимый аудит поисковой гео-выдачи],
-      [Стр. #counter(page).display("1")]
+      [Стр. #context counter(page).display("1")]
     )
   ]
 )
