@@ -147,7 +147,7 @@
 
 #v(8pt)
 
-#text(size: 10pt, weight: "bold", fill: rgb("0f172a"))[Воронка потерь: где именно карточка теряет пациентов]
+#text(size: 10pt, weight: "bold", fill: rgb("0f172a"))[Воронка потерь: где именно карточка теряет клиентов]
 
 #v(4pt)
 
@@ -162,11 +162,11 @@
     inset: 9pt,
     [
       #set par(justify: false)
-      #text(size: 7.5pt, weight: "bold", fill: rgb("64748b"))[1. СПРОС ЛОКАЦИИ] \
+      #text(size: 7.5pt, weight: "bold", fill: rgb("64748b"))[1. ТРАФИК ЛИДЕРОВ РАЙОНА] \
       #v(2pt)
       #text(size: 12pt, weight: "bold", fill: rgb("0f172a"))[~[[CLIENT_LEADS]] обр./мес] \
       #v(2pt)
-      #text(size: 7.5pt, fill: rgb("334155"))[Пул первичных пациентов, которые ищут врачей в радиусе 1.5–2 км.]
+      #text(size: 7.5pt, fill: rgb("334155"))[Медиана прямых контактов: звонки, маршруты и онлайн-запись в ТОП-3 локации.]
     ]
   ),
   rect(
