@@ -25,25 +25,19 @@ try:
     from utils import generate_icebreaker_text
 except ImportError:
     def generate_icebreaker_text(data, templates_dict=None):
-        if data.get("score", 0) >= 75:
-            return (
-                f"Добрый день!\n\n"
-                f"Меня зовут {data.get('sender_name', 'Павел')}. Анализирую поисковую гео-выдачу Яндекса в вашем районе.\n\n"
-                f"У «{data.get('title', 'организации')}» сформирована сильная репутация (оценка {data.get('rating', '5.0')}), "
-                f"однако в карточке есть несколько скрытых технических точек роста, из-за которых часть первичных обращений "
-                f"перехватывают ближайшие соседи ({data.get('comp_1', 'конкуренты')}).\n\n"
-                f"По трафику локации клиника недополучает порядка {data.get('lost_leads', '2–4')} первичных пациентов в месяц "
-                f"(около {data.get('lost_revenue', 0):,} ₽ выручки).\n\n"
-                f"Свели детальный аудит в короткий 4-страничный отчет. Отправить PDF руководителю?"
-            ).replace(',', ' ')
+        sender_name = data.get('sender_name', 'Павел')
+        title = data.get('title', 'клиники')
+        rating = data.get('rating', '5.0')
+        comp_1 = data.get('comp_1') or 'конкурентам'
+        lost_leads = data.get('lost_leads', '3–5')
+        lost_rev = f"{data.get('lost_revenue', 0):,}".replace(',', ' ')
         return (
             f"Добрый день!\n\n"
-            f"Меня зовут {data.get('sender_name', 'Павел')}. Анализирую поисковую выдачу стоматологий на Яндекс Картах вашего района.\n\n"
-            f"У «{data.get('title', 'организации')}» отличная репутация, но по общим целевым запросам карточка уступает ТОП-позиции конкурентам.\n\n"
-            f"Клиника ежемесячно упускает около {data.get('lost_leads', '3–5')} первичных обращений "
-            f"(порядка {data.get('lost_revenue', 0):,} ₽ недополученной выручки первого визита).\n\n"
-            f"Подготовили 4-страничный аналитический разбор с точками роста. Куда удобнее прислать PDF?"
-        ).replace(',', ' ')
+            f"Меня зовут {sender_name}. Заглянул в карточку «{title}» на Яндекс Картах. "
+            f"Репутация сильная ({rating}), но из-за технических недочетов профиль уступает верхние позиции в выдаче.\n\n"
+            f"По емкости района это отток порядка {lost_leads} пациентов в месяц (кассовый разрыв ~{lost_rev} ₽).\n\n"
+            f"Свели разбор ошибок в короткий PDF на 4 страницы. Прислать файл для ознакомления?"
+        )
 
 try:
     from drive_manager import DriveManager
@@ -100,17 +94,43 @@ def plural_ru_gen(n, forms_gen):
         return forms_gen[0]
     return forms_gen[1]
 
-def plural_table(n):
-    """Склонение для таблицы без предлога ('пациент', 'пациента', 'пациентов')"""
+def plural_table(n, niche_key="DENTISTRY"):
+    """Склонение для таблицы без предлога"""
     n_mod = abs(int(n)) % 100
     n1 = n_mod % 10
-    if 10 < n_mod < 20:
+    
+    if niche_key in ["DENTISTRY", "BEAUTY_MEDICAL"]:
+        if 10 < n_mod < 20:
+            return "пациентов"
+        if 1 < n1 < 5:
+            return "пациента"
+        if n1 == 1:
+            return "пациент"
         return "пациентов"
-    if 1 < n1 < 5:
-        return "пациента"
-    if n1 == 1:
-        return "пациент"
-    return "пациентов"
+    elif niche_key == "HORECA":
+        if 10 < n_mod < 20:
+            return "гостей"
+        if 1 < n1 < 5:
+            return "гостя"
+        if n1 == 1:
+            return "гость"
+        return "гостей"
+    elif niche_key == "AUTO":
+        if 10 < n_mod < 20:
+            return "автовладельцев"
+        if 1 < n1 < 5:
+            return "автовладельца"
+        if n1 == 1:
+            return "автовладелец"
+        return "автовладельцев"
+    else:
+        if 10 < n_mod < 20:
+            return "клиентов"
+        if 1 < n1 < 5:
+            return "клиента"
+        if n1 == 1:
+            return "клиент"
+        return "клиентов"
 
 def safe_float(val, default=0.0):
     if val is None:
@@ -134,7 +154,7 @@ def clean_typography(text):
         return ""
     t = str(text).replace(" - ", " — ").replace(">=", "≥").replace("<=", "≤").replace("->", "→")
     t = t.replace("<", " меньше ").replace(">", " больше ")
-    for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '@', '"', "'", '`', '~', '^']:
+    for c in ['\\', '[', ']', '{', '}', '$', '*', '_', '#', '`', '~', '^']:
         t = t.replace(c, ' ')
     return " ".join(t.split())
 
@@ -339,9 +359,9 @@ def extract_lpr_from_reviews(reviews_data, engine=None):
         raw_res = engine.generate_content(prompt).text
         match = re.search(r'\{.*\}', raw_res, re.DOTALL)
         if match:
-            data = json.loads(match.group(0))
-            if data.get("status") == "found" and data.get("name"):
-                return data
+            parsed = json.loads(match.group(0))
+            if parsed.get("status") == "found" and parsed.get("name"):
+                return parsed
     except Exception:
         pass
     return {}
@@ -990,7 +1010,7 @@ def calculate_hard_facts_40(data, niche_key="OTHER", inn_code=""):
             if expert_authors / len(top_20) >= 0.20:
                 scores['REP-34.1'] = True
                 
-        # Оперативность ответов руководства (с фолбэком на охват при пустой дате в Apify)
+        # Оперативность ответов руководства
         if quick_reply:
             scores['REP-30.2'] = True
         elif top_20 and (replied / len(top_20) >= 0.75):
@@ -1061,7 +1081,7 @@ def evaluate_semantic_ai_4(data, niche_key="OTHER", engine=None):
         p_name = promo.get('name', '')
         p_desc = promo.get('description', '')
         if p_name or p_desc:
-            promo_text = f"Промо-акция / Оффер клиники: {p_name}. {p_desc}".strip()
+            promo_text = f"Промо-акция / Оффер компании: {p_name}. {p_desc}".strip()
 
     posts = data.get('posts') or data.get('mobilePosts') or []
     latest_post_text = ""
@@ -1126,9 +1146,9 @@ def evaluate_semantic_ai_4(data, niche_key="OTHER", engine=None):
 
 КРИТЕРИИ:
 1. PROF-01.2: В названии НЕТ поискового спама, городов, слоганов и набивки ключей (чистый бренд).
-2. PROF-10.3: В карточке (в описании, промо-блоке или публикациях) явно перечислен перечень конкретных процедур/услуг ниши.
+2. PROF-10.3: В карточке (в описании, промо-блоке или публикациях) явно перечислен перечень конкретных услуг/направлений ниши.
 3. CONV-49.1: Есть понятное УТП с твердыми фактами, гарантией/оффером или призывом к действию (CTA).
-4. REP-32.2: В ответах на отзывы руководство держит уважительный тон, полностью отсутствуют токсичность, споры с пациентами и сарказм (если негатива нет вовсе — ставь true).
+4. REP-32.2: В ответах на отзывы руководство держит уважительный тон, полностью отсутствуют токсичность, споры с клиентами и сарказм (если негатива нет вовсе — ставь true).
 
 Верни СТРОГО валидный JSON:
 {{
@@ -1155,19 +1175,22 @@ def evaluate_semantic_ai_4(data, niche_key="OTHER", engine=None):
 # ==========================================
 # 7. ГЕНЕРАЦИЯ ДИНАМИЧЕСКОГО PDF (TYPST)
 # ==========================================
-def create_pdf_report(title, niche, score, revenue_loss, results_data, client_leads, client_check, client_ltv, competitors_text=""):
+def create_pdf_report(title, niche, score, revenue_loss, selected_failed, client_leads, client_check, client_ltv, competitors_text="", niche_key="DENTISTRY"):
     current_date = datetime.now().strftime("%d.%m.%Y")
     score_color = "166534" if score >= 75 else ("8B7355" if score >= 50 else "9F1239")
     dev = round(100 - score, 1)
-    
+    lost_percentage = max(0.0, dev) / 100.0
+
+    # Синхронизированная точная математика таблицы (без расхождений на калькуляторе!)
     if score >= 75:
-        lost_leads = max(2, int(client_leads * (dev / 100)))
-        revenue_loss = max(revenue_loss, int(lost_leads * client_check))
+        lost_leads = max(2, int(round(client_leads * lost_percentage)))
     else:
-        lost_leads = int(client_leads * (dev / 100))
+        lost_leads = max(1, int(round(client_leads * lost_percentage)))
+        
+    revenue_loss = int(lost_leads * client_check)
         
     rev_loss_fmt = f"{revenue_loss:,}".replace(',', ' ')
-    weekly_loss = max(1, int(revenue_loss / 4))
+    weekly_loss = max(1, int(round(revenue_loss / 4)))
     weekly_loss_fmt = f"{weekly_loss:,}".replace(',', ' ')
     client_check_fmt = f"{client_check:,}".replace(',', ' ')
     ltv_loss = int(revenue_loss * max(1, client_ltv))
@@ -1178,57 +1201,38 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     comp_safe = clean_typography(competitors_text)
     
     niche_str = str(niche).lower()
-    if "стом" in niche_str or "зуб" in niche_str:
+    if "стом" in niche_str or "зуб" in niche_str or "дентал" in niche_str:
         quality_phrase = "стоматологических услуг, квалификации врачей и стандартов лечения"
         target_forms_gen = ("пациента", "пациентов")
+        loyal_audience = "постоянных пациентов"
     elif "мед" in niche_str or "клиник" in niche_str or "бьют" in niche_str or "салон" in niche_str:
         quality_phrase = "медицинских услуг, опыта специалистов и уровня заботы о клиентах"
         target_forms_gen = ("пациента", "пациентов")
+        loyal_audience = "постоянных пациентов"
     elif "horeca" in niche_str or "ресторан" in niche_str or "кафе" in niche_str or "бар" in niche_str:
         quality_phrase = "кухни, сервиса и гостеприимной атмосферы заведения"
         target_forms_gen = ("гостя", "гостей")
+        loyal_audience = "постоянных гостей"
     elif "авто" in niche_str or "мойка" in niche_str or "сервис" in niche_str:
         quality_phrase = "ремонта, запчастей и квалификации автомехаников"
         target_forms_gen = ("автовладельца", "автовладельцев")
+        loyal_audience = "постоянных клиентов"
     else:
         quality_phrase = "товаров, услуг и стандартов клиентского сервиса"
         target_forms_gen = ("клиента", "клиентов")
+        loyal_audience = "постоянных клиентов"
 
     audience_declension = plural_ru_gen(lost_leads, target_forms_gen)
-    table_declension = plural_table(lost_leads)
-
-    failed_items = [
-        r for r in results_data 
-        if r.get('Evaluated') and r['Результат'] == 'НЕТ' and r['Max'] > 0
-    ]
-    failed_items.sort(key=lambda x: x['Max'], reverse=True)
-
-    # Диверсификация топ-3 замечаний: не берем подряд правила из одной группы
-    selected_failed = []
-    seen_groups = set()
-    for item in failed_items:
-        grp = item.get('Группа', '')
-        if grp not in seen_groups:
-            selected_failed.append(item)
-            seen_groups.add(grp)
-        if len(selected_failed) == 3:
-            break
-
-    if len(selected_failed) < 3:
-        for item in failed_items:
-            if item not in selected_failed:
-                selected_failed.append(item)
-            if len(selected_failed) == 3:
-                break
+    table_declension = plural_table(lost_leads, niche_key)
 
     if score >= 75:
         p3_heading = "Точки скрытого роста и удержания лидерства"
-        p3_subtitle = f"Профиль занимает прочные позиции в районе, однако следующие детали позволят закрепить преимущество над конкурентами{comp_safe}:"
+        p3_subtitle = f"Профиль занимает прочные позиции в районе, однако следующие детали позволят закрепить преимущество над конкурентами {comp_safe}:" if comp_safe else "Профиль занимает прочные позиции в районе, однако следующие детали позволят закрепить преимущество над конкурентами:"
         exec_summary = f"Карточка входит в группу лидеров локации (Индекс: *{round(score, 1)} / 100*). Репутация и рейтинг сформированы на высоком уровне. Выявленные недочеты носят точечный характер, однако их устранение позволит защитить кассу от перехвата трафика ближайшими соседями."
     else:
         p3_heading = "Три главные причины потери клиентов"
-        p3_subtitle = f"Почему потенциальные клиенты из вашего района обращаются к прямым конкурентам{comp_safe}:"
-        exec_summary = f"Прямо сейчас профиль скрыт от *{dev}% целевых клиентов* вашего района. Из-за технических недочетов в оформлении карточки вы каждый месяц отдаете конкурентам локации около *{lost_leads} {audience_declension}*. Высокий рейтинг подтверждает доверие постоянных гостей, однако по общим запросам алгоритмы опускают карточку ниже активных соседей."
+        p3_subtitle = f"Почему потенциальные клиенты из вашего района обращаются к прямым конкурентам {comp_safe}:" if comp_safe else "Почему потенциальные клиенты из вашего района обращаются к прямым конкурентам:"
+        exec_summary = f"Прямо сейчас профиль скрыт от *{dev}% целевых клиентов* вашего района. Из-за технических недочетов в оформлении карточки вы каждый месяц отдаете конкурентам локации около *{lost_leads} {audience_declension}*. Высокий рейтинг подтверждает доверие {loyal_audience}, однако по общим запросам алгоритмы опускают карточку ниже активных соседей."
 
     slots = []
     for i in range(3):
@@ -1252,7 +1256,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
     with open(template_path, "r", encoding="utf-8") as f:
         typ_source = f.read()
 
-    # Тотальная зачистка артефактов формул Typst и знака умножения
+    # Тотальная зачистка математических артефактов и формул Typst
     for bad_curr in ["$P,$", "$Р,$", "$P$", "$Р$", " $P ", " $Р "]:
         typ_source = typ_source.replace(bad_curr, "~₽")
     typ_source = typ_source.replace("([[SCORE]].)", "([[SCORE]])").replace("([[SCORE]]. )", "([[SCORE]]) ")
@@ -1268,7 +1272,7 @@ def create_pdf_report(title, niche, score, revenue_loss, results_data, client_le
         "[[WEEKLY_LOSS_FMT]]": weekly_loss_fmt,
         "[[DEV]]": str(dev).rstrip('.'),
         "[[LOST_LEADS]]": str(lost_leads),
-        "[[AUDIENCE_DECLENSION]]": table_declension,
+        "[[AUDIENCE_DECLENSION]]": audience_declension,
         "[[TABLE_DECLENSION]]": table_declension,
         "[[CLIENT_LEADS]]": str(client_leads),
         "[[CLIENT_CHECK_FMT]]": client_check_fmt,
@@ -1437,7 +1441,7 @@ if data_to_process:
                 "Evaluated": True
             })
 
-        # Финальный расчет
+        # Финальный балл
         final_total_score = round((earned_sum / evaluated_max_sum) * 100, 1) if evaluated_max_sum > 0 else 50.0
 
         eco = NICHE_ECONOMICS.get(niche_key, NICHE_ECONOMICS["OTHER"])
@@ -1455,12 +1459,37 @@ if data_to_process:
 
         lost_percentage = max(0.0, 100.0 - final_total_score) / 100.0
         
-        # Единый порог 75 баллов для лидерства
+        # Строго синхронизированный расчет потерь без расхождений на калькуляторе
         if final_total_score >= 75:
-            lost_leads_calc = max(2, int(client_leads * lost_percentage))
-            lost_revenue = max(int(lost_leads_calc * client_check), int(client_leads * lost_percentage * client_check))
+            lost_leads_calc = max(2, int(round(client_leads * lost_percentage)))
         else:
-            lost_revenue = int(client_leads * lost_percentage * client_check)
+            lost_leads_calc = max(1, int(round(client_leads * lost_percentage)))
+            
+        lost_revenue = int(lost_leads_calc * client_check)
+
+        # Диверсификация топ-3 замечаний: исключаем однотипные дубли
+        failed_items = [
+            r for r in results 
+            if r.get('Evaluated') and r['Результат'] == 'НЕТ' and r['Max'] > 0
+        ]
+        failed_items.sort(key=lambda x: x['Max'], reverse=True)
+
+        selected_failed = []
+        seen_groups = set()
+        for item in failed_items:
+            grp = item.get('Группа', '')
+            if grp not in seen_groups:
+                selected_failed.append(item)
+                seen_groups.add(grp)
+            if len(selected_failed) == 3:
+                break
+
+        if len(selected_failed) < 3:
+            for item in failed_items:
+                if item not in selected_failed:
+                    selected_failed.append(item)
+                if len(selected_failed) == 3:
+                    break
 
         history_info = check_oid_history(current_oid)
 
@@ -1511,13 +1540,18 @@ if data_to_process:
             delta = "Отличный результат (Лидер)" if final_total_score >= 75 else ("Требует оптимизации" if final_total_score >= 50 else "Критический уровень")
             st.metric(f"Индекс {PROJECT_NAME}", f"{round(final_total_score, 1)} / 100", delta=delta, delta_color="normal" if final_total_score >= 75 else "inverse")
 
-        st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно.".replace(',', ' '))
+        st.error(f"Потери: **{lost_revenue:,} ₽** ежемесячно ({lost_leads_calc} {plural_table(lost_leads_calc, niche_key)}).".replace(',', ' '))
         
         with st.expander("🔍 Статус аудита: 40 правил активны (100% покрытие)", expanded=False):
             active_list = [f"`{r['Код']}` {r['Критерий']} ({r['Результат']})" for r in results]
             st.write(" | ".join(active_list[:25]) + " ...")
 
-        pdf_bytes = create_pdf_report(title, niche_label, final_total_score, lost_revenue, results, client_leads, client_check, client_ltv, competitors_text)
+        # Генерация PDF-отчета
+        pdf_bytes = create_pdf_report(
+            title, niche_label, final_total_score, lost_revenue, 
+            selected_failed, client_leads, client_check, client_ltv, 
+            competitors_text, niche_key
+        )
         
         if pdf_bytes:
             st.download_button(
@@ -1538,11 +1572,11 @@ if data_to_process:
             if final_total_score >= 75:
                 leads_min = 2
                 leads_max = 4
-                lost_revenue_adj = max(lost_revenue, int(leads_min * client_check))
             else:
-                leads_min = max(3, int(client_leads * lost_percentage * 0.8))
-                leads_max = max(5, int(client_leads * lost_percentage))
-                lost_revenue_adj = lost_revenue
+                leads_min = max(2, int(round(lost_leads_calc * 0.8)))
+                leads_max = lost_leads_calc
+
+            top_codes = [item["Код"] for item in selected_failed[:2]]
 
             template_payload = {
                 "niche_key": niche_key,
@@ -1554,8 +1588,9 @@ if data_to_process:
                 "comp_1": comp_1,
                 "comp_2": comp_2,
                 "lost_leads": f"{leads_min}–{leads_max}",
-                "lost_revenue": lost_revenue_adj,
-                "sender_name": sender_name
+                "lost_revenue": lost_revenue,
+                "sender_name": sender_name,
+                "top_fail_codes": top_codes
             }
             
             icebreaker_text = generate_icebreaker_text(template_payload, templates_data)
