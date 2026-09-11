@@ -5,9 +5,11 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import requests
 import streamlit as st
 
 # ==========================================================
@@ -72,11 +74,87 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
 }
 
 # ==========================================================
-# 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# 2. ИНТЕГРАЦИЯ С DADATA И ПАРСЕР ССЫЛОК ЯНДЕКС КАРТ
+# ==========================================================
+
+def parse_yandex_maps_url(url: str) -> Tuple[Optional[str], Optional[str], str]:
+    """
+    Распознает ссылку любого формата (включая короткие редиректы yandex.ru/maps/-/).
+    Возвращает: (org_id, slug_name, canonical_url).
+    """
+    raw_url = url.strip()
+    if not raw_url:
+        return None, None, raw_url
+
+    canonical = raw_url
+    # Раскрываем короткие ссылки через HEAD-запрос
+    if "/maps/-/" in raw_url or "clck.ru" in raw_url or "bit.ly" in raw_url:
+        try:
+            resp = requests.head(raw_url, allow_redirects=True, timeout=4)
+            canonical = resp.url
+        except Exception:
+            pass
+
+    org_id = None
+    slug_name = None
+
+    # 1. Шаблон вида /org/[slug]/[id] или /org/[id]
+    m_org = re.search(r'/org/(?:([^/?#]+)/)?(\d+)', canonical)
+    if m_org:
+        slug = m_org.group(1)
+        org_id = m_org.group(2)
+        if slug and not slug.isdigit():
+            slug_name = urllib.parse.unquote(slug).replace('_', ' ').replace('-', ' ').title()
+
+    # 2. Параметр ?oid=[id]
+    if not org_id:
+        m_oid = re.search(r'[?&]oid=(\d+)', canonical)
+        if m_oid:
+            org_id = m_oid.group(1)
+
+    # 3. Шаблон /objects/[id]
+    if not org_id:
+        m_obj = re.search(r'/objects/(\d+)', canonical)
+        if m_obj:
+            org_id = m_obj.group(1)
+
+    return org_id, slug_name, canonical
+
+
+def fetch_dadata_parties(query: str, token: str) -> List[Dict[str, Any]]:
+    """Поиск организаций по названию или ИНН через DaData Suggestions API."""
+    if not query.strip() or not token.strip():
+        return []
+
+    url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/party"
+    headers = {
+        "Authorization": f"Token {token.strip()}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {"query": query.strip(), "count": 7}
+
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=4)
+        if r.status_code == 200:
+            return r.json().get("suggestions", [])
+    except Exception:
+        pass
+    return []
+
+
+def make_yandex_search_url(company_name: str, address: str = "") -> str:
+    """Генерирует поисковую ссылку на Яндекс Карты по названию и адресу."""
+    text_query = f"{company_name} {address}".strip()
+    return f"https://yandex.ru/maps/?text={urllib.parse.quote_plus(text_query)}"
+
+# ==========================================================
+# 3. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И СКЛОНЕНИЯ
 # ==========================================================
 
 def format_currency(value: float | int) -> str:
     return f"{int(round(value)):,}".replace(",", " ")
+
 
 def get_declension(number: int, word_type: str = "пациент") -> str:
     n = abs(int(number)) % 100
@@ -99,6 +177,7 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
         return "клиентов"
     return "обращений"
 
+
 def get_score_color(score: float) -> str:
     if score >= 80:
         return "16a34a"
@@ -106,12 +185,13 @@ def get_score_color(score: float) -> str:
         return "d97706"
     return "dc2626"
 
+
 def sanitize_filename(name: str) -> str:
     clean = re.sub(r'[\\/*?:"<>| ]', "_", name).strip("_")
     return clean if clean else "report"
 
 # ==========================================================
-# 3. ГЕНЕРАТОР ПЕРВОГО СООБЩЕНИЯ (ICEBREAKER)
+# 4. ГЕНЕРАТОР ПЕРВОГО СООБЩЕНИЯ (ICEBREAKER)
 # ==========================================================
 
 def generate_icebreaker(
@@ -145,7 +225,7 @@ def generate_icebreaker(
     )
 
 # ==========================================================
-# 4. РАСЧЕТ ЮНИТ-ЭКОНОМИКИ
+# 5. РАСЧЕТ ЮНИТ-ЭКОНОМИКИ
 # ==========================================================
 
 def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
@@ -209,7 +289,7 @@ def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
     }
 
 # ==========================================================
-# 5. КОМПИЛЯТОР TYPST
+# 6. КОМПИЛЯТОР TYPST
 # ==========================================================
 
 def render_typst_template(template_path: Path, mapping: Dict[str, str]) -> str:
@@ -218,6 +298,7 @@ def render_typst_template(template_path: Path, mapping: Dict[str, str]) -> str:
     for placeholder, val in mapping.items():
         content = content.replace(placeholder, str(val))
     return content
+
 
 def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path) -> Tuple[bool, str]:
     temp_typ_path = work_dir / f"temp_{output_pdf_path.stem}.typ"
@@ -228,7 +309,7 @@ def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path)
         subprocess.run(cmd, capture_output=True, text=True, check=True)
         return True, ""
     except subprocess.CalledProcessError as e:
-        return False, f"Ошибка Typst: {e.stderr}"
+        return False, f"Ошибка компиляции Typst: {e.stderr}"
     except FileNotFoundError:
         return False, "Утилита 'typst' CLI не установлена в PATH."
     finally:
@@ -239,11 +320,10 @@ def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path)
                 pass
 
 # ==========================================================
-# 6. STREAMLIT ИНТЕРФЕЙС
+# 7. ИНТЕРФЕЙС STREAMLIT
 # ==========================================================
 
 def apply_json_payload(data: Dict[str, Any]) -> None:
-    """Загружает поля из JSON словаря в session_state."""
     st.session_state["f_title"] = data.get("title", "")
     st.session_state["f_org_id"] = str(data.get("org_id", ""))
     st.session_state["f_rating"] = float(data.get("rating", 4.7))
@@ -284,7 +364,6 @@ def run_streamlit_app() -> None:
         initial_sidebar_state="expanded"
     )
 
-    # Дефолтные причины потери клиентов
     DEFAULT_FAILURES = [
         {
             "title": "Отсутствие кнопки быстрой онлайн-записи (модуля МИС)",
@@ -301,61 +380,110 @@ def run_streamlit_app() -> None:
     ]
 
     with st.sidebar:
-        st.header("1. Данные карточки")
+        st.header("1. Быстрый импорт данных")
 
-        # Кнопки быстрых действий
         col_b1, col_b2 = st.columns(2)
         with col_b1:
             if st.button("🔄 Тест: Айдента", use_container_width=True):
                 st.session_state["f_title"] = "Айдента"
                 st.session_state["f_org_id"] = "1015646715"
+                st.session_state["f_yandex_url"] = "https://yandex.ru/maps/org/aidenta/1015646715/"
                 st.session_state["f_rating"] = 4.7
                 st.session_state["f_score"] = 66.5
                 st.session_state["f_niche"] = "DENTISTRY"
                 st.session_state["f_comp1"] = "РозДент"
                 st.session_state["f_comp2"] = "На Приморской"
-                st.session_state["f_f1_t"] = DEFAULT_FAILURES[0]["title"]
-                st.session_state["f_f1_d"] = DEFAULT_FAILURES[0]["desc"]
-                st.session_state["f_f2_t"] = DEFAULT_FAILURES[1]["title"]
-                st.session_state["f_f2_d"] = DEFAULT_FAILURES[1]["desc"]
-                st.session_state["f_f3_t"] = DEFAULT_FAILURES[2]["title"]
-                st.session_state["f_f3_d"] = DEFAULT_FAILURES[2]["desc"]
                 st.rerun()
 
         with col_b2:
             if st.button("➕ Очистить", use_container_width=True):
-                st.session_state["f_title"] = ""
-                st.session_state["f_org_id"] = ""
+                for k in ["f_title", "f_org_id", "f_yandex_url", "f_comp1", "f_comp2"]:
+                    st.session_state[k] = ""
                 st.session_state["f_rating"] = 4.8
                 st.session_state["f_score"] = 70.0
-                st.session_state["f_comp1"] = ""
-                st.session_state["f_comp2"] = ""
                 st.rerun()
 
-        # БЛОК ИМПОРТА JSON
-        with st.expander("📂 Импорт из JSON", expanded=False):
-            uploaded_json = st.file_uploader("Перетащите файл .json", type=["json"])
+        # СПОСОБЫ ВВОДА ОРГАНИЗАЦИИ
+        input_mode = st.radio(
+            "Способ поиска / добавления:",
+            ["🔗 По ссылке на Карты", "🏢 Поиск через DaData", "📂 Загрузить JSON", "✍️ Ручной ввод"],
+            index=0
+        )
+
+        # 1. Парсинг ссылки на Яндекс Карты
+        if input_mode == "🔗 По ссылке на Карты":
+            input_url = st.text_input(
+                "Вставьте ссылку на карточку в Картах:",
+                value=st.session_state.get("f_yandex_url", ""),
+                placeholder="https://yandex.ru/maps/org/... или https://yandex.ru/maps/-/... "
+            )
+            if st.button("🔍 Распознать ссылку", use_container_width=True):
+                if input_url.strip():
+                    oid, slug_name, canon = parse_yandex_maps_url(input_url)
+                    st.session_state["f_yandex_url"] = canon
+                    if oid:
+                        st.session_state["f_org_id"] = oid
+                        st.success(f"Распознан ID организации: {oid}")
+                    if slug_name and not st.session_state.get("f_title"):
+                        st.session_state["f_title"] = slug_name
+                    st.rerun()
+
+        # 2. Поиск через DaData
+        elif input_mode == "🏢 Поиск через DaData":
+            dadata_token = st.text_input(
+                "API-ключ DaData:",
+                value=st.session_state.get("dadata_key", os.getenv("DADATA_API_KEY", "")),
+                type="password",
+                help="Бесплатный токен на dadata.ru"
+            )
+            if dadata_token:
+                st.session_state["dadata_key"] = dadata_token
+
+            query_party = st.text_input("Название компании или ИНН:", placeholder="Например: Айдента или 7701234567")
+
+            if query_party.strip() and dadata_token:
+                suggestions = fetch_dadata_parties(query_party, dadata_token)
+                if suggestions:
+                    options_dict = {}
+                    for s in suggestions:
+                        name = s.get("value", "")
+                        addr = s.get("data", {}).get("address", {}).get("value", "")
+                        inn = s.get("data", {}).get("inn", "")
+                        label = f"{name} (ИНН: {inn}, {addr[:40]}...)"
+                        options_dict[label] = s
+
+                    selected_label = st.selectbox("Выберите организацию из базы:", options=list(options_dict.keys()))
+                    if st.button("Применить выбранную компанию", use_container_width=True):
+                        chosen = options_dict[selected_label]
+                        comp_name = chosen.get("data", {}).get("name", {}).get("short_with_opf") or chosen.get("value", "")
+                        comp_addr = chosen.get("data", {}).get("address", {}).get("value", "")
+                        
+                        st.session_state["f_title"] = comp_name
+                        maps_link = make_yandex_search_url(comp_name, comp_addr)
+                        st.session_state["f_yandex_url"] = maps_link
+                        st.success(f"Подставлена организация: {comp_name}")
+                        st.rerun()
+                else:
+                    st.caption("Организаций не найдено.")
+            elif not dadata_token:
+                st.info("Укажите API-ключ DaData для активации поиска.")
+
+        # 3. Импорт JSON
+        elif input_mode == "📂 Загрузить JSON":
+            uploaded_json = st.file_uploader("Загрузите .json файл аудита", type=["json"])
             if uploaded_json is not None:
                 try:
                     payload = json.load(uploaded_json)
                     apply_json_payload(payload)
-                    st.success("JSON файл успешно загружен!")
+                    st.success("JSON данные успешно применены!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Ошибка парсинга JSON: {e}")
+                    st.error(f"Ошибка JSON: {e}")
 
-            raw_json_text = st.text_area("Или вставьте JSON текстом:", height=100, placeholder='{"title": "Дентал", "rating": 4.8, ...}')
-            if st.button("Применить JSON текст", use_container_width=True):
-                if raw_json_text.strip():
-                    try:
-                        payload = json.loads(raw_json_text)
-                        apply_json_payload(payload)
-                        st.success("Данные успешно применены!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Невалидный JSON: {e}")
+        st.divider()
 
-        # Основные поля ввода
+        # ОСНОВНЫЕ ПОЛЯ КАРТОЧКИ
+        st.header("2. Параметры карточки")
         title = st.text_input(
             "Название компании / клиники",
             value=st.session_state.get("f_title", "Айдента"),
@@ -367,6 +495,12 @@ def run_streamlit_app() -> None:
             placeholder="Например: 1015646715"
         )
         
+        yandex_url = st.text_input(
+            "Ссылка на карточку в Картах",
+            value=st.session_state.get("f_yandex_url", "https://yandex.ru/maps/org/aidenta/1015646715/"),
+            placeholder="https://yandex.ru/maps/org/..."
+        )
+
         niche_list = list(NICHE_CONFIG.keys())
         saved_niche = st.session_state.get("f_niche", "DENTISTRY")
         niche_idx = niche_list.index(saved_niche) if saved_niche in niche_list else 0
@@ -392,11 +526,11 @@ def run_streamlit_app() -> None:
             step=0.5
         )
 
-        st.header("2. Конкуренты локации")
-        comp_1 = st.text_input("Конкурент №1", value=st.session_state.get("f_comp1", "РозДент"), placeholder="Конкурент 1")
-        comp_2 = st.text_input("Конкурент №2", value=st.session_state.get("f_comp2", "На Приморской"), placeholder="Конкурент 2")
+        st.header("3. Конкуренты локации")
+        comp_1 = st.text_input("Конкурент №1", value=st.session_state.get("f_comp1", "РозДент"))
+        comp_2 = st.text_input("Конкурент №2", value=st.session_state.get("f_comp2", "На Приморской"))
 
-        st.header("3. Экономика ниши")
+        st.header("4. Экономика ниши")
         n_def = NICHE_CONFIG[niche_key]
         leads_bench = st.number_input(
             "Медиана ТОП-3 (обращений/мес)",
@@ -422,7 +556,7 @@ def run_streamlit_app() -> None:
 
     with col_left:
         st.subheader("Барьеры карточки (Стр. 3 отчета)")
-        st.caption("Причины потери клиентов, которые попадут в заключение:")
+        st.caption("Причины потери клиентов, которые попадут в аналитическое заключение:")
 
         f1_t = st.text_input("Барьер 1: Заголовок", value=st.session_state.get("f_f1_t", DEFAULT_FAILURES[0]["title"]))
         f1_d = st.text_area("Барьер 1: Пояснение", value=st.session_state.get("f_f1_d", DEFAULT_FAILURES[0]["desc"]), height=70)
@@ -468,6 +602,9 @@ def run_streamlit_app() -> None:
         m3, m4 = st.columns(2)
         m3.metric("Упущенная выручка", f"{mapping['[[REV_LOSS_FMT]]']} ₽/мес")
         m4.metric("Потери за неделю", f"~{mapping['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
+
+        if yandex_url:
+            st.markdown(f"🔗 **Карточка в Яндекс Картах:** [Открыть профиль]({yandex_url})")
 
         st.divider()
 
@@ -529,7 +666,7 @@ def run_streamlit_app() -> None:
                 )
 
 # ==========================================================
-# 7. ТОЧКА ВХОДА CLI
+# 8. ТОЧКА ВХОДА CLI
 # ==========================================================
 
 def run_cli_mode() -> None:
@@ -576,6 +713,7 @@ def run_cli_mode() -> None:
                 pdf_p = out_dir / f"{sanitize_filename(item.get('title', 'org'))}_report.pdf"
                 compile_typst_pdf(rendered, pdf_p, out_dir)
                 print(f"[+] Обработана клиника: {item.get('title')}")
+
 
 if __name__ == "__main__":
     if "--cli" in sys.argv or "-f" in sys.argv or "--sample" in sys.argv:
