@@ -20,9 +20,9 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "niche_genitive": "стоматологий",
         "client_word": "пациент",
         "quality_phrase": "медицинской помощи и врачебной квалификации",
-        "benchmark_leads": 70,  # медиана обращений ТОП-3 района
-        "base_check": 5500,     # консервативный чек первого визита
-        "ltv_months": 12,       # горизонт прикрепления
+        "benchmark_leads": 70,
+        "base_check": 5500,
+        "ltv_months": 12,
     },
     "COSMETOLOGY": {
         "niche_name": "Косметологическая клиника",
@@ -72,16 +72,13 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
 }
 
 # ==========================================================
-# 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И СКЛОНЕНИЯ
+# 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================================
 
 def format_currency(value: float | int) -> str:
-    """Форматирует число с разделением тысяч неразрывным пробелом."""
     return f"{int(round(value)):,}".replace(",", " ")
 
-
 def get_declension(number: int, word_type: str = "пациент") -> str:
-    """Корректное грамматическое склонение существительных."""
     n = abs(int(number)) % 100
     n1 = n % 10
     if word_type == "пациент":
@@ -102,18 +99,14 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
         return "клиентов"
     return "обращений"
 
-
 def get_score_color(score: float) -> str:
-    """Цветовая индикация балла готовности."""
     if score >= 80:
-        return "16a34a"  # Зеленый
+        return "16a34a"
     if score >= 60:
-        return "d97706"  # Оранжевый / Янтарный
-    return "dc2626"      # Красный
-
+        return "d97706"
+    return "dc2626"
 
 def sanitize_filename(name: str) -> str:
-    """Очистка строки для корректного имени файла."""
     clean = re.sub(r'[\\/*?:"<>| ]', "_", name).strip("_")
     return clean if clean else "report"
 
@@ -128,7 +121,6 @@ def generate_icebreaker(
     lost_leads: int,
     niche_genitive: str = "стоматологий",
 ) -> str:
-    """Формирует утвержденное сообщение первички для ЛПР без слова 'кассовый разрыв'."""
     if competitors and len(competitors) >= 2:
         comp_str = f"«{competitors[0]}» и «{competitors[1]}»"
     elif competitors and len(competitors) == 1:
@@ -153,11 +145,10 @@ def generate_icebreaker(
     )
 
 # ==========================================================
-# 4. РАСЧЕТ МЕТРИК ЮНИТ-ЭКОНОМИКИ
+# 4. РАСЧЕТ ЮНИТ-ЭКОНОМИКИ
 # ==========================================================
 
 def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
-    """Формирует полный словарь подстановки для шаблона Typst."""
     niche_key = audit_data.get("niche", "DENTISTRY")
     niche_info = NICHE_CONFIG.get(niche_key, NICHE_CONFIG["DENTISTRY"])
 
@@ -169,7 +160,6 @@ def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
     base_check = audit_data.get("base_check", niche_info["base_check"])
     ltv_months = audit_data.get("ltv_months", niche_info["ltv_months"])
 
-    # Расчет потерь
     dev = max(0.0, round(100.0 - score, 1))
     lost_leads = int(round(leads_bench * (dev / 100.0)))
     rev_loss = lost_leads * base_check
@@ -219,7 +209,7 @@ def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
     }
 
 # ==========================================================
-# 5. КОМПИЛЯТОР ШАБЛОНА TYPST
+# 5. КОМПИЛЯТОР TYPST
 # ==========================================================
 
 def render_typst_template(template_path: Path, mapping: Dict[str, str]) -> str:
@@ -228,7 +218,6 @@ def render_typst_template(template_path: Path, mapping: Dict[str, str]) -> str:
     for placeholder, val in mapping.items():
         content = content.replace(placeholder, str(val))
     return content
-
 
 def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path) -> Tuple[bool, str]:
     temp_typ_path = work_dir / f"temp_{output_pdf_path.stem}.typ"
@@ -239,7 +228,7 @@ def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path)
         subprocess.run(cmd, capture_output=True, text=True, check=True)
         return True, ""
     except subprocess.CalledProcessError as e:
-        return False, f"Ошибка компиляции Typst: {e.stderr}"
+        return False, f"Ошибка Typst: {e.stderr}"
     except FileNotFoundError:
         return False, "Утилита 'typst' CLI не установлена в PATH."
     finally:
@@ -250,8 +239,42 @@ def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path)
                 pass
 
 # ==========================================================
-# 6. ИНТЕРФЕЙС STREAMLIT (РАБОЧИЙ ЭКРАН)
+# 6. STREAMLIT ИНТЕРФЕЙС
 # ==========================================================
+
+def apply_json_payload(data: Dict[str, Any]) -> None:
+    """Загружает поля из JSON словаря в session_state."""
+    st.session_state["f_title"] = data.get("title", "")
+    st.session_state["f_org_id"] = str(data.get("org_id", ""))
+    st.session_state["f_rating"] = float(data.get("rating", 4.7))
+    st.session_state["f_score"] = float(data.get("score", 66.5))
+    
+    niche = data.get("niche", "DENTISTRY")
+    if niche in NICHE_CONFIG:
+        st.session_state["f_niche"] = niche
+
+    comps = data.get("competitors", [])
+    st.session_state["f_comp1"] = comps[0] if len(comps) > 0 else ""
+    st.session_state["f_comp2"] = comps[1] if len(comps) > 1 else ""
+
+    if "benchmark_leads" in data:
+        st.session_state["f_bench"] = int(data["benchmark_leads"])
+    if "base_check" in data:
+        st.session_state["f_check"] = int(data["base_check"])
+    if "ltv_months" in data:
+        st.session_state["f_ltv"] = int(data["ltv_months"])
+
+    fails = data.get("top_failures", [])
+    if len(fails) > 0:
+        st.session_state["f_f1_t"] = fails[0].get("title", "")
+        st.session_state["f_f1_d"] = fails[0].get("desc", "")
+    if len(fails) > 1:
+        st.session_state["f_f2_t"] = fails[1].get("title", "")
+        st.session_state["f_f2_d"] = fails[1].get("desc", "")
+    if len(fails) > 2:
+        st.session_state["f_f3_t"] = fails[2].get("title", "")
+        st.session_state["f_f3_d"] = fails[2].get("desc", "")
+
 
 def run_streamlit_app() -> None:
     st.set_page_config(
@@ -261,7 +284,7 @@ def run_streamlit_app() -> None:
         initial_sidebar_state="expanded"
     )
 
-    # Дефолтные настройки для быстрой работы
+    # Дефолтные причины потери клиентов
     DEFAULT_FAILURES = [
         {
             "title": "Отсутствие кнопки быстрой онлайн-записи (модуля МИС)",
@@ -277,21 +300,29 @@ def run_streamlit_app() -> None:
         }
     ]
 
-    # Боковая панель ввода организации
     with st.sidebar:
         st.header("1. Данные карточки")
-        
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
+
+        # Кнопки быстрых действий
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
             if st.button("🔄 Тест: Айдента", use_container_width=True):
                 st.session_state["f_title"] = "Айдента"
                 st.session_state["f_org_id"] = "1015646715"
                 st.session_state["f_rating"] = 4.7
                 st.session_state["f_score"] = 66.5
+                st.session_state["f_niche"] = "DENTISTRY"
                 st.session_state["f_comp1"] = "РозДент"
                 st.session_state["f_comp2"] = "На Приморской"
+                st.session_state["f_f1_t"] = DEFAULT_FAILURES[0]["title"]
+                st.session_state["f_f1_d"] = DEFAULT_FAILURES[0]["desc"]
+                st.session_state["f_f2_t"] = DEFAULT_FAILURES[1]["title"]
+                st.session_state["f_f2_d"] = DEFAULT_FAILURES[1]["desc"]
+                st.session_state["f_f3_t"] = DEFAULT_FAILURES[2]["title"]
+                st.session_state["f_f3_d"] = DEFAULT_FAILURES[2]["desc"]
                 st.rerun()
-        with col_btn2:
+
+        with col_b2:
             if st.button("➕ Очистить", use_container_width=True):
                 st.session_state["f_title"] = ""
                 st.session_state["f_org_id"] = ""
@@ -301,6 +332,30 @@ def run_streamlit_app() -> None:
                 st.session_state["f_comp2"] = ""
                 st.rerun()
 
+        # БЛОК ИМПОРТА JSON
+        with st.expander("📂 Импорт из JSON", expanded=False):
+            uploaded_json = st.file_uploader("Перетащите файл .json", type=["json"])
+            if uploaded_json is not None:
+                try:
+                    payload = json.load(uploaded_json)
+                    apply_json_payload(payload)
+                    st.success("JSON файл успешно загружен!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Ошибка парсинга JSON: {e}")
+
+            raw_json_text = st.text_area("Или вставьте JSON текстом:", height=100, placeholder='{"title": "Дентал", "rating": 4.8, ...}')
+            if st.button("Применить JSON текст", use_container_width=True):
+                if raw_json_text.strip():
+                    try:
+                        payload = json.loads(raw_json_text)
+                        apply_json_payload(payload)
+                        st.success("Данные успешно применены!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Невалидный JSON: {e}")
+
+        # Основные поля ввода
         title = st.text_input(
             "Название компании / клиники",
             value=st.session_state.get("f_title", "Айдента"),
@@ -311,11 +366,17 @@ def run_streamlit_app() -> None:
             value=st.session_state.get("f_org_id", "1015646715"),
             placeholder="Например: 1015646715"
         )
+        
+        niche_list = list(NICHE_CONFIG.keys())
+        saved_niche = st.session_state.get("f_niche", "DENTISTRY")
+        niche_idx = niche_list.index(saved_niche) if saved_niche in niche_list else 0
         niche_key = st.selectbox(
             "Сфера бизнеса",
-            options=list(NICHE_CONFIG.keys()),
+            options=niche_list,
+            index=niche_idx,
             format_func=lambda x: NICHE_CONFIG[x]["niche_name"]
         )
+
         rating = st.number_input(
             "Рейтинг на Картах",
             min_value=1.0,
@@ -337,31 +398,41 @@ def run_streamlit_app() -> None:
 
         st.header("3. Экономика ниши")
         n_def = NICHE_CONFIG[niche_key]
-        leads_bench = st.number_input("Медиана ТОП-3 (обращений/мес)", value=n_def["benchmark_leads"], step=5)
-        base_check = st.number_input("Базовый чек визита (₽)", value=n_def["base_check"], step=500)
-        ltv_months = st.number_input("Горизонт LTV (мес)", value=n_def["ltv_months"], step=1)
+        leads_bench = st.number_input(
+            "Медиана ТОП-3 (обращений/мес)",
+            value=int(st.session_state.get("f_bench", n_def["benchmark_leads"])),
+            step=5
+        )
+        base_check = st.number_input(
+            "Базовый чек визита (₽)",
+            value=int(st.session_state.get("f_check", n_def["base_check"])),
+            step=500
+        )
+        ltv_months = st.number_input(
+            "Горизонт LTV (мес)",
+            value=int(st.session_state.get("f_ltv", n_def["ltv_months"])),
+            step=1
+        )
 
     # Главный экран
     st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
     st.caption("Расчет утечки первичных клиентов к конкурентам локации, формирование 4-страничного PDF и сообщения для ЛПР.")
 
-    # Центральная рабочая зона: 2 колонки
     col_left, col_right = st.columns([1.1, 0.9])
 
     with col_left:
         st.subheader("Барьеры карточки (Стр. 3 отчета)")
-        st.caption("Причины потери клиентов, которые попадут в аналитическое заключение:")
+        st.caption("Причины потери клиентов, которые попадут в заключение:")
 
-        f1_t = st.text_input("Барьер 1: Заголовок", value=DEFAULT_FAILURES[0]["title"])
-        f1_d = st.text_area("Барьер 1: Пояснение", value=DEFAULT_FAILURES[0]["desc"], height=70)
+        f1_t = st.text_input("Барьер 1: Заголовок", value=st.session_state.get("f_f1_t", DEFAULT_FAILURES[0]["title"]))
+        f1_d = st.text_area("Барьер 1: Пояснение", value=st.session_state.get("f_f1_d", DEFAULT_FAILURES[0]["desc"]), height=70)
 
-        f2_t = st.text_input("Барьер 2: Заголовок", value=DEFAULT_FAILURES[1]["title"])
-        f2_d = st.text_area("Барьер 2: Пояснение", value=DEFAULT_FAILURES[1]["desc"], height=70)
+        f2_t = st.text_input("Барьер 2: Заголовок", value=st.session_state.get("f_f2_t", DEFAULT_FAILURES[1]["title"]))
+        f2_d = st.text_area("Барьер 2: Пояснение", value=st.session_state.get("f_f2_d", DEFAULT_FAILURES[1]["desc"]), height=70)
 
-        f3_t = st.text_input("Барьер 3: Заголовок", value=DEFAULT_FAILURES[2]["title"])
-        f3_d = st.text_area("Барьер 3: Пояснение", value=DEFAULT_FAILURES[2]["desc"], height=70)
+        f3_t = st.text_input("Барьер 3: Заголовок", value=st.session_state.get("f_f3_t", DEFAULT_FAILURES[2]["title"]))
+        f3_d = st.text_area("Барьер 3: Пояснение", value=st.session_state.get("f_f3_d", DEFAULT_FAILURES[2]["desc"]), height=70)
 
-    # Подготовка данных
     display_title = title.strip() if title.strip() else "Ваша клиника"
     competitors = [c.strip() for c in [comp_1, comp_2] if c.strip()]
     if not competitors:
@@ -414,7 +485,7 @@ def run_streamlit_app() -> None:
 
     st.divider()
 
-    # Генерация и экспорт PDF
+    # Генерация PDF
     st.subheader("Генерация PDF-отчета")
     template_file = Path("report_template.typ")
     output_dir = Path("output")
@@ -424,7 +495,7 @@ def run_streamlit_app() -> None:
     pdf_path = output_dir / f"{file_prefix}_report.pdf"
 
     if not template_file.exists():
-        st.error(f"Файл шаблона '{template_file}' не найден в каталоге проекта. Поместите report_template.typ рядом с app.py.")
+        st.error(f"Файл шаблона '{template_file}' не найден рядом с app.py.")
     else:
         btn_col1, btn_col2 = st.columns([1.5, 2.5])
         with btn_col1:
@@ -470,7 +541,6 @@ def run_cli_mode() -> None:
     parser.add_argument("--cli", action="store_true", help="Запуск в режиме командной строки.")
 
     args, _ = parser.parse_known_args()
-
     template_file = Path(args.template)
     out_dir = Path(args.outdir)
     out_dir.mkdir(exist_ok=True)
@@ -495,8 +565,6 @@ def run_cli_mode() -> None:
             pdf_path = out_dir / "Айдента_report.pdf"
             compile_typst_pdf(rendered, pdf_path, out_dir)
             print(f"[+] PDF сохранен в: {pdf_path}")
-        else:
-            print(f"[-] Шаблон '{template_file}' не найден.")
     else:
         with open(args.file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -508,7 +576,6 @@ def run_cli_mode() -> None:
                 pdf_p = out_dir / f"{sanitize_filename(item.get('title', 'org'))}_report.pdf"
                 compile_typst_pdf(rendered, pdf_p, out_dir)
                 print(f"[+] Обработана клиника: {item.get('title')}")
-
 
 if __name__ == "__main__":
     if "--cli" in sys.argv or "-f" in sys.argv or "--sample" in sys.argv:
