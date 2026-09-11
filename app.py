@@ -16,7 +16,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 # ==========================================================
-# 1. ID ПАПОК GOOGLE DRIVE И НАСТРОЙКИ НИШ
+# 1. ID ПАПОК GOOGLE DRIVE И ЭКОНОМИКА НИШ
 # ==========================================================
 
 GDRIVE_FOLDERS = {
@@ -83,15 +83,12 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
 # ==========================================================
 
 def get_google_credentials() -> Optional[service_account.Credentials]:
-    """Загружает учетные данные Google Service Account из файла или st.secrets."""
-    key_paths = ["credentials.json", "service_account.json"]
-    for path_str in key_paths:
+    for path_str in ["credentials.json", "service_account.json"]:
         p = Path(path_str)
         if p.exists():
             return service_account.Credentials.from_service_account_file(
                 str(p), scopes=GDRIVE_SCOPES
             )
-
     if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
         return service_account.Credentials.from_service_account_info(
             st.secrets["gcp_service_account"], scopes=GDRIVE_SCOPES
@@ -100,15 +97,14 @@ def get_google_credentials() -> Optional[service_account.Credentials]:
 
 
 def get_or_create_date_folder(drive_service: Any, parent_folder_id: str, date_str: str) -> str:
-    """Ищет папку с датой внутри родительской папки; если нет — создает ее."""
     query = (
         f"'{parent_folder_id}' in parents and "
         f"name = '{date_str}' and "
         f"mimeType = 'application/vnd.google-apps.folder' and "
         f"trashed = false"
     )
-    results = drive_service.files().list(q=query, spaces="drive", fields="files(id, name)").execute()
-    files = results.get("files", [])
+    res = drive_service.files().list(q=query, spaces="drive", fields="files(id, name)").execute()
+    files = res.get("files", [])
     if files:
         return files[0]["id"]
 
@@ -121,48 +117,26 @@ def get_or_create_date_folder(drive_service: Any, parent_folder_id: str, date_st
     return folder["id"]
 
 
-def upload_file_to_drive(
-    drive_service: Any,
-    local_file_path: Path,
-    target_folder_id: str,
-    mime_type: str
-) -> Dict[str, str]:
-    """Загружает локальный файл в указанную папку Google Drive."""
-    metadata = {
-        "name": local_file_path.name,
-        "parents": [target_folder_id],
-    }
-    media = MediaFileUpload(str(local_file_path), mimetype=mime_type, resumable=True)
-    uploaded = drive_service.files().create(
-        body=metadata,
-        media_body=media,
-        fields="id, webViewLink"
-    ).execute()
-    return {
-        "id": uploaded.get("id", ""),
-        "link": uploaded.get("webViewLink", "")
-    }
+def upload_file_to_drive(drive_service: Any, local_path: Path, target_folder_id: str, mime_type: str) -> Dict[str, str]:
+    metadata = {"name": local_path.name, "parents": [target_folder_id]}
+    media = MediaFileUpload(str(local_path), mimetype=mime_type, resumable=True)
+    uploaded = drive_service.files().create(body=metadata, media_body=media, fields="id, webViewLink").execute()
+    return {"id": uploaded.get("id", ""), "link": uploaded.get("webViewLink", "")}
 
 
-def append_row_to_google_sheet(
-    sheets_service: Any,
-    spreadsheet_id: str,
-    row_values: List[Any],
-    sheet_range: str = "Лист1!A:L"
-) -> bool:
-    """Дописывает строку с результатами аудита в Google Таблицу."""
+def append_row_to_google_sheet(sheets_service: Any, spreadsheet_id: str, row_values: List[Any]) -> bool:
     try:
         body = {"values": [row_values]}
         sheets_service.spreadsheets().values().append(
             spreadsheetId=spreadsheet_id,
-            range=sheet_range,
+            range="Лист1!A:M",
             valueInputOption="USER_ENTERED",
             insertDataOption="INSERT_ROWS",
             body=body
         ).execute()
         return True
     except Exception as e:
-        st.warning(f"Ошибка записи в Google Таблицу: {e}")
+        st.warning(f"Запись в Google Таблицу пропущена: {e}")
         return False
 
 
@@ -174,35 +148,25 @@ def sync_results_to_google(
     json_path: Path,
     spreadsheet_id: Optional[str] = None
 ) -> Dict[str, str]:
-    """Выполняет выгрузку PDF, TXT и JSON в подпапки с датой и логирует строку в Таблицу."""
     creds = get_google_credentials()
     if not creds:
-        raise FileNotFoundError(
-            "Файл ключа сервисного аккаунта Google (credentials.json или service_account.json) не найден в корне проекта."
-        )
+        raise FileNotFoundError("Ключ credentials.json не найден в каталоге проекта.")
 
     drive_service = build("drive", "v3", credentials=creds)
     sheets_service = build("sheets", "v4", credentials=creds)
+    date_str = datetime.date.today().strftime("%Y-%m-%d")
 
-    date_folder_name = datetime.date.today().strftime("%Y-%m-%d")
-    links = {}
+    target_pdf = get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["PDF"], date_str)
+    pdf_res = upload_file_to_drive(drive_service, pdf_path, target_pdf, "application/pdf")
 
-    # 1. Загрузка PDF в папку PDF/YYYY-MM-DD
-    target_pdf_dir = get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["PDF"], date_folder_name)
-    pdf_res = upload_file_to_drive(drive_service, pdf_path, target_pdf_dir, "application/pdf")
-    links["pdf"] = pdf_res["link"]
+    target_txt = get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["LETTERS"], date_str)
+    txt_res = upload_file_to_drive(drive_service, txt_path, target_txt, "text/plain")
 
-    # 2. Загрузка письма в папку LETTERS/YYYY-MM-DD
-    target_txt_dir = get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["LETTERS"], date_folder_name)
-    txt_res = upload_file_to_drive(drive_service, txt_path, target_txt_dir, "text/plain")
-    links["txt"] = txt_res["link"]
+    target_json = get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["JSON"], date_str)
+    json_res = upload_file_to_drive(drive_service, json_path, target_json, "application/json")
 
-    # 3. Загрузка JSON в папку JSON/YYYY-MM-DD
-    target_json_dir = get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["JSON"], date_folder_name)
-    json_res = upload_file_to_drive(drive_service, json_path, target_json_dir, "application/json")
-    links["json"] = json_res["link"]
+    links = {"pdf": pdf_res["link"], "txt": txt_res["link"], "json": json_res["link"]}
 
-    # 4. Запись строки в Google Sheets
     if spreadsheet_id and spreadsheet_id.strip():
         now_time = datetime.datetime.now().strftime("%H:%M:%S")
         row = [
@@ -225,116 +189,119 @@ def sync_results_to_google(
     return links
 
 # ==========================================================
-# 3. АВТОПАРСЕР ЯНДЕКС КАРТ И DADATA
+# 3. ПАРСИНГ ГОТОВОГО JSON АУДИТА
 # ==========================================================
 
-def clean_company_name(raw_title: str) -> str:
-    t = raw_title.replace("— Яндекс Карты", "").replace("- Яндекс Карты", "")
-    t = re.sub(r'^(?:Стоматология|Клиника|Медицинский центр|Автосервис)\s+', '', t, flags=re.IGNORECASE)
-    t = re.split(r'[,|•·—–]', t)[0].strip()
-    return t if t else raw_title.strip()
+def parse_incoming_audit_json(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Нормализует сырой JSON карточки или внутреннего чеклиста."""
+    title = data.get("title") or data.get("name") or "Новая организация"
+    org_id = str(data.get("org_id") or data.get("id") or data.get("companyId") or "0000000000")
+    rating = float(data.get("rating") or data.get("ratingValue") or data.get("reviewsRating") or 4.7)
+    score = float(data.get("score") or data.get("totalScore") or 66.5)
+    niche = data.get("niche") or "DENTISTRY"
 
+    comps = data.get("competitors", [])
+    if not comps or not isinstance(comps, list):
+        comps = ["соседние клиники района", "прямые конкуренты"]
+
+    n_def = NICHE_CONFIG.get(niche, NICHE_CONFIG["DENTISTRY"])
+    benchmark_leads = int(data.get("benchmark_leads") or n_def["benchmark_leads"])
+    base_check = int(data.get("base_check") or n_def["base_check"])
+    ltv_months = int(data.get("ltv_months") or n_def["ltv_months"])
+
+    fails = data.get("top_failures")
+    if not fails or not isinstance(fails, list) or len(fails) < 3:
+        fails = [
+            {
+                "title": "Отсутствие кнопки быстрой онлайн-записи (модуля МИС)",
+                "desc": "Пациенты в вечерние часы и с мобильных устройств не могут записаться в один клик. Без прямого действия свыше 60% вечернего спроса возвращаются в выдачу и уходят к конкурентам."
+            },
+            {
+                "title": "Отсутствие витрины специалистов в профиле",
+                "desc": "В карточке не оцифрованы профили врачей (фотографии, стаж, специализации). В медицине ключевое решение пациент принимает «на врача»: карточка проигрывает конкурентам с открытой командой."
+            },
+            {
+                "title": "Фрагментарный прейскурант без цен формата «от...»",
+                "desc": "В карточке заполнено менее трети ключевых позиций. Поисковые алгоритмы Яндекса пессимизируют профиль по предметным запросам процедур."
+            }
+        ]
+
+    return {
+        "title": title,
+        "org_id": org_id,
+        "rating": rating,
+        "score": score,
+        "niche": niche,
+        "canonical_url": data.get("canonical_url") or data.get("url") or "",
+        "competitors": comps,
+        "benchmark_leads": benchmark_leads,
+        "base_check": base_check,
+        "ltv_months": ltv_months,
+        "top_failures": fails,
+        "date": data.get("date") or datetime.date.today().strftime("%d.%m.%Y"),
+        "date_raw": data.get("date_raw") or datetime.date.today().strftime("%Y-%m-%d"),
+    }
+
+# ==========================================================
+# 4. РЕЗЕРВНЫЙ ПАРСЕР ЯНДЕКС КАРТ И DADATA
+# ==========================================================
 
 def fetch_yandex_maps_data(raw_url: str) -> Dict[str, Any]:
     url = raw_url.strip()
-    if not url:
-        raise ValueError("URL пуст.")
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
-    }
-
     session = requests.Session()
-    session.headers.update(headers)
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "ru-RU,ru;q=0.9",
+    })
 
-    canonical_url = url
     try:
-        resp = session.get(url, allow_redirects=True, timeout=6)
-        canonical_url = resp.url
+        resp = session.get(url, allow_redirects=True, timeout=5)
+        canonical = resp.url
         html = resp.text
     except Exception:
+        canonical = url
         html = ""
 
-    # Извлечение ID
-    org_id = None
-    m_id = re.search(r'/org/(?:[^/?#]+/)?(\d+)', canonical_url)
+    org_id = "0000000000"
+    m_id = re.search(r'/org/(?:[^/?#]+/)?(\d+)', canonical)
     if m_id:
         org_id = m_id.group(1)
     else:
-        m_oid = re.search(r'[?&]oid=(\d+)', canonical_url)
+        m_oid = re.search(r'[?&]oid=(\d+)', canonical)
         if m_oid:
             org_id = m_oid.group(1)
 
-    # Извлечение названия
-    title = None
+    title = "Новая организация"
     if html:
         m_og = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\'](.*?)["\']', html, re.IGNORECASE)
         if m_og:
-            title = clean_company_name(m_og.group(1))
-        if not title:
-            m_t = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE)
-            if m_t:
-                title = clean_company_name(m_t.group(1))
+            title = m_og.group(1).replace("— Яндекс Карты", "").split(",")[0].strip()
 
-    if not title:
-        m_slug = re.search(r'/org/([^/?#]+)/\d+', canonical_url)
-        if m_slug:
-            slug = m_slug.group(1)
-            title = urllib.parse.unquote(slug).replace('_', ' ').replace('-', ' ').title()
-
-    if not title or title.lower() in ["яндекс карты", "yandex maps"]:
-        title = "Новая организация"
-
-    if not org_id:
-        org_id = "0000000000"
-
-    # Рейтинг
     rating = 4.7
     if html:
         m_rate = re.search(r'itemprop=["\']ratingValue["\']\s+content=["\']([0-9.]+)["\']', html)
-        if not m_rate:
-            m_rate = re.search(r'class="business-rating-badge-view__rating">([0-9.]+)</span>', html)
         if m_rate:
             try:
                 rating = float(m_rate.group(1))
             except ValueError:
                 pass
 
-    # Ниша
-    low = (title + " " + canonical_url).lower()
-    if any(k in low for k in ["стом", "dent", "зуб", "ортод"]):
-        niche = "DENTISTRY"
-    elif any(k in low for k in ["космет", "beauty", "эстет"]):
-        niche = "COSMETOLOGY"
-    elif any(k in low for k in ["авто", "сервис", "мотор", "ремонт"]):
-        niche = "AUTOSERVICES"
-    else:
-        niche = "DENTISTRY"
-
-    return {
+    return parse_incoming_audit_json({
         "title": title,
         "org_id": org_id,
         "rating": rating,
-        "canonical_url": canonical_url,
-        "niche": niche,
         "score": 66.5,
-        "competitors": ["соседние клиники локации", "прямые конкуренты"],
-    }
+        "url": canonical,
+    })
 
 
 def fetch_dadata_parties(query: str, token: str) -> List[Dict[str, Any]]:
     if not query.strip() or not token.strip():
         return []
     url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/party"
-    headers = {
-        "Authorization": f"Token {token.strip()}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    payload = {"query": query.strip(), "count": 5}
+    headers = {"Authorization": f"Token {token.strip()}", "Content-Type": "application/json"}
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=4)
+        r = requests.post(url, headers=headers, json={"query": query.strip(), "count": 5}, timeout=4)
         if r.status_code == 200:
             return r.json().get("suggestions", [])
     except Exception:
@@ -342,34 +309,24 @@ def fetch_dadata_parties(query: str, token: str) -> List[Dict[str, Any]]:
     return []
 
 # ==========================================================
-# 4. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И СКЛОНЕНИЯ
+# 5. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И СКЛОНЕНИЯ
 # ==========================================================
 
 def format_currency(value: float | int) -> str:
     return f"{int(round(value)):,}".replace(",", " ")
 
-
 def get_declension(number: int, word_type: str = "пациент") -> str:
     n = abs(int(number)) % 100
     n1 = n % 10
-    if word_type == "пациент":
+    if word_type in ["пациент", "клиент"]:
         if 11 <= n <= 19:
-            return "пациентов"
+            return f"{word_type}ов"
         if n1 == 1:
-            return "пациент"
+            return word_type
         if 2 <= n1 <= 4:
-            return "пациента"
-        return "пациентов"
-    if word_type == "клиент":
-        if 11 <= n <= 19:
-            return "клиентов"
-        if n1 == 1:
-            return "клиент"
-        if 2 <= n1 <= 4:
-            return "клиента"
-        return "клиентов"
+            return f"{word_type}а"
+        return f"{word_type}ов"
     return "обращений"
-
 
 def get_score_color(score: float) -> str:
     if score >= 80:
@@ -378,14 +335,9 @@ def get_score_color(score: float) -> str:
         return "d97706"
     return "dc2626"
 
-
 def sanitize_filename(name: str) -> str:
     clean = re.sub(r'[\\/*?:"<>| ]', "_", name).strip("_")
     return clean if clean else "clinic"
-
-# ==========================================================
-# 5. ГЕНЕРАТОР ПЕРВОГО СООБЩЕНИЯ (ICEBREAKER)
-# ==========================================================
 
 def generate_icebreaker(
     title: str,
@@ -401,9 +353,7 @@ def generate_icebreaker(
     else:
         comp_str = "прямые конкуренты района"
 
-    low_range = max(1, lost_leads - 2)
-    high_range = lost_leads + 3
-    leads_range_str = f"{low_range}–{high_range}"
+    leads_range_str = f"{max(1, lost_leads - 2)}–{lost_leads + 3}"
 
     return (
         f"Добрый день!\n\n"
@@ -416,10 +366,6 @@ def generate_icebreaker(
         f"Собрали наглядный разбор карточки и расчет потерь в короткий PDF на 4 страницы. "
         f"Скинуть файл сюда для ознакомления?"
     )
-
-# ==========================================================
-# 6. РАСЧЕТ ЮНИТ-ЭКОНОМИКИ
-# ==========================================================
 
 def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
     niche_key = audit_data.get("niche", "DENTISTRY")
@@ -439,30 +385,13 @@ def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
     weekly_loss = int(round(rev_loss / 4.33))
     ltv_loss = rev_loss * ltv_months
 
-    word_type = niche_info["client_word"]
-    table_declension = get_declension(lost_leads, word_type)
-
-    failures = audit_data.get("top_failures", [
-        {
-            "title": "Отсутствие кнопки быстрой онлайн-записи (модуля МИС)",
-            "desc": "Пациенты в вечерние часы и с мобильных устройств не могут записаться в один клик. Без прямого действия свыше 60% вечернего спроса возвращаются в выдачу и уходят к конкурентам."
-        },
-        {
-            "title": "Отсутствие витрины специалистов в профиле",
-            "desc": "В карточке не оцифрованы профили врачей (фотографии, стаж, специализации). В медицине ключевое решение пациент принимает «на врача»: карточка проигрывает конкурентам с открытой командой."
-        },
-        {
-            "title": "Фрагментарный прейскурант без цен формата «от...»",
-            "desc": "В карточке заполнено менее трети ключевых позиций. Поисковые алгоритмы Яндекса пессимизируют профиль по предметным запросам процедур."
-        }
-    ])
-
-    report_date = audit_data.get("date", datetime.date.today().strftime("%d.%m.%Y"))
+    table_declension = get_declension(lost_leads, niche_info["client_word"])
+    failures = audit_data.get("top_failures", [])
 
     return {
         "[[TITLE]]": title,
         "[[NICHE]]": niche_info["niche_name"],
-        "[[DATE]]": report_date,
+        "[[DATE]]": audit_data.get("date", datetime.date.today().strftime("%d.%m.%Y")),
         "[[SCORE]]": f"{score:.1f}" if score % 1 != 0 else str(int(score)),
         "[[SCORE_COLOR]]": get_score_color(score),
         "[[REV_LOSS_FMT]]": format_currency(rev_loss),
@@ -490,10 +419,6 @@ def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
         "[[WEEKLY_LOSS_FMT]]": format_currency(weekly_loss),
     }
 
-# ==========================================================
-# 7. КОМПИЛЯТОР TYPST
-# ==========================================================
-
 def render_typst_template(template_path: Path, mapping: Dict[str, str]) -> str:
     with open(template_path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -501,28 +426,27 @@ def render_typst_template(template_path: Path, mapping: Dict[str, str]) -> str:
         content = content.replace(placeholder, str(val))
     return content
 
-
 def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path) -> Tuple[bool, str]:
-    temp_typ_path = work_dir / f"temp_{output_pdf_path.stem}.typ"
+    temp_typ = work_dir / f"temp_{output_pdf_path.stem}.typ"
     try:
-        with open(temp_typ_path, "w", encoding="utf-8") as f:
+        with open(temp_typ, "w", encoding="utf-8") as f:
             f.write(typst_content)
-        cmd = ["typst", "compile", str(temp_typ_path), str(output_pdf_path)]
+        cmd = ["typst", "compile", str(temp_typ), str(output_pdf_path)]
         subprocess.run(cmd, capture_output=True, text=True, check=True)
         return True, ""
     except subprocess.CalledProcessError as e:
         return False, f"Ошибка Typst: {e.stderr}"
     except FileNotFoundError:
-        return False, "Утилита 'typst' CLI не установлена в PATH."
+        return False, "Утилита Typst не найдена в PATH."
     finally:
-        if temp_typ_path.exists():
+        if temp_typ.exists():
             try:
-                temp_typ_path.unlink()
+                temp_typ.unlink()
             except OSError:
                 pass
 
 # ==========================================================
-# 8. ИНТЕРФЕЙС STREAMLIT
+# 6. ИНТЕРФЕЙС STREAMLIT
 # ==========================================================
 
 def run_streamlit_app() -> None:
@@ -537,117 +461,159 @@ def run_streamlit_app() -> None:
     if "drive_links" not in st.session_state:
         st.session_state.drive_links = None
 
-    st.title("📍 PIN100 Analytics: Экспресс-аудит гео-карточки")
-    st.caption("Вставьте ссылку на организацию в Яндекс Картах для автоматического расчета и выгрузки в Google Диск.")
+    # Боковая панель: Системные настройки
+    with st.sidebar:
+        st.header("⚙️ Системные настройки")
+        with st.expander("Ключи интеграций", expanded=False):
+            dadata_token = st.text_input(
+                "API-ключ DaData",
+                value=st.session_state.get("dadata_key", os.getenv("DADATA_API_KEY", "")),
+                type="password"
+            )
+            if dadata_token:
+                st.session_state["dadata_key"] = dadata_token
 
-    # Верхняя строка ввода ссылки
-    with st.container():
-        col_url, col_btn = st.columns([4, 1.2])
-        with col_url:
+            sheet_id = st.text_input(
+                "ID Google Таблицы (для логов)",
+                value=st.session_state.get("sheet_id", os.getenv("GOOGLE_SHEET_ID", "")),
+                help="Часть URL таблицы между /d/ и /edit"
+            )
+            if sheet_id:
+                st.session_state["sheet_id"] = sheet_id
+
+        if st.session_state.current_audit:
+            st.divider()
+            st.subheader("Корректировка текущей карточки")
+            cur = st.session_state.current_audit
+            cur["title"] = st.text_input("Название", value=cur["title"])
+            cur["rating"] = st.number_input("Рейтинг", min_value=1.0, max_value=5.0, value=float(cur["rating"]), step=0.1)
+            cur["score"] = st.slider("Балл готовности", min_value=20.0, max_value=98.0, value=float(cur["score"]), step=0.5)
+
+            if st.button("🗑️ Очистить и ввести другую", use_container_width=True):
+                st.session_state.current_audit = None
+                st.session_state.drive_links = None
+                st.rerun()
+
+    st.title("📍 PIN100 Analytics: Экспресс-аудит гео-карточки")
+
+    # ГЛАВНЫЙ БЛОК ВВОДА: Ссылка на Карты первой по умолчанию
+    tab_url, tab_json, tab_dadata = st.tabs([
+        "🔗 Ссылка на Яндекс Карты",
+        "📋 Вставить готовый JSON",
+        "🏢 Поиск по названию / ИНН"
+    ])
+
+    # 1. Вкладка по умолчанию: Ссылка на Яндекс Карты
+    with tab_url:
+        col_u1, col_u2 = st.columns([4, 1.2])
+        with col_u1:
             target_url = st.text_input(
-                "Ссылка на организацию в Яндекс Картах:",
+                "Ссылка на профиль в Яндекс Картах:",
                 placeholder="Вставьте ссылку: https://yandex.ru/maps/org/... или короткую https://yandex.ru/maps/-/... ",
                 label_visibility="collapsed"
             )
-        with col_btn:
-            start_scan = st.button("🚀 Запустить аудит", type="primary", use_container_width=True)
+        with col_u2:
+            if st.button("🚀 Запустить аудит", type="primary", use_container_width=True):
+                if target_url.strip():
+                    with st.spinner("Извлекаем параметры карточки..."):
+                        try:
+                            st.session_state.current_audit = fetch_yandex_maps_data(target_url)
+                            st.session_state.drive_links = None
+                            st.success("Карточка успешно определена!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Ошибка разбора ссылки: {e}")
 
-    # Дополнительный поиск через DaData
-    with st.expander("🔍 Или найти организацию по названию / ИНН через DaData", expanded=False):
-        d_col1, d_col2 = st.columns([1, 2])
-        with d_col1:
-            dadata_token = st.text_input("API-ключ DaData", value=os.getenv("DADATA_API_KEY", ""), type="password")
-        with d_col2:
-            query_party = st.text_input("Название клиники или ИНН", placeholder="Например: Дентал Арт")
-
-        if query_party.strip() and dadata_token.strip():
-            results = fetch_dadata_parties(query_party, dadata_token)
-            if results:
-                s_map = {}
-                for r in results:
-                    c_name = r.get("data", {}).get("name", {}).get("short_with_opf") or r.get("value", "")
-                    addr = r.get("data", {}).get("address", {}).get("value", "")
-                    s_map[f"{c_name} — {addr}"] = (c_name, addr)
-
-                chosen_lbl = st.selectbox("Выберите найденную организацию:", options=list(s_map.keys()))
-                if st.button("Импортировать выбранную", use_container_width=True):
-                    c_n, c_a = s_map[chosen_lbl]
-                    st.session_state.current_audit = {
-                        "title": c_n,
-                        "org_id": "0000000000",
-                        "rating": 4.8,
-                        "canonical_url": f"https://yandex.ru/maps/?text={urllib.parse.quote_plus(c_n + ' ' + c_a)}",
-                        "niche": "DENTISTRY",
-                        "score": 67.0,
-                        "competitors": ["соседние клиники района", "прямые конкуренты"],
-                    }
+    # 2. Вкладка: Загрузка готового JSON
+    with tab_json:
+        col_j1, col_j2 = st.columns([1.5, 2.5])
+        with col_j1:
+            uploaded_file = st.file_uploader("Загрузить файл .json аудита:", type=["json"])
+            if uploaded_file is not None:
+                try:
+                    raw_data = json.load(uploaded_file)
+                    st.session_state.current_audit = parse_incoming_audit_json(raw_data)
                     st.session_state.drive_links = None
+                    st.success(f"JSON загружен! Организация: «{st.session_state.current_audit['title']}»")
                     st.rerun()
+                except Exception as e:
+                    st.error(f"Ошибка чтения JSON файла: {e}")
 
-    # Обработка вставленной ссылки
-    if start_scan and target_url.strip():
-        with st.spinner("Анализируем профиль организации на Картах..."):
-            try:
-                extracted = fetch_yandex_maps_data(target_url)
-                st.session_state.current_audit = extracted
-                st.session_state.drive_links = None
-                st.success(f"Организация «{extracted['title']}» успешно определена!")
-            except Exception as e:
-                st.error(f"Не удалось разобрать ссылку: {e}")
+        with col_j2:
+            json_text = st.text_area(
+                "Или вставьте JSON код из буфера обмена:",
+                height=130,
+                placeholder='{\n  "title": "Клиника",\n  "rating": 4.8,\n  "score": 67.5,\n  "competitors": ["РозДент"]\n}'
+            )
+            if st.button("⚡ Применить JSON и рассчитать", use_container_width=True):
+                if json_text.strip():
+                    try:
+                        raw_data = json.loads(json_text)
+                        st.session_state.current_audit = parse_incoming_audit_json(raw_data)
+                        st.session_state.drive_links = None
+                        st.success("Данные успешно применены!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Невалидный JSON: {e}")
 
-    # Если аудит еще не начат
+    # 3. Вкладка: Поиск по названию / ИНН
+    with tab_dadata:
+        query_company = st.text_input("Введите название компании или ИНН:", placeholder="Например: Дентал Арт")
+        active_token = st.session_state.get("dadata_key", os.getenv("DADATA_API_KEY", ""))
+
+        if query_company.strip():
+            if not active_token:
+                st.info("Укажите API-ключ DaData в боковом меню (⚙️ Системные настройки) для активации поиска.")
+            else:
+                found = fetch_dadata_parties(query_company, active_token)
+                if found:
+                    opt_map = {}
+                    for item in found:
+                        nm = item.get("data", {}).get("name", {}).get("short_with_opf") or item.get("value", "")
+                        ad = item.get("data", {}).get("address", {}).get("value", "")
+                        opt_map[f"{nm} — {ad}"] = (nm, ad)
+
+                    choice = st.selectbox("Выберите организацию из списка:", options=list(opt_map.keys()))
+                    if st.button("Использовать эту организацию", use_container_width=True):
+                        c_name, c_addr = opt_map[choice]
+                        search_url = f"https://yandex.ru/maps/?text={urllib.parse.quote_plus(c_name + ' ' + c_addr)}"
+                        st.session_state.current_audit = parse_incoming_audit_json({
+                            "title": c_name,
+                            "url": search_url,
+                            "rating": 4.8,
+                            "score": 67.0
+                        })
+                        st.session_state.drive_links = None
+                        st.rerun()
+                else:
+                    st.caption("Организаций не найдено.")
+
+    # Если аудит еще не запущен
     if not st.session_state.current_audit:
-        st.info("👆 Вставьте ссылку на любую организацию в поле выше и нажмите **«Запустить аудит»**.")
+        st.divider()
+        st.info("👆 Укажите ссылку на Яндекс Карты или загрузите готовый JSON компании для начала расчета.")
         return
 
-    # РАБОЧАЯ ЗОНА С ДАННЫМИ
+    # РАБОЧИЙ ДАШБОРД АУДИТА
     audit = st.session_state.current_audit
-    st.divider()
-
-    # Боковая панель для точечной корректировки
-    with st.sidebar:
-        st.header("Настройки Google Таблицы")
-        sheet_id = st.text_input(
-            "ID Google Таблицы (для логов):",
-            value=os.getenv("GOOGLE_SHEET_ID", ""),
-            placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
-            help="Часть URL таблицы между /d/ и /edit"
-        )
-
-        st.header("Параметры карточки")
-        audit["title"] = st.text_input("Название организации", value=audit["title"])
-        audit["org_id"] = st.text_input("ID в Яндекс Бизнесе", value=audit["org_id"])
-        audit["rating"] = st.number_input("Рейтинг на Картах", min_value=1.0, max_value=5.0, value=float(audit["rating"]), step=0.1)
-        audit["score"] = st.slider("Балл готовности профиля", min_value=20.0, max_value=98.0, value=float(audit["score"]), step=0.5)
-
-        st.subheader("Конкуренты района")
-        comp1 = st.text_input("Конкурент 1", value=audit["competitors"][0] if len(audit["competitors"]) > 0 else "")
-        comp2 = st.text_input("Конкурент 2", value=audit["competitors"][1] if len(audit["competitors"]) > 1 else "")
-        audit["competitors"] = [c for c in [comp1, comp2] if c.strip()]
-
-        if st.button("🗑️ Сбросить и начать заново", use_container_width=True):
-            st.session_state.current_audit = None
-            st.session_state.drive_links = None
-            st.rerun()
-
-    # Юнит-экономика
     mapping = calculate_report_metrics(audit)
+    st.divider()
 
     col_l, col_r = st.columns([1.1, 0.9])
 
     with col_l:
         st.subheader(f"Карточка: «{audit['title']}»")
         if audit.get("canonical_url"):
-            st.markdown(f"🔗 [Открыть организацию на Яндекс Картах]({audit['canonical_url']})")
+            st.markdown(f"🔗 [Открыть в Яндекс Картах]({audit['canonical_url']})")
 
-        st.markdown("**Ключевые барьеры профиля (Стр. 3 отчета):**")
-        st.markdown("1. **Отсутствие быстрой онлайн-записи (МИС)** — вечерний трафик уходит к конкурентам.")
-        st.markdown("2. **Отсутствие витрины специалистов** — обезличенный профиль проигрывает карточкам с открытой командой.")
-        st.markdown("3. **Фрагментарный прейскурант без цен «от...»** — пессимизация профиля по коммерческим запросам.")
+        st.markdown("**Ключевые барьеры карточки (Стр. 3 отчета):**")
+        for idx, f in enumerate(audit.get("top_failures", []), 1):
+            st.markdown(f"**{idx}. {f['title']}**")
+            st.caption(f["desc"])
 
         st.divider()
 
-        # Блок сборки и сохранения на Google Диск
+        # Генерация и синхронизация
         st.subheader("Генерация и сохранение на Google Диск")
         template_file = Path("report_template.typ")
         output_dir = Path("output")
@@ -659,16 +625,13 @@ def run_streamlit_app() -> None:
         txt_path = output_dir / f"{file_prefix}_icebreaker.txt"
         json_path = output_dir / f"{file_prefix}_data.json"
 
-        btn_run = st.button("🚀 Скомпилировать PDF и сохранить на Google Диск", type="primary", use_container_width=True)
-
-        if btn_run:
+        if st.button("🚀 Скомпилировать PDF и отправить на Google Диск", type="primary", use_container_width=True):
             if not template_file.exists():
-                st.error("Файл 'report_template.typ' не найден рядом с app.py.")
+                st.error("Шаблон report_template.typ не найден рядом с app.py.")
             else:
-                with st.spinner("Генерируем файлы и выгружаем в папки с датой на Google Диск..."):
-                    # 1. Формирование текстов и JSON
-                    n_def = NICHE_CONFIG.get(audit.get("niche", "DENTISTRY"), NICHE_CONFIG["DENTISTRY"])
+                with st.spinner("Компилируем PDF и сохраняем на Google Диск..."):
                     lost_leads_int = int(mapping["[[LOST_LEADS]]"])
+                    n_def = NICHE_CONFIG.get(audit.get("niche", "DENTISTRY"), NICHE_CONFIG["DENTISTRY"])
                     icebreaker_text = generate_icebreaker(
                         title=audit["title"],
                         rating=audit["rating"],
@@ -676,20 +639,17 @@ def run_streamlit_app() -> None:
                         lost_leads=lost_leads_int,
                         niche_genitive=n_def["niche_genitive"]
                     )
-
                     with open(txt_path, "w", encoding="utf-8") as f:
                         f.write(icebreaker_text)
-
                     with open(json_path, "w", encoding="utf-8") as f:
                         json.dump(audit, f, ensure_ascii=False, indent=2)
 
-                    # 2. Компиляция Typst
                     rendered = render_typst_template(template_file, mapping)
                     ok, err = compile_typst_pdf(rendered, pdf_path, output_dir)
 
                     if ok:
-                        st.success("PDF отчет успешно скомпилирован локально.")
-                        # 3. Выгрузка в Google Drive
+                        st.success("PDF отчет успешно собран локально.")
+                        target_sheet = st.session_state.get("sheet_id", os.getenv("GOOGLE_SHEET_ID", ""))
                         try:
                             links = sync_results_to_google(
                                 audit_data=audit,
@@ -697,22 +657,21 @@ def run_streamlit_app() -> None:
                                 pdf_path=pdf_path,
                                 txt_path=txt_path,
                                 json_path=json_path,
-                                spreadsheet_id=sheet_id
+                                spreadsheet_id=target_sheet
                             )
                             st.session_state.drive_links = links
                             st.balloons()
                         except Exception as ex:
                             st.error(f"Не удалось выгрузить на Google Диск: {ex}")
                     else:
-                        st.warning(f"Ошибка Typst: {err}")
+                        st.error(f"Ошибка компиляции Typst: {err}")
 
-        # Отображение ссылок на Google Диск
         if st.session_state.drive_links:
             st.success("✅ Все материалы сохранены в целевые папки с текущей датой!")
             l = st.session_state.drive_links
-            st.markdown(f"📄 **PDF на Google Диске:** [Открыть файл]({l.get('pdf', '#')})")
-            st.markdown(f"✉️ **Письмо (TXT) на Google Диске:** [Открыть файл]({l.get('txt', '#')})")
-            st.markdown(f"⚙️ **JSON на Google Диске:** [Открыть файл]({l.get('json', '#')})")
+            st.markdown(f"📄 **PDF на Диске:** [Открыть отчет]({l.get('pdf', '#')})")
+            st.markdown(f"✉️ **Письмо на Диске:** [Открыть текст]({l.get('txt', '#')})")
+            st.markdown(f"⚙️ **JSON на Диске:** [Открыть файл]({l.get('json', '#')})")
 
     with col_r:
         st.subheader("Расчетные показатели потерь")
@@ -726,7 +685,7 @@ def run_streamlit_app() -> None:
 
         st.divider()
 
-        st.subheader("Первое сообщение для ЛПР (Icebreaker)")
+        st.subheader("Первое сообщение руководителю (Icebreaker)")
         lost_leads_int = int(mapping["[[LOST_LEADS]]"])
         n_def = NICHE_CONFIG.get(audit.get("niche", "DENTISTRY"), NICHE_CONFIG["DENTISTRY"])
         icebreaker_txt = generate_icebreaker(
@@ -736,8 +695,7 @@ def run_streamlit_app() -> None:
             lost_leads=lost_leads_int,
             niche_genitive=n_def["niche_genitive"]
         )
-
-        st.text_area("Текст для отправки в мессенджер:", value=icebreaker_txt, height=210)
+        st.text_area("Текст для WhatsApp / Telegram / Email:", value=icebreaker_txt, height=210)
 
 
 if __name__ == "__main__":
