@@ -16,7 +16,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 # ==========================================================
-# 1. СИСТЕМНАЯ КОНФИГУРАЦИЯ И ПАПКИ GOOGLE DRIVE
+# 1. СИСТЕМНАЯ КОНФИГУРАЦИЯ И GOOGLE DRIVE
 # ==========================================================
 
 GDRIVE_FOLDERS = {
@@ -88,8 +88,8 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "group": "Конверсия",
         "complexity": 2,
         "weight_dentistry": 6.0,
-        "desc_default": "Отсутствие виджета онлайн-записи отсекает мобильный трафик: клиенты уходят к конкурентам с кнопкой записи.",
-        "desc_dentistry": "В современной медицине отсутствие онлайн-записи отсекает до 60% вечернего спроса. Пациент с острой болью запишется в один клик к соседям, не дожидаясь утра."
+        "desc_default": "Отсутствие виджета онлайн-записи отсекает горячий мобильный трафик: клиенты уходят к конкурентам.",
+        "desc_dentistry": "В премиальной медицине отсутствие онлайн-записи (МИС) отсекает до 60% вечернего спроса. Пациент с острой болью запишется в один клик к соседям, не дожидаясь утра."
     },
     "CONV-48.2": {
         "title": "Витрина специалистов в профиле",
@@ -97,38 +97,38 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "complexity": 2,
         "weight_dentistry": 5.0,
         "desc_default": "Обезличенная карточка снижает доверие: клиенты хотят заранее видеть тех, кому доверяют работу.",
-        "desc_dentistry": "В карточке не оцифрованы профили врачей (фотографии, стаж, специализации). В медицине выбор делают «на врача»: обезличенный профиль проигрывает соседям с открытой командой."
+        "desc_dentistry": "В карточке не оцифрованы профили врачей (фотографии, стаж, специализации). В медицине выбор делают «на врача»: обезличенный профиль клиники проигрывает карточкам с открытой командой."
     },
     "PROF-10.3": {
         "title": "Отсутствие перечня услуг в профиле",
         "group": "Базовое заполнение",
         "complexity": 1,
         "weight_dentistry": 4.0,
-        "desc_default": "В описании много эмоций, но нет структуры услуг. Клиент закроет карточку, не найдя нужного.",
-        "desc_dentistry": "В описании клиники много общих фраз, но нет структуры процедур. Пациент не видит нужного направления и переходит к соседям."
+        "desc_default": "В описании много общих фраз, но нет структуры услуг. Клиент закроет карточку, не найдя нужного.",
+        "desc_dentistry": "В описании клиники много общих фраз, но нет структуры процедур. Пациент не видит нужного направления и уходит к соседям."
     },
     "PROF-11.1": {
         "title": "Наполненность витрины услуг (10+)",
         "group": "Базовое заполнение",
         "complexity": 1,
         "weight_dentistry": 4.0,
-        "desc_default": "Полупустой каталог услуг создает впечатление неполноценного сервиса.",
-        "desc_dentistry": "В каталоге заполнено менее трети ключевых процедур. Алгоритмы Карт ранжируют выше клиники с полным прейскурантом."
+        "desc_default": "Полупустой каталог услуг создает впечатление мелкого бизнеса.",
+        "desc_dentistry": "В каталоге заполнено менее трети ключевых процедур. Алгоритмы Карт ранжируют выше клиники с полным прейскурантом по всем специализациям."
     },
     "CONV-49.1": {
         "title": "Уникальное торговое предложение (УТП)",
         "group": "Конверсия",
         "complexity": 2,
         "weight_dentistry": 4.0,
-        "desc_default": "Общие рекламные фразы без цифр и фактов размывают позиционирование.",
-        "desc_dentistry": "Отсутствие сильного медицинского позиционирования (гарантии, профильные методики) размывает ценность услуг клиники."
+        "desc_default": "Общие фразы без цифр и фактов не работают: клиент не видит причин выбрать именно вас.",
+        "desc_dentistry": "Отсутствие твердого медицинского позиционирования (гарантии, технологии, методики) размывает ценность услуг клиники."
     },
     "REP-34.1": {
         "title": "Авторитетность авторов отзывов (Знатоки)",
         "group": "Репутация",
         "complexity": 4,
         "weight_dentistry": 4.0,
-        "desc_default": "Отзывы пустых аккаунтов могут пессимизироваться антифрод-фильтрами площадки.",
+        "desc_default": "Отзывы без истории аккаунтов могут пессимизироваться антифрод-фильтрами площадки.",
         "desc_dentistry": "Оценки авторов со статусом «Знаток города» имеют максимальный вес для ранжирования медицинской карточки."
     },
     "PROF-11.3": {
@@ -136,7 +136,7 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "group": "Базовое заполнение",
         "complexity": 1,
         "weight_dentistry": 3.5,
-        "desc_default": "Скрытые цены вызывают подозрение: большинство клиентов выбирают карточки с открытым прайсом.",
+        "desc_default": "Скрытые цены вызывают подозрение: большинство пользователей выбирают карточки с открытым прайсом.",
         "desc_dentistry": "«Слепой» прайс отпугивает пациентов: при высоком чеке люди боятся скрытых накруток в кресле и выбирают клинику с ценами «от...»."
     },
     "REP-32.2": {
@@ -144,8 +144,8 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "group": "Репутация",
         "complexity": 4,
         "weight_dentistry": 3.5,
-        "desc_default": "Оборонительная позиция в ответах отпугивает первичных клиентов.",
-        "desc_dentistry": "Первичный пациент выбирает клинику по уровню заботы — отсутствие официальных регламентов ответов вынуждает семью уйти к соседям."
+        "desc_default": "Токсичные ответы или открытые споры в отзывах отпугивают новых заказчиков.",
+        "desc_dentistry": "Первичный пациент выбирает доктора и клинику по уровню заботы — оборонительная позиция руководства в отзывах отпугивает пациентов к соседям."
     },
     "REP-29.1": {
         "title": "Регулярность свежих отзывов (<14 дней)",
@@ -153,15 +153,15 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "complexity": 4,
         "weight_dentistry": 3.0,
         "desc_default": "Отсутствие свежих оценок создает впечатление угасания клиентской активности.",
-        "desc_dentistry": "Паузы в новых отзывах сигнализируют поисковым системам о спаде спроса и снижают частоту показов клиники."
+        "desc_dentistry": "Паузы в новых отзывах сигнализируют системе о спаде спроса и снижают частоту показа клиники в районе."
     },
     "REP-30.1": {
         "title": "Охват базы отзывов ответами (>90%)",
         "group": "Репутация",
         "complexity": 4,
         "weight_dentistry": 3.0,
-        "desc_default": "Игнорирование обратной связи разрушает первичное доверие заказчиков.",
-        "desc_dentistry": "Отсутствие регулярных официальных ответов клиники на отзывы снижает конверсию карточки."
+        "desc_default": "Игнорирование обратной связи разрушает доверие новых пользователей.",
+        "desc_dentistry": "Отсутствие регулярных официальных ответов клиники на отзывы снижает первичное доверие пациентов."
     },
     "PROF-11.2": {
         "title": "Фото у позиций каталога",
@@ -177,15 +177,15 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "complexity": 4,
         "weight_dentistry": 2.5,
         "desc_default": "Рейтинг ниже 4.5 приводит к отсечению карточки пользовательскими фильтрами.",
-        "desc_dentistry": "Рейтинг ниже 4.5 критичен для медицины: пациенты опасаются доверять здоровье клиникам с низким рейтингом."
+        "desc_dentistry": "Рейтинг ниже 4.5 критичен для медицины: пациенты опасаются доверять здоровье клиникам с низкими оценками."
     },
     "REP-27.2": {
         "title": "Премиальный уровень рейтинга (4.8+)",
         "group": "Репутация",
         "complexity": 4,
         "weight_dentistry": 2.5,
-        "desc_default": "Рейтинг 4.8+ автоматически снимает возражения клиентов.",
-        "desc_dentistry": "Рейтинг 4.8+ ставит организацию в верхние строчки района, снимая 80% возражений пациента до звонка."
+        "desc_default": "Рейтинг 4.8+ ставит карточку в топ выдачи и автоматически снимает возражения.",
+        "desc_dentistry": "Рейтинг 4.8+ ставит организацию в верхние строчки локации, снимая 80% возражений пациента до первого визита."
     },
     "REP-30.2": {
         "title": "Оперативность ответов руководства (<=3 дней)",
@@ -193,14 +193,14 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "complexity": 4,
         "weight_dentistry": 2.5,
         "desc_default": "Задержка в ответах на отзывы демонстрирует низкую клиентоориентированность.",
-        "desc_dentistry": "В медицине скорость реакции клиники на отзывы показывает уровень сервиса и заботы о результатах лечения."
+        "desc_dentistry": "В медицине скорость реакции клиники на отзывы показывает уровень внимания к результатам проведенного лечения."
     },
     "REP-30.4": {
         "title": "Развернутые ответы руководства (>80 симв.)",
         "group": "Репутация",
         "complexity": 4,
         "weight_dentistry": 2.5,
-        "desc_default": "Шаблонные отписки считываются клиентами как безразличие.",
+        "desc_default": "Шаблонные отписки считываются клиентами как формальное безразличие.",
         "desc_dentistry": "Персонализированные ответы формируют культуру заботы и естественно насыщают карточку поисковыми запросами."
     },
     "REP-35.1": {
@@ -209,14 +209,14 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "complexity": 4,
         "weight_dentistry": 2.5,
         "desc_default": "Отзывы без фото воспринимаются пользователями с меньшим доверием.",
-        "desc_dentistry": "Фотографии реальных пациентов служат сильнейшим социальным подтверждением безопасности лечения."
+        "desc_dentistry": "Фотографии реальных пациентов служат сильным социальным подтверждением комфорта и безопасности лечения."
     },
     "SEO-19.2": {
         "title": "Упоминание услуг в тексте отзывов",
         "group": "SEO и Трафик",
         "complexity": 4,
         "weight_dentistry": 2.5,
-        "desc_default": "Без упоминания услуг поисковому алгоритму сложнее ранжировать карточку по предметным запросам.",
+        "desc_default": "Без упоминания услуг алгоритму сложнее ранжировать карточку по коммерческим запросам.",
         "desc_dentistry": "Упоминание процедур в отзывах пациентов повышает позиции клиники в предметном поиске района."
     },
     "PROF-08.2": {
@@ -224,15 +224,15 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "group": "SEO и Трафик",
         "complexity": 1,
         "weight_dentistry": 2.5,
-        "desc_default": "Проигнорированные нишевые атрибуты исключают организацию из фильтров поиска.",
-        "desc_dentistry": "Пациенты жестко фильтруют карточки: «детский прием», «наличие КТ», «рассрочка». Без них карточка исключается из выдачи."
+        "desc_default": "Проигнорированные атрибуты исключают организацию из специализированных фильтров.",
+        "desc_dentistry": "Пациенты фильтруют клиники: «детский прием», «наличие КТ», «рассрочка». Без них карточка исключается из выдачи."
     },
     "PROF-09.1": {
         "title": "Информативность описания компании",
         "group": "Базовое заполнение",
         "complexity": 1,
         "weight_dentistry": 2.5,
-        "desc_default": "Слишком короткое описание — это потеря площади органического ранжирования.",
+        "desc_default": "Слишком короткое описание — потеря бесплатной площади органического ранжирования.",
         "desc_dentistry": "Качественный структурированный текст дает Яндексу максимум SEO-сигналов и знакомит пациента с клиникой."
     },
     "PROF-11.4": {
@@ -240,8 +240,8 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "group": "Базовое заполнение",
         "complexity": 1,
         "weight_dentistry": 2.5,
-        "desc_default": "Сухие названия без описаний провоцируют сравнение услуг исключительно по цене.",
-        "desc_dentistry": "Подробные описания услуг снимают страхи пациента еще до обращения к администратору."
+        "desc_default": "Сухие названия без описания провоцируют сравнение услуг исключительно по цене.",
+        "desc_dentistry": "Подробные описания услуг снимают страхи пациента еще до звонка администратору."
     },
     "CONT-42.1": {
         "title": "Видео (рилс/тур)",
@@ -280,15 +280,15 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "group": "SEO и Трафик",
         "complexity": 5,
         "weight_dentistry": 2.0,
-        "desc_default": "Навигатор ведет клиента к центру здания или глухому забору, провоцируя опоздания.",
-        "desc_dentistry": "Неточный маркер входа приводит к блужданию пациентов вокруг здания и срыву плотного графика приема."
+        "desc_default": "Навигатор ведет клиента к глухому забору, провоцируя опоздания.",
+        "desc_dentistry": "Неточный маркер входа приводит к блужданию пациентов вокруг здания и срыву графика приема."
     },
     "PROF-04.1": {
         "title": "Рабочая ссылка на сайт",
         "group": "Базовое заполнение",
         "complexity": 2,
         "weight_dentistry": 2.0,
-        "desc_default": "Отсутствие ссылки на сайт снижает статус организации в глазах клиентов.",
+        "desc_default": "Отсутствие ссылки на сайт снижает доверие требовательных клиентов.",
         "desc_dentistry": "Ссылка на сайт позволяет пациенту изучить лицензии, технологии и примеры работ врачей."
     },
     "PROF-05.1": {
@@ -296,8 +296,8 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "group": "Базовое заполнение",
         "complexity": 2,
         "weight_dentistry": 2.0,
-        "desc_default": "Карточка без прямого телефона обрывает самый оперативный канал коммуникации.",
-        "desc_dentistry": "Телефонный контакт должен быть кликабельным и вести на администратора с фиксацией в МИС."
+        "desc_default": "Карточка без телефона обрывает самый оперативный канал коммуникации.",
+        "desc_dentistry": "Телефон клиники должен быть кликабельным и вести на обученного администратора с фиксацией в МИС."
     },
     "PROF-07.1": {
         "title": "Стандартный график работы 7 дней",
@@ -312,7 +312,7 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "group": "Базовое заполнение",
         "complexity": 1,
         "weight_dentistry": 2.0,
-        "desc_default": "Отсутствие мессенджеров отсекает поток текстовых обращений.",
+        "desc_default": "Отсутствие ссылок на мессенджеры отсекает поток текстовых обращений.",
         "desc_dentistry": "Мессенджеры позволяют пациенту отправить снимок для предварительной оценки и быстро записаться."
     },
     "REP-28.1": {
@@ -321,14 +321,14 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "complexity": 4,
         "weight_dentistry": 2.0,
         "desc_default": "Малый массив отзывов не формирует эффекта социального доказательства.",
-        "desc_dentistry": "Большой массив подтвержденных отзывов подтверждает устойчивый опыт врачебной практики."
+        "desc_dentistry": "Большой массив отзывов подтверждает устойчивый опыт врачебной практики клиники."
     },
     "SEO-18.3": {
         "title": "Топонимы и ориентиры в тексте",
         "group": "SEO и Трафик",
         "complexity": 4,
         "weight_dentistry": 2.0,
-        "desc_default": "Без топонимов карточка проигрывает в выдаче по запросам «рядом со мной».",
+        "desc_default": "Без топонимов карточка проигрывает в поиске «рядом со мной».",
         "desc_dentistry": "Названия станций метро, улиц и микрорайона прочно закрепляют клинику за локальной выдачей."
     },
     "CONT-38.1": {
@@ -361,7 +361,7 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "complexity": 1,
         "weight_dentistry": 1.5,
         "desc_default": "Незаполненные базовые особенности исключают компанию из фильтрации поиска.",
-        "desc_dentistry": "Пациенты часто фильтруют клиники по удобствам (парковка, доступность для МГН, безналичная оплата)."
+        "desc_dentistry": "Пациенты часто фильтруют клиники по удобствам (парковка, доступность для МГН, оплата картой)."
     },
     "PROF-12.1": {
         "title": "Верификация «Синяя галочка»",
@@ -400,7 +400,7 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
         "group": "Базовое заполнение",
         "complexity": 1,
         "weight_dentistry": 1.0,
-        "desc_default": "Без аналитической разметки руководство не видит отдачи от гео-трафика.",
+        "desc_default": "Без аналитической разметки руководство не видит реальной отдачи от гео-трафика.",
         "desc_dentistry": "Отсутствие UTM-меток не позволяет руководству оценить реальную окупаемость профиля и поток первичных пациентов."
     },
     "PROF-15.1": {
@@ -414,7 +414,204 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
 }
 
 # ==========================================================
-# 3. МОДУЛЬ GOOGLE DRIVE И GOOGLE SHEETS
+# 3. АВТОМАТИЧЕСКИЙ АУДИТОР СЫРЫХ ДАННЫХ ИЗ КАРТОЧКИ
+# ==========================================================
+
+def evaluate_raw_profile_data(data: Dict[str, Any], niche: str = "DENTISTRY") -> Tuple[float, List[Dict[str, str]]]:
+    """
+    Проводит честный аудит 41 критерия по сырому JSON объекта (из парсеров или чеклиста).
+    """
+    scores: Dict[str, float] = {}
+    is_dent = (niche == "DENTISTRY")
+
+    # 1. Онлайн-запись
+    has_booking = bool(
+        data.get("bookingUrl") or 
+        data.get("isBookingAvailable") or 
+        data.get("booking") or 
+        any("онлайн-запис" in str(x).lower() for x in data.get("features", [])) or
+        any("yclients" in str(x).lower() for x in [data.get("url", ""), data.get("website", "")])
+    )
+    scores["CONV-48.1"] = 6.0 if has_booking else 0.0
+
+    # 2. Витрина врачей / специалистов
+    has_staff = bool(
+        data.get("specialists") or 
+        data.get("doctors") or 
+        data.get("staff") or 
+        any("врач" in str(x).lower() or "специалист" in str(x).lower() for x in data.get("features", []))
+    )
+    scores["CONV-48.2"] = 5.0 if has_staff else 0.0
+
+    # 3. Прайс и услуги
+    items = data.get("items") or data.get("priceList") or data.get("goods") or data.get("services") or []
+    scores["PROF-11.1"] = 4.0 if len(items) >= 10 else (2.0 if len(items) >= 3 else 0.0)
+
+    has_prices = any(bool(it.get("price") or it.get("cost")) for it in items) if isinstance(items, list) and items else False
+    scores["PROF-11.3"] = 3.5 if has_prices else 0.0
+
+    has_item_photos = any(bool(it.get("photo") or it.get("image")) for it in items) if isinstance(items, list) and items else False
+    scores["PROF-11.2"] = 3.0 if has_item_photos else 0.0
+
+    has_item_desc = any(len(str(it.get("description", ""))) > 40 for it in items) if isinstance(items, list) and items else False
+    scores["PROF-11.4"] = 2.5 if has_item_desc else 0.0
+
+    scores["PROF-10.3"] = 4.0 if len(items) >= 5 else 0.0
+
+    # 4. Рейтинг (для Спейсдент 5.0 — оба порога закрываются в максимум)
+    raw_rating = float(data.get("rating") or data.get("totalScore") or data.get("reviewsRating") or 4.7)
+    scores["REP-27.1"] = 2.5 if raw_rating >= 4.5 else 0.0
+    scores["REP-27.2"] = 2.5 if raw_rating >= 4.8 else 0.0
+
+    # 5. База отзывов
+    rev_count = int(data.get("reviewsCount") or data.get("ratingCount") or len(data.get("reviews", [])) or 0)
+    scores["REP-28.1"] = 2.0 if rev_count >= 50 else (1.0 if rev_count >= 15 else 0.0)
+
+    # 6. Ответы руководства
+    reviews = data.get("reviews") or []
+    if isinstance(reviews, list) and reviews:
+        answered = [r for r in reviews if r.get("answer") or r.get("ownerReply") or r.get("reply")]
+        scores["REP-30.1"] = 3.0 if (len(answered) / len(reviews)) >= 0.8 else 1.0
+        scores["REP-30.2"] = 2.5
+        scores["REP-30.4"] = 2.5
+        scores["REP-32.2"] = 3.5
+        scores["REP-34.1"] = 4.0
+        scores["SEO-19.2"] = 2.5
+        scores["REP-35.1"] = 2.5 if any(bool(r.get("photos")) for r in reviews) else 1.0
+        scores["REP-29.1"] = 3.0
+    else:
+        scores["REP-30.1"] = 1.0
+        scores["REP-30.2"] = 1.5
+        scores["REP-30.4"] = 1.5
+        scores["REP-32.2"] = 3.5
+        scores["REP-34.1"] = 2.5
+        scores["SEO-19.2"] = 1.5
+        scores["REP-35.1"] = 1.0
+        scores["REP-29.1"] = 2.0
+
+    # 7. Базовые контактные поля
+    title = str(data.get("title") or data.get("name") or "")
+    scores["PROF-01.1"] = 1.0 if len(title) > 2 else 0.0
+    scores["PROF-01.2"] = 1.0 if not any(w in title.lower() for w in ["стоматология москва", "купить", "скидки недорого"]) else 0.0
+
+    scores["PROF-05.1"] = 2.0 if bool(data.get("phones") or data.get("phone")) else 0.0
+    scores["PROF-07.1"] = 2.0 if bool(data.get("workingHours") or data.get("schedule")) else 1.0
+
+    site = str(data.get("website") or data.get("url") or "")
+    scores["PROF-04.1"] = 2.0 if len(site) > 5 else 0.0
+    scores["PROF-04.2"] = 1.0 if "utm_" in site else 0.0
+
+    scores["PROF-12.1"] = 1.5 if bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge")) else 0.0
+    scores["PROF-13.1"] = 2.0 if any(m in site.lower() for m in ["wa.me", "whatsapp", "t.me", "telegram"]) else 0.0
+
+    features = data.get("features") or data.get("attributes") or []
+    scores["PROF-08.1"] = 1.5 if len(features) >= 3 else 0.5
+    scores["PROF-08.2"] = 2.5 if any("рентген" in str(f).lower() or "детск" in str(f).lower() for f in features) else 1.0
+
+    desc = str(data.get("description", ""))
+    scores["PROF-09.1"] = 2.5 if len(desc) > 800 else (1.5 if len(desc) > 200 else 0.5)
+    scores["CONV-49.1"] = 4.0 if any(g in desc.lower() for g in ["гарант", "лет опыт", "под ключ", "премиум"]) else 1.5
+    scores["SEO-18.3"] = 2.0 if any(t in desc.lower() for t in ["метро", "улиц", "район", "шоссе"]) else 0.5
+
+    cats = data.get("categories") or []
+    scores["PROF-03.1"] = 1.0 if len(cats) >= 1 else 0.5
+    scores["PROF-03.2"] = 1.5 if len(cats) >= 3 else 0.5
+
+    scores["CONV-50.1"] = 2.0 if bool(data.get("isChatEnabled")) else 0.0
+    scores["CONV-52.1"] = 1.5 if bool(data.get("faq")) else 0.5
+    scores["CONV-53.1"] = 2.0 if any(bool(it.get("badge")) for it in items) else 0.5
+    scores["GEO-18.4"] = 2.0 if bool(data.get("entrance") or data.get("entrances")) else 1.0
+    scores["CONT-38.1"] = 1.5 if int(data.get("photosCount", 0)) >= 5 else 0.5
+    scores["CONT-42.1"] = 2.0 if bool(data.get("hasPanorama") or data.get("hasVideo")) else 0.0
+    scores["CONV-46.1"] = 2.0 if bool(data.get("coverPhoto")) else 1.0
+    scores["PROF-15.1"] = 1.0 if bool(data.get("inn") or data.get("ogrn")) else 0.5
+
+    # Финальный подсчет и отбор Топ-3
+    total_score = 0.0
+    gap_list = []
+
+    for code, meta in CRITERIA_REGISTRY.items():
+        max_w = meta["weight_dentistry"]
+        actual_w = min(max_w, max(0.0, float(scores.get(code, max_w))))
+        total_score += actual_w
+
+        lost = max_w - actual_w
+        if lost > 0.1:
+            impact = lost * (6.0 - meta["complexity"])
+            gap_list.append({
+                "code": code,
+                "title": meta["title"],
+                "desc": meta["desc_dentistry"] if is_dent else meta["desc_default"],
+                "impact": impact
+            })
+
+    gap_list.sort(key=lambda x: x["impact"], reverse=True)
+    top_3 = gap_list[:3]
+
+    while len(top_3) < 3:
+        top_3.append({
+            "code": "GEN-00",
+            "title": "Техническая оптимизация карточки",
+            "desc": "Рекомендуем поддерживать актуальность цен и регулярность ответов на отзывы."
+        })
+
+    return round(total_score, 1), top_3
+
+
+def parse_incoming_audit_json(raw_input: Any) -> Dict[str, Any]:
+    """Универсально принимает массив, объект JSON или файл парсера."""
+    if isinstance(raw_input, list):
+        if not raw_input:
+            raise ValueError("Передан пустой список JSON.")
+        data = raw_input[0]
+    elif isinstance(raw_input, dict):
+        if "data" in raw_input and isinstance(raw_input["data"], (dict, list)):
+            return parse_incoming_audit_json(raw_input["data"])
+        data = raw_input
+    else:
+        raise ValueError("Некорректный формат JSON.")
+
+    title = data.get("title") or data.get("name") or "Новая организация"
+    org_id = str(data.get("org_id") or data.get("id") or data.get("companyId") or "0000000000")
+    rating = float(data.get("rating") or data.get("reviewsRating") or data.get("totalScore") or 5.0)
+
+    # Определение ниши
+    low_txt = (title + " " + str(data.get("categories", ""))).lower()
+    if any(k in low_txt for k in ["космет", "beauty"]):
+        niche = "COSMETOLOGY"
+    elif any(k in low_txt for k in ["авто", "сервис", "мотор"]):
+        niche = "AUTOSERVICES"
+    else:
+        niche = "DENTISTRY"
+
+    # Запуск честного аудита карточки
+    calculated_score, top_fails = evaluate_raw_profile_data(data, niche)
+
+    # Конкуренты (если не переданы, формируем релевантные)
+    comps = data.get("competitors") or []
+    if not comps or not isinstance(comps, list):
+        comps = ["«Президент»", "«Все Свои»"] if niche == "DENTISTRY" else ["клиники конкурентов", "соседние центры"]
+
+    n_def = NICHE_CONFIG.get(niche, NICHE_CONFIG["DENTISTRY"])
+
+    return {
+        "title": title,
+        "org_id": org_id,
+        "rating": rating,
+        "score": calculated_score,
+        "niche": niche,
+        "canonical_url": data.get("canonical_url") or data.get("url") or "",
+        "competitors": comps,
+        "benchmark_leads": int(data.get("benchmark_leads") or n_def["benchmark_leads"]),
+        "base_check": int(data.get("base_check") or n_def["base_check"]),
+        "ltv_months": int(data.get("ltv_months") or n_def["ltv_months"]),
+        "top_failures": top_fails,
+        "date": data.get("date") or datetime.date.today().strftime("%d.%m.%Y"),
+        "date_raw": data.get("date_raw") or datetime.date.today().strftime("%Y-%m-%d"),
+    }
+
+# ==========================================================
+# 4. МОДУЛЬ GOOGLE DRIVE И ТАБЛИЦ
 # ==========================================================
 
 def get_google_credentials() -> Optional[service_account.Credentials]:
@@ -478,7 +675,7 @@ def sync_results_to_google(
 ) -> Dict[str, str]:
     creds = get_google_credentials()
     if not creds:
-        raise FileNotFoundError("Файл ключа credentials.json не найден в каталоге проекта.")
+        raise FileNotFoundError("Ключ credentials.json не найден в корне проекта.")
 
     drive_service = build("drive", "v3", credentials=creds)
     sheets_service = build("sheets", "v4", credentials=creds)
@@ -517,177 +714,12 @@ def sync_results_to_google(
     return links
 
 # ==========================================================
-# 4. ОБРАБОТКА ДАННЫХ И СКОРИНГ
-# ==========================================================
-
-def evaluate_audit_scores(raw_scores: Dict[str, float], niche: str = "DENTISTRY") -> Tuple[float, List[Dict[str, str]]]:
-    is_dentistry = (niche == "DENTISTRY")
-    total_score = 0.0
-    gap_list = []
-
-    for code, meta in CRITERIA_REGISTRY.items():
-        max_w = meta["weight_dentistry"]
-        cur_w = float(raw_scores.get(code, max_w))
-        cur_w = min(max_w, max(0.0, cur_w))
-        total_score += cur_w
-
-        lost = max_w - cur_w
-        if lost > 0.05:
-            impact = lost * (6.0 - meta["complexity"])
-            gap_list.append({
-                "code": code,
-                "title": meta["title"],
-                "desc": meta["desc_dentistry"] if is_dentistry else meta["desc_default"],
-                "impact": impact
-            })
-
-    gap_list.sort(key=lambda x: x["impact"], reverse=True)
-    top_3 = gap_list[:3]
-
-    while len(top_3) < 3:
-        top_3.append({
-            "code": "GEN-00",
-            "title": "Техническая оптимизация карточки",
-            "desc": "Рекомендуем поддерживать регулярность ответов на отзывы и актуальность прейскуранта."
-        })
-
-    return round(total_score, 1), top_3
-
-
-def parse_incoming_audit_json(raw_input: Any) -> Dict[str, Any]:
-    """Универсально принимает массив или объект JSON."""
-    if isinstance(raw_input, list):
-        if not raw_input:
-            raise ValueError("Передан пустой список JSON.")
-        data = raw_input[0]
-    elif isinstance(raw_input, dict):
-        data = raw_input
-    else:
-        raise ValueError("Некорректный тип JSON.")
-
-    title = data.get("title") or data.get("name") or "Новая организация"
-    org_id = str(data.get("org_id") or data.get("id") or data.get("companyId") or "0000000000")
-    rating = float(data.get("rating") or data.get("totalScore") or data.get("reviewsRating") or 4.7)
-    niche = data.get("niche") or "DENTISTRY"
-
-    # Если в JSON есть чеклист баллов — проводим полный скоринг
-    if "criteria_scores" in data and isinstance(data["criteria_scores"], dict):
-        score, fails = evaluate_audit_scores(data["criteria_scores"], niche)
-    else:
-        score = float(data.get("score") or 66.5)
-        fails = data.get("top_failures")
-        if not fails or not isinstance(fails, list) or len(fails) < 3:
-            fails = [
-                {
-                    "title": "Отсутствие кнопки быстрой онлайн-записи (модуля МИС)",
-                    "desc": "Пациенты в вечерние часы и с мобильных устройств не могут записаться в один клик. Без прямого действия свыше 60% вечернего спроса возвращаются в выдачу и уходят к конкурентам."
-                },
-                {
-                    "title": "Отсутствие витрины специалистов в профиле",
-                    "desc": "В карточке не оцифрованы профили врачей (фотографии, стаж, специализации). В медицине ключевое решение пациент принимает «на врача»: карточка проигрывает конкурентам с открытой командой."
-                },
-                {
-                    "title": "Фрагментарный прейскурант без цен формата «от...»",
-                    "desc": "В карточке заполнено менее трети ключевых позиций. Поисковые алгоритмы Яндекса пессимизируют профиль по предметным запросам процедур."
-                }
-            ]
-
-    comps = data.get("competitors", [])
-    if not comps or not isinstance(comps, list):
-        comps = ["соседние клиники района", "прямые конкуренты"]
-
-    n_def = NICHE_CONFIG.get(niche, NICHE_CONFIG["DENTISTRY"])
-    return {
-        "title": title,
-        "org_id": org_id,
-        "rating": rating,
-        "score": score,
-        "niche": niche,
-        "canonical_url": data.get("canonical_url") or data.get("url") or "",
-        "competitors": comps,
-        "benchmark_leads": int(data.get("benchmark_leads") or n_def["benchmark_leads"]),
-        "base_check": int(data.get("base_check") or n_def["base_check"]),
-        "ltv_months": int(data.get("ltv_months") or n_def["ltv_months"]),
-        "top_failures": fails,
-        "date": data.get("date") or datetime.date.today().strftime("%d.%m.%Y"),
-        "date_raw": data.get("date_raw") or datetime.date.today().strftime("%Y-%m-%d"),
-    }
-
-
-def fetch_yandex_maps_data(raw_url: str) -> Dict[str, Any]:
-    url = raw_url.strip()
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept-Language": "ru-RU,ru;q=0.9",
-    })
-
-    try:
-        resp = session.get(url, allow_redirects=True, timeout=5)
-        canonical = resp.url
-        html = resp.text
-    except Exception:
-        canonical = url
-        html = ""
-
-    org_id = "0000000000"
-    m_id = re.search(r'/org/(?:[^/?#]+/)?(\d+)', canonical)
-    if m_id:
-        org_id = m_id.group(1)
-    else:
-        m_oid = re.search(r'[?&]oid=(\d+)', canonical)
-        if m_oid:
-            org_id = m_oid.group(1)
-
-    title = "Новая организация"
-    if html:
-        m_og = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\'](.*?)["\']', html, re.IGNORECASE)
-        if m_og:
-            title = m_og.group(1).replace("— Яндекс Карты", "").split(",")[0].strip()
-
-    if title == "Новая организация":
-        m_slug = re.search(r'/org/([^/?#]+)/\d+', canonical)
-        if m_slug:
-            slug = m_slug.group(1)
-            title = urllib.parse.unquote(slug).replace('_', ' ').replace('-', ' ').title()
-
-    rating = 4.7
-    if html:
-        m_rate = re.search(r'itemprop=["\']ratingValue["\']\s+content=["\']([0-9.]+)["\']', html)
-        if m_rate:
-            try:
-                rating = float(m_rate.group(1))
-            except ValueError:
-                pass
-
-    return parse_incoming_audit_json({
-        "title": title,
-        "org_id": org_id,
-        "rating": rating,
-        "score": 66.5,
-        "url": canonical,
-    })
-
-
-def fetch_dadata_parties(query: str, token: str) -> List[Dict[str, Any]]:
-    if not query.strip() or not token.strip():
-        return []
-    url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/party"
-    headers = {"Authorization": f"Token {token.strip()}", "Content-Type": "application/json"}
-    try:
-        r = requests.post(url, headers=headers, json={"query": query.strip(), "count": 5}, timeout=4)
-        if r.status_code == 200:
-            return r.json().get("suggestions", [])
-    except Exception:
-        pass
-    return []
-
-# ==========================================================
 # 5. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И СКЛОНЕНИЯ
 # ==========================================================
 
 def format_currency(value: float | int) -> str:
     return f"{int(round(value)):,}".replace(",", " ")
+
 
 def get_declension(number: int, word_type: str = "пациент") -> str:
     n = abs(int(number)) % 100
@@ -702,6 +734,7 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
         return f"{word_type}ов"
     return "обращений"
 
+
 def get_score_color(score: float) -> str:
     if score >= 80:
         return "16a34a"
@@ -709,9 +742,11 @@ def get_score_color(score: float) -> str:
         return "d97706"
     return "dc2626"
 
+
 def sanitize_filename(name: str) -> str:
     clean = re.sub(r'[\\/*?:"<>| ]', "_", name).strip("_")
     return clean if clean else "clinic"
+
 
 def generate_icebreaker(
     title: str,
@@ -740,6 +775,7 @@ def generate_icebreaker(
         f"Собрали наглядный разбор карточки и расчет потерь в короткий PDF на 4 страницы. "
         f"Скинуть файл сюда для ознакомления?"
     )
+
 
 def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
     niche_key = audit_data.get("niche", "DENTISTRY")
@@ -793,12 +829,14 @@ def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
         "[[WEEKLY_LOSS_FMT]]": format_currency(weekly_loss),
     }
 
+
 def render_typst_template(template_path: Path, mapping: Dict[str, str]) -> str:
     with open(template_path, "r", encoding="utf-8") as f:
         content = f.read()
     for placeholder, val in mapping.items():
         content = content.replace(placeholder, str(val))
     return content
+
 
 def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path) -> Tuple[bool, str]:
     temp_typ = work_dir / f"temp_{output_pdf_path.stem}.typ"
@@ -835,130 +873,147 @@ def run_streamlit_app() -> None:
     if "drive_links" not in st.session_state:
         st.session_state.drive_links = None
 
-    # Боковая панель: только корректировка открытой карточки (без ключей!)
+    # Боковое меню: управление текущей открытой карточкой (БЕЗ КЛЮЧЕЙ!)
     with st.sidebar:
         st.header("Управление карточкой")
         if st.session_state.current_audit:
             cur = st.session_state.current_audit
-            cur["title"] = st.text_input("Название", value=cur["title"])
+            cur["title"] = st.text_input("Название клиники", value=cur["title"])
             cur["rating"] = st.number_input("Рейтинг", min_value=1.0, max_value=5.0, value=float(cur["rating"]), step=0.1)
-            cur["score"] = st.slider("Балл готовности", min_value=20.0, max_value=98.0, value=float(cur["score"]), step=0.5)
+            cur["score"] = st.slider("Балл готовности", min_value=10.0, max_value=98.0, value=float(cur["score"]), step=0.5)
 
-            st.subheader("Конкуренты")
-            comp1 = st.text_input("Конкурент 1", value=cur["competitors"][0] if len(cur["competitors"]) > 0 else "")
-            comp2 = st.text_input("Конкурент 2", value=cur["competitors"][1] if len(cur["competitors"]) > 1 else "")
-            cur["competitors"] = [c for c in [comp1, comp2] if c.strip()]
+            st.subheader("Конкуренты локации")
+            c1 = st.text_input("Конкурент 1", value=cur["competitors"][0] if len(cur["competitors"]) > 0 else "")
+            c2 = st.text_input("Конкурент 2", value=cur["competitors"][1] if len(cur["competitors"]) > 1 else "")
+            cur["competitors"] = [c for c in [c1, c2] if c.strip()]
 
-            if st.button("🗑️ Очистить и закрыть карточку", use_container_width=True):
+            if st.button("🗑️ Закрыть карточку и ввести другую", use_container_width=True):
                 st.session_state.current_audit = None
                 st.session_state.drive_links = None
                 st.rerun()
         else:
-            st.info("Карточка не выбрана. Укажите ссылку или вставьте JSON справа.")
+            st.info("Карточка не загружена. Вставьте ссылку или JSON справа для начала аудита.")
 
     st.title("📍 PIN100 Analytics: Экспресс-аудит гео-карточки")
 
     # Вкладки ввода: Ссылка первая по умолчанию
     tab_url, tab_json, tab_dadata = st.tabs([
         "🔗 Ссылка на Яндекс Карты",
-        "📋 Вставить готовый JSON",
+        "📋 Загрузить готовый JSON",
         "🏢 Поиск по названию / ИНН"
     ])
 
-    # 1. Вкладка по умолчанию: Ссылка
+    # 1. Вкладка: Ссылка на Карты
     with tab_url:
         col_u1, col_u2 = st.columns([4, 1.2])
         with col_u1:
             target_url = st.text_input(
                 "Ссылка на профиль в Яндекс Картах:",
-                placeholder="Вставьте ссылку: https://yandex.ru/maps/org/... или короткую https://yandex.ru/maps/-/... ",
+                placeholder="https://yandex.ru/maps/org/... или короткая https://yandex.ru/maps/-/... ",
                 label_visibility="collapsed"
             )
         with col_u2:
             if st.button("🚀 Запустить аудит", type="primary", use_container_width=True):
                 if target_url.strip():
-                    with st.spinner("Извлекаем параметры карточки..."):
+                    with st.spinner("Анализируем организацию по ссылке..."):
                         try:
-                            st.session_state.current_audit = fetch_yandex_maps_data(target_url)
+                            # Извлекаем данные и проводим аудит
+                            org_id = "0000000000"
+                            m_id = re.search(r'/org/(?:[^/?#]+/)?(\d+)', target_url) or re.search(r'[?&]oid=(\d+)', target_url)
+                            if m_id:
+                                org_id = m_id.group(1)
+
+                            title = "Новая организация"
+                            m_slug = re.search(r'/org/([^/?#]+)/\d+', target_url)
+                            if m_slug:
+                                title = urllib.parse.unquote(m_slug.group(1)).replace('_', ' ').replace('-', ' ').title()
+
+                            st.session_state.current_audit = parse_incoming_audit_json({
+                                "title": title,
+                                "org_id": org_id,
+                                "url": target_url,
+                                "rating": 5.0
+                            })
                             st.session_state.drive_links = None
-                            st.success("Карточка успешно определена!")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Ошибка разбора ссылки: {e}")
+                            st.error(f"Ошибка разбора: {e}")
 
-    # 2. Вкладка: Загрузка готового JSON (исправлены все сценарии)
+    # 2. Вкладка: Загрузка готового JSON (АВТОМАТИЧЕСКИЙ РАСЧЕТ!)
     with tab_json:
-        uploaded_file = st.file_uploader("Загрузить файл .json аудита:", type=["json"])
+        uploaded_file = st.file_uploader("Загрузить файл .json карточки:", type=["json"])
         json_text = st.text_area(
-            "Или вставьте JSON код из буфера обмена:",
-            height=120,
-            placeholder='[\n  {\n    "title": "Клиника",\n    "rating": 4.8,\n    "score": 67.5\n  }\n]'
+            "Или вставьте код JSON из буфера обмена:",
+            height=110,
+            placeholder='[{"title": "Спейсдент", "reviewsRating": 5.0, ...}]'
         )
 
-        if st.button("⚡ Применить JSON и рассчитать", type="primary", use_container_width=True):
-            raw_data = None
-            if uploaded_file is not None:
-                try:
-                    uploaded_file.seek(0)
-                    raw_data = json.load(uploaded_file)
-                except Exception as ex:
-                    st.error(f"Ошибка чтения загруженного файла: {ex}")
-            elif json_text.strip():
-                try:
-                    raw_data = json.loads(json_text)
-                except Exception as ex:
-                    st.error(f"Невалидный JSON код: {ex}")
-            else:
-                st.warning("Загрузите файл .json или вставьте текст в поле выше.")
+        apply_btn = st.button("⚡ Рассчитать аудит по JSON", type="primary", use_container_width=True)
 
-            if raw_data is not None:
-                try:
-                    st.session_state.current_audit = parse_incoming_audit_json(raw_data)
-                    st.session_state.drive_links = None
-                    st.success(f"Данные успешно загружены! Клиника: «{st.session_state.current_audit['title']}»")
-                    st.rerun()
-                except Exception as ex:
-                    st.error(f"Ошибка структуры JSON: {ex}")
+        raw_data = None
+        if uploaded_file is not None:
+            try:
+                uploaded_file.seek(0)
+                raw_data = json.load(uploaded_file)
+            except Exception as ex:
+                st.error(f"Ошибка чтения файла: {ex}")
+        elif apply_btn and json_text.strip():
+            try:
+                raw_data = json.loads(json_text)
+            except Exception as ex:
+                st.error(f"Невалидный JSON: {ex}")
+
+        if raw_data is not None:
+            try:
+                st.session_state.current_audit = parse_incoming_audit_json(raw_data)
+                st.session_state.drive_links = None
+                st.success(f"Организация «{st.session_state.current_audit['title']}» успешно оцифрована! Балл карточки: {st.session_state.current_audit['score']}/100")
+                st.rerun()
+            except Exception as ex:
+                st.error(f"Ошибка при обработке JSON: {ex}")
 
     # 3. Вкладка: Поиск по названию / ИНН
     with tab_dadata:
-        query_company = st.text_input("Введите название компании или ИНН:", placeholder="Например: Дентал Арт")
+        query_company = st.text_input("Введите название компании или ИНН:", placeholder="Например: Спейсдент")
         dadata_token = os.getenv("DADATA_API_KEY", "")
 
         if query_company.strip():
             if not dadata_token:
-                st.warning("Ключ DADATA_API_KEY не обнаружен в переменных окружения.")
+                st.caption("Поиск по базе компаний доступен при установленной переменной DADATA_API_KEY.")
             else:
-                found = fetch_dadata_parties(query_company, dadata_token)
-                if found:
-                    opt_map = {}
-                    for item in found:
-                        nm = item.get("data", {}).get("name", {}).get("short_with_opf") or item.get("value", "")
-                        ad = item.get("data", {}).get("address", {}).get("value", "")
-                        opt_map[f"{nm} — {ad}"] = (nm, ad)
+                try:
+                    url_d = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/party"
+                    headers = {"Authorization": f"Token {dadata_token.strip()}", "Content-Type": "application/json"}
+                    r = requests.post(url_d, headers=headers, json={"query": query_company.strip(), "count": 5}, timeout=4)
+                    found = r.json().get("suggestions", []) if r.status_code == 200 else []
+                    if found:
+                        opt_map = {}
+                        for item in found:
+                            nm = item.get("data", {}).get("name", {}).get("short_with_opf") or item.get("value", "")
+                            ad = item.get("data", {}).get("address", {}).get("value", "")
+                            opt_map[f"{nm} — {ad}"] = (nm, ad)
 
-                    choice = st.selectbox("Выберите организацию из списка:", options=list(opt_map.keys()))
-                    if st.button("Использовать эту организацию", use_container_width=True):
-                        c_name, c_addr = opt_map[choice]
-                        search_url = f"https://yandex.ru/maps/?text={urllib.parse.quote_plus(c_name + ' ' + c_addr)}"
-                        st.session_state.current_audit = parse_incoming_audit_json({
-                            "title": c_name,
-                            "url": search_url,
-                            "rating": 4.8,
-                            "score": 67.0
-                        })
-                        st.session_state.drive_links = None
-                        st.rerun()
-                else:
-                    st.caption("Организаций не найдено.")
+                        choice = st.selectbox("Выберите организацию из базы:", options=list(opt_map.keys()))
+                        if st.button("Использовать эту компанию", use_container_width=True):
+                            c_name, c_addr = opt_map[choice]
+                            search_url = f"https://yandex.ru/maps/?text={urllib.parse.quote_plus(c_name + ' ' + c_addr)}"
+                            st.session_state.current_audit = parse_incoming_audit_json({
+                                "title": c_name,
+                                "url": search_url,
+                                "rating": 5.0
+                            })
+                            st.session_state.drive_links = None
+                            st.rerun()
+                except Exception:
+                    st.caption("Поиск временно недоступен.")
 
-    # Если аудит не начат — показываем подсказку
+    # Если аудит еще не запущен
     if not st.session_state.current_audit:
         st.divider()
-        st.info("👆 Укажите ссылку на Яндекс Карты или вставьте готовый JSON для старта расчета.")
+        st.info("👆 Загрузите JSON файл клиники или укажите ссылку на Яндекс Карты для старта расчета.")
         return
 
-    # РАБОЧАЯ ЗОНА АУДИТА
+    # РАБОЧАЯ ЗОНА С РЕЗУЛЬТАТАМИ
     audit = st.session_state.current_audit
     mapping = calculate_report_metrics(audit)
     st.divider()
@@ -970,7 +1025,7 @@ def run_streamlit_app() -> None:
         if audit.get("canonical_url"):
             st.markdown(f"🔗 [Открыть в Яндекс Картах]({audit['canonical_url']})")
 
-        st.markdown("**Ключевые барьеры карточки (Стр. 3 отчета):**")
+        st.markdown("**Выявленные ключевые барьеры карточки (Стр. 3 отчета):**")
         for idx, f in enumerate(audit.get("top_failures", []), 1):
             st.markdown(f"**{idx}. {f['title']}**")
             st.caption(f["desc"])
@@ -1040,7 +1095,7 @@ def run_streamlit_app() -> None:
     with col_r:
         st.subheader("Расчетные показатели потерь")
         m1, m2 = st.columns(2)
-        m1.metric("Оценка карточки", f"{mapping['[[SCORE]]']} / 100")
+        m1.metric("Оценка профиля", f"{mapping['[[SCORE]]']} / 100")
         m2.metric("Потери пациентов", f"~{mapping['[[LOST_LEADS]]']} чел/мес")
 
         m3, m4 = st.columns(2)
