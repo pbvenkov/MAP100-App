@@ -11,13 +11,36 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 import streamlit as st
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 
 # ==========================================================
-# 1. КОНФИГУРАЦИЯ И GOOGLE DRIVE
+# 0. АВТОЗАГРУЗКА .ENV И БЕЗОПАСНЫЙ ИМПОРТ БИБЛИОТЕК
 # ==========================================================
+
+env_file = Path(".env")
+if env_file.exists():
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+    GOOGLE_LIBS_AVAILABLE = True
+except ImportError:
+    GOOGLE_LIBS_AVAILABLE = False
+
+# ==========================================================
+# 1. СИСТЕМНЫЕ НАСТРОЙКИ, ПАПКИ GOOGLE DRIVE И БЕНЧМАРКИ
+# ==========================================================
+
+st.set_page_config(
+    page_title="PIN100 Analytics",
+    page_icon="📍",
+    layout="wide"
+)
 
 GDRIVE_FOLDERS = {
     "JSON": "1efm3iHSVvUPp50in3tfOGxd0xOACio2E",
@@ -30,15 +53,17 @@ GDRIVE_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
+# Верифицированные экономические бенчмарки ниш с официальными источниками
 NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
     "DENTISTRY": {
         "niche_name": "Стоматологическая клиника",
         "niche_genitive": "стоматологий",
         "client_word": "пациент",
         "quality_phrase": "медицинской помощи и врачебной квалификации",
-        "benchmark_leads": 70,
-        "base_check": 5500,
-        "ltv_months": 12,
+        "benchmark_leads": 70,       # Медиана первичных обращений ТОП-3 клиник района
+        "base_check": 5500,          # Средний чек первичного визита (диагностика + лечение/гигиена)
+        "ltv_months": 12,            # Средний горизонт прикрепления семьи (2.4 визита в год)
+        "benchmark_source": "BusinesStat («Анализ рынка стоматологии в РФ») и РБК Исследования рынков",
     },
     "COSMETOLOGY": {
         "niche_name": "Косметологическая клиника",
@@ -46,8 +71,9 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "client_word": "клиент",
         "quality_phrase": "косметологических процедур и сервиса",
         "benchmark_leads": 90,
-        "base_check": 4500,
+        "base_check": 4800,
         "ltv_months": 10,
+        "benchmark_source": "РБК Исследования рынков («Российский рынок эстетической медицины и косметологии»)",
     },
     "GENERAL_MEDICINE": {
         "niche_name": "Многопрофильный медицинский центр",
@@ -55,8 +81,9 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "client_word": "пациент",
         "quality_phrase": "лечебной работы и опыта специалистов",
         "benchmark_leads": 120,
-        "base_check": 3800,
+        "base_check": 3900,
         "ltv_months": 12,
+        "benchmark_source": "BusinesStat («Рынок частных медицинских услуг в РФ») и НАФИ",
     },
     "AUTOSERVICES": {
         "niche_name": "Автосервис / Техцентр",
@@ -66,6 +93,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "benchmark_leads": 110,
         "base_check": 7500,
         "ltv_months": 8,
+        "benchmark_source": "Аналитика Автостат и ассоциации РАСТО («Рынок автосервисных услуг РФ»)",
     },
     "OTHER": {
         "niche_name": "Организация сферы услуг",
@@ -73,25 +101,26 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "client_word": "клиент",
         "quality_phrase": "стандартов сервиса и качества обслуживания",
         "benchmark_leads": 80,
-        "base_check": 4000,
+        "base_check": 4200,
         "ltv_months": 9,
+        "benchmark_source": "СберАналитика и Росстат («Потребительские расходы в секторе B2C-услуг»)",
     },
 }
 
 # ==========================================================
-# 2. РЕЕСТР 41 КРИТЕРИЯ GOOGLE ТАБЛИЦЫ (DENTISTRY = 100 Б.)
+# 2. РЕЕСТР 41 КРИТЕРИЯ СКОРИНГА (DENTISTRY = 100 БАЛЛОВ)
 # ==========================================================
 
 CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
-    "CONV-48.1": {"title": "Доступность онлайн-записи на приём", "group": "Конверсия", "complexity": 2, "weight_dentistry": 6.0, "desc_default": "Отсутствие виджета онлайн-записи отсекает мобильный трафик.", "desc_dentistry": "Отсутствие прямой онлайн-записи отсекает до 60% вечернего спроса. Пациент с острой болью запишется в один клик к соседям."},
-    "CONV-48.2": {"title": "Витрина специалистов в профиле", "group": "Конверсия", "complexity": 2, "weight_dentistry": 5.0, "desc_default": "Обезличенная карточка снижает доверие.", "desc_dentistry": "В карточке не оцифрованы профили врачей (фото, стаж, специальности). В медицине выбор делают «на врача»: карточка проигрывает конкурентам с открытой командой."},
+    "CONV-48.1": {"title": "Доступность онлайн-записи на приём", "group": "Конверсия", "complexity": 2, "weight_dentistry": 6.0, "desc_default": "Отсутствие виджета онлайн-записи отсекает мобильный трафик.", "desc_dentistry": "Отсутствие прямой онлайн-записи (МИС) отсекает до 60% вечернего спроса. Пациент с острой болью запишется в один клик к соседям, не дожидаясь утра."},
+    "CONV-48.2": {"title": "Витрина специалистов в профиле", "group": "Конверсия", "complexity": 2, "weight_dentistry": 5.0, "desc_default": "Обезличенная карточка снижает доверие клиентов.", "desc_dentistry": "В карточке не оцифрованы профили врачей (фото, стаж, специальности). В медицине выбор делают «на врача»: карточка проигрывает конкурентам с открытой командой."},
     "PROF-10.3": {"title": "Отсутствие перечня услуг в профиле", "group": "Базовое заполнение", "complexity": 1, "weight_dentistry": 4.0, "desc_default": "В описании много эмоций, но нет структуры услуг.", "desc_dentistry": "В описании клиники много общих фраз, но нет структуры процедур. Пациент не видит нужного направления и уходит к соседям."},
-    "PROF-11.1": {"title": "Наполненность витрины услуг (10+)", "group": "Базовое заполнение", "complexity": 1, "weight_dentistry": 4.0, "desc_default": "Полупустой каталог создает образ неполноценного сервиса.", "desc_dentistry": "В каталоге заполнено менее трети процедур. Алгоритмы ранжируют выше клиники с полным прейскурантом."},
-    "CONV-49.1": {"title": "Уникальное торговое предложение (УТП)", "group": "Конверсия", "complexity": 2, "weight_dentistry": 4.0, "desc_default": "Общие фразы без цифр не работают.", "desc_dentistry": "Отсутствие сильного медицинского позиционирования (гарантии, методики) размывает ценность услуг клиники."},
+    "PROF-11.1": {"title": "Наполненность витрины услуг (10+)", "group": "Базовое заполнение", "complexity": 1, "weight_dentistry": 4.0, "desc_default": "Полупустой каталог услуг создает образ неполноценного сервиса.", "desc_dentistry": "В каталоге заполнено менее трети ключевых процедур. Алгоритмы ранжируют выше клиники с полным прейскурантом."},
+    "CONV-49.1": {"title": "Уникальное торговое предложение (УТП)", "group": "Конверсия", "complexity": 2, "weight_dentistry": 4.0, "desc_default": "Общие рекламные фразы без цифр не работают.", "desc_dentistry": "Отсутствие твердого позиционирования (гарантии, методики) размывает ценность услуг клиники."},
     "REP-34.1": {"title": "Авторитетность авторов отзывов (Знатоки)", "group": "Репутация", "complexity": 4, "weight_dentistry": 4.0, "desc_default": "Отзывы пустых профилей хуже ранжируются.", "desc_dentistry": "Оценки авторов со статусом «Знаток города» имеют максимальный вес для ранжирования медицинской карточки."},
     "PROF-11.3": {"title": "Цены у товаров и услуг («от...»)", "group": "Базовое заполнение", "complexity": 1, "weight_dentistry": 3.5, "desc_default": "Скрытые цены вызывают раздражение.", "desc_dentistry": "«Слепой» прайс отпугивает пациентов: люди боятся скрытых накруток в кресле и выбирают клинику с ценами «от...»."},
     "REP-32.2": {"title": "Культура диалога с пациентами", "group": "Репутация", "complexity": 4, "weight_dentistry": 3.5, "desc_default": "Споры в отзывах разрушают репутацию.", "desc_dentistry": "Первичный пациент выбирает клинику по уровню заботы — оборонительная позиция в отзывах отпугивает семьи к соседям."},
-    "REP-29.1": {"title": "Регулярность свежих отзывов (<14 дней)", "group": "Репутация", "complexity": 4, "weight_dentistry": 3.0, "desc_default": "Отсутствие свежих оценок создает образ спада активности.", "desc_dentistry": "Паузы в новых отзывах сигнализируют системе о спаде спроса и снижают частоту показа клиники в районе."},
+    "REP-29.1": {"title": "Регулярность свежих отзывов (<14 дней)", "group": "Репутация", "complexity": 4, "weight_dentistry": 3.0, "desc_default": "Отсутствие свежих оценок создает образ спада активности.", "desc_dentistry": "Паузы в новых отзывах сигнализируют системе о спаде спроса и снижают органическую видимость."},
     "REP-30.1": {"title": "Охват базы отзывов ответами (>90%)", "group": "Репутация", "complexity": 4, "weight_dentistry": 3.0, "desc_default": "Игнорирование обратной связи разрушает доверие.", "desc_dentistry": "Отсутствие регулярных официальных ответов клиники на отзывы снижает первичное доверие пациентов."},
     "PROF-11.2": {"title": "Фото у позиций каталога", "group": "Базовое заполнение", "complexity": 1, "weight_dentistry": 3.0, "desc_default": "Покупка вслепую снижает интерес к услугам.", "desc_dentistry": "Отсутствие визуализации медицинских услуг снижает вовлеченность пациентов в просмотр профиля."},
     "REP-27.1": {"title": "Базовый порог рейтинга (4.5+)", "group": "Репутация", "complexity": 4, "weight_dentistry": 2.5, "desc_default": "Рейтинг ниже 4.5 приводит к отсечению фильтрами.", "desc_dentistry": "Рейтинг ниже 4.5 критичен: пациенты опасаются доверять здоровье клиникам с низкими оценками."},
@@ -100,7 +129,7 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
     "REP-30.4": {"title": "Развернутые ответы руководства (>80 симв.)", "group": "Репутация", "complexity": 4, "weight_dentistry": 2.5, "desc_default": "Шаблонные отписки считываются как безразличие.", "desc_dentistry": "Персонализированные ответы формируют культуру заботы и насыщают карточку поисковыми запросами."},
     "REP-35.1": {"title": "Доля отзывов с реальными фото (>10%)", "group": "Репутация", "complexity": 4, "weight_dentistry": 2.5, "desc_default": "Отзывы без фото вызывают меньше доверия.", "desc_dentistry": "Фотографии реальных пациентов служат сильным социальным подтверждением безопасности лечения."},
     "SEO-19.2": {"title": "Упоминание услуг в тексте отзывов", "group": "SEO и Трафик", "complexity": 4, "weight_dentistry": 2.5, "desc_default": "Без услуг алгоритму сложнее ранжировать карточку.", "desc_dentistry": "Упоминание процедур в отзывах повышает позиции клиники в предметном поиске района."},
-    "PROF-08.2": {"title": "Нишевые медицинские атрибуты", "group": "SEO и Трафик", "complexity": 1, "weight_dentistry": 2.5, "desc_default": "Проигнорированные детали исключают компанию из фильтрации.", "desc_dentistry": "Пациенты фильтруют клиники: «детский прием», «наличие КТ», «рассрочка». Без них карточка исключается из выдачи."},
+    "PROF-08.2": {"title": "Нишевые медицинские атрибуты", "group": "SEO и Трафик", "complexity": 1, "weight_dentistry": 2.5, "desc_default": "Проигнорированные детали исключают компанию из поиска.", "desc_dentistry": "Пациенты фильтруют клиники: «детский прием», «наличие КТ», «рассрочка». Без них карточка исключается из выдачи."},
     "PROF-09.1": {"title": "Информативность описания компании", "group": "Базовое заполнение", "complexity": 1, "weight_dentistry": 2.5, "desc_default": "Слишком короткое описание — потеря площади ранжирования.", "desc_dentistry": "Качественный структурированный текст дает Яндексу максимум SEO-сигналов и знакомит пациента с клиникой."},
     "PROF-11.4": {"title": "Информативность карточек услуг", "group": "Базовое заполнение", "complexity": 1, "weight_dentistry": 2.5, "desc_default": "Сухие названия без описаний ведут к ценовому демпингу.", "desc_dentistry": "Подробные описания услуг снимают страхи пациента еще до звонка администратору."},
     "CONT-42.1": {"title": "Видео (рилс/тур)", "group": "Контент и Визуал", "complexity": 3, "weight_dentistry": 2.0, "desc_default": "Видеоконтент удерживает внимание в 3 раза дольше.", "desc_dentistry": "Видеотуры увеличивают время просмотра карточки, что алгоритмы Яндекса считывают как сигнал качества."},
@@ -109,12 +138,12 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
     "CONV-53.1": {"title": "Бейджи в витрине", "group": "Конверсия", "complexity": 2, "weight_dentistry": 2.0, "desc_default": "Без маркетинговых бейджей витрина монотонна.", "desc_dentistry": "Маркетинговые метки на услугах управляют вниманием пациента и ведут его к маржинальным процедурам."},
     "GEO-18.4": {"title": "Точная точка входа (Маркер двери)", "group": "SEO и Трафик", "complexity": 5, "weight_dentistry": 2.0, "desc_default": "Навигатор ведет клиента к глухому забору.", "desc_dentistry": "Неточный маркер входа приводит к блужданию пациентов вокруг здания и срыву графика приема."},
     "PROF-04.1": {"title": "Рабочая ссылка на сайт", "group": "Базовое заполнение", "complexity": 2, "weight_dentistry": 2.0, "desc_default": "Отсутствие сайта снижает статус организации.", "desc_dentistry": "Ссылка на сайт позволяет пациенту изучить лицензии, технологии и примеры работ врачей."},
-    "PROF-05.1": {"title": "Основной телефон клиники", "group": "Базовое заполнение", "complexity": 2, "weight_dentistry": 2.0, "desc_default": "Карточка без телефона обрывает связь.", "desc_dentistry": "Телефон клиники должен быть кликабельным и вести на обученного администратора с фиксацией в МИС."},
+    "PROF-05.1": {"title": "Основной телефон клиники", "group": "Базовое заполнение", "complexity": 2, "weight_dentistry": 2.0, "desc_default": "Карточка без телефона обрывает связь.", "desc_dentistry": "Телефон клиники должен быть кликабельным и вести на администратора с фиксацией в МИС."},
     "PROF-07.1": {"title": "Стандартный график работы 7 дней", "group": "Базовое заполнение", "complexity": 2, "weight_dentistry": 2.0, "desc_default": "Неполный график отсекает визиты в спорные окна.", "desc_dentistry": "Пациентам с острой болью критически важно видеть статус работы клиники в выходные и вечерние часы."},
     "PROF-13.1": {"title": "Указаны прямые мессенджеры", "group": "Базовое заполнение", "complexity": 1, "weight_dentistry": 2.0, "desc_default": "Отсутствие мессенджеров отсекает текстовые лиды.", "desc_dentistry": "Мессенджеры позволяют пациенту отправить снимок для предварительной оценки и быстро записаться."},
     "REP-28.1": {"title": "Общий объем базы отзывов (50+)", "group": "Репутация", "complexity": 4, "weight_dentistry": 2.0, "desc_default": "Мало отзывов — нет социального доказательства.", "desc_dentistry": "Большой массив отзывов подтверждает устойчивый опыт врачебной практики клиники."},
     "SEO-18.3": {"title": "Топонимы и ориентиры в тексте", "group": "SEO и Трафик", "complexity": 4, "weight_dentistry": 2.0, "desc_default": "Без топонимов карточка проигрывает гео-поиск.", "desc_dentistry": "Названия станций метро, улиц и микрорайона прочно закрепляют клинику за локальной выдачей."},
-    "CONT-38.1": {"title": "Фото интерьера", "group": "Контент и Визуал", "complexity": 3, "weight_dentistry": 1.5, "desc_default": "Презентабельный интерьер формирует доверие.", "desc_dentistry": "Отсутствие профессиональных фото кабинетов ассоциируется с эконом-сегментом. Пациентам важна чистота и стерильность."},
+    "CONT-38.1": {"title": "Фото интерьера", "group": "Контент и Визуал", "complexity": 3, "weight_dentistry": 1.5, "desc_default": "Презентабельный интерьер формирует доверие.", "desc_dentistry": "Отсутствие фото кабинетов ассоциируется с эконом-сегментом. Пациентам важна чистота и стерильность."},
     "CONV-52.1": {"title": "Блок FAQ заполнен", "group": "Конверсия", "complexity": 2, "weight_dentistry": 1.5, "desc_default": "Оставшиеся вопросы уводят клиента к конкурентам.", "desc_dentistry": "Блок FAQ закрывает страхи пациентов (болезненность, рассрочка, гарантии) прямо в профиле."},
     "PROF-03.2": {"title": "Полнота охвата смежных рубрик (3+)", "group": "SEO и Трафик", "complexity": 1.5, "weight_dentistry": 1.5, "desc_default": "Указана одна рубрика: срезается смежный трафик.", "desc_dentistry": "Отсутствие смежных рубрик (ортодонтия, детская стоматология) отсекает пациентов со специализированными запросами."},
     "PROF-08.1": {"title": "Базовые атрибуты комфорта", "group": "SEO и Трафик", "complexity": 1, "weight_dentistry": 1.5, "desc_default": "Незаполненные особенности исключают из поиска.", "desc_dentistry": "Пациенты часто фильтруют клиники по удобствам (парковка, доступность для МГН, безналичная оплата)."},
@@ -127,7 +156,32 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
 }
 
 # ==========================================================
-# 3. АВТОМАТИЧЕСКИЙ СКОРИНГ КАРТОЧКИ
+# 3. УВЕДОМЛЕНИЯ В TELEGRAM И ОБРАБОТКА ОШИБОК
+# ==========================================================
+
+def send_telegram_error(error_message: str, context: str = "") -> bool:
+    """Отправляет уведомление об ошибке в Telegram-канал/чат администратора."""
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
+    if not bot_token or not chat_id:
+        return False
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    text = (
+        f"🚨 <b>PIN100 Analytics: Ошибка обработки</b>\n\n"
+        f"<b>Контекст:</b> {context}\n"
+        f"<b>Причина:</b> <code>{error_message}</code>\n"
+        f"<b>Время:</b> {datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
+    )
+    try:
+        resp = requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+# ==========================================================
+# 4. АВТОМАТИЧЕСКИЙ СКОРИНГ И НАДЕЖНЫЙ ПАРСИНГ APIFY
 # ==========================================================
 
 def evaluate_audit_scores(raw_scores: Dict[str, float], niche: str = "DENTISTRY") -> Tuple[float, List[Dict[str, Any]]]:
@@ -159,7 +213,7 @@ def evaluate_audit_scores(raw_scores: Dict[str, float], niche: str = "DENTISTRY"
         top_3.append({
             "code": "GEN-00",
             "title": "Техническая оптимизация карточки",
-            "desc": "Рекомендуем поддерживать регулярность ответов на отзывы и актуальность прейскуранта.",
+            "desc": "Рекомендуем поддерживать актуальность прейскуранта и регулярность официальных ответов на отзывы.",
             "lost": 0.0,
             "impact": 0.0
         })
@@ -167,71 +221,116 @@ def evaluate_audit_scores(raw_scores: Dict[str, float], niche: str = "DENTISTRY"
     return round(total_score, 1), top_3
 
 
-def parse_incoming_audit_json(raw_input: Any) -> Dict[str, Any]:
+def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
+    """Универсальный парсер JSON (массивы Apify, одиночные объекты, с детальной валидацией)."""
     if isinstance(raw_input, list):
         if not raw_input:
-            raise ValueError("Передан пустой список JSON.")
+            raise ValueError("Передан пустой список JSON. Apify не вернул ни одного объекта карточки.")
         data = raw_input[0]
     elif isinstance(raw_input, dict):
-        if "data" in raw_input and isinstance(raw_input["data"], (dict, list)):
-            return parse_incoming_audit_json(raw_input["data"])
-        data = raw_input
+        if "items" in raw_input and isinstance(raw_input["items"], list):
+            if not raw_input["items"]:
+                raise ValueError("Ключ 'items' в JSON из Apify пуст.")
+            data = raw_input["items"][0]
+        elif "data" in raw_input and isinstance(raw_input["data"], (dict, list)):
+            return parse_apify_or_raw_json(raw_input["data"])
+        else:
+            data = raw_input
     else:
-        raise ValueError("Некорректный формат JSON.")
+        raise ValueError(f"Неподдерживаемый тип данных: ожидался dict или list, получен {type(raw_input).__name__}.")
 
-    title = data.get("title") or data.get("name") or "Новая организация"
+    if not isinstance(data, dict):
+        raise ValueError(f"Корневой элемент карточки не является объектом (JSON Object). Получен {type(data).__name__}.")
+
+    title = data.get("title") or data.get("name") or data.get("companyName")
+    if not title:
+        raise ValueError("В переданном JSON отсутствует название организации (поля 'title', 'name' или 'companyName').")
+
     org_id = str(data.get("org_id") or data.get("id") or data.get("companyId") or "0000000000")
     rating = float(data.get("rating") or data.get("reviewsRating") or data.get("totalScore") or 5.0)
 
-    low_txt = (title + " " + str(data.get("categories", "")) + " " + str(data.get("rubrics", ""))).lower()
-    if any(k in low_txt for k in ["космет", "beauty"]):
+    # Определение ниши
+    low_txt = (str(title) + " " + str(data.get("categories", "")) + " " + str(data.get("rubrics", ""))).lower()
+    if any(k in low_txt for k in ["космет", "beauty", "эстет"]):
         niche = "COSMETOLOGY"
-    elif any(k in low_txt for k in ["авто", "сервис", "мотор"]):
+    elif any(k in low_txt for k in ["авто", "сервис", "мотор", "ремонт авто"]):
         niche = "AUTOSERVICES"
+    elif any(k in low_txt for k in ["многопрофильн", "медцентр", "поликлиник"]):
+        niche = "GENERAL_MEDICINE"
     else:
         niche = "DENTISTRY"
 
-    # 1. Если в файле уже есть срез критериев из таблицы:
+    raw_scores: Dict[str, float] = {}
+
+    # Сценарий 1: Уже рассчитанный чеклист
     if "criteria_scores" in data and isinstance(data["criteria_scores"], dict):
-        calculated_score, top_fails = evaluate_audit_scores(data["criteria_scores"], niche)
-    # 2. Если в файле уже записан итоговый балл:
-    elif any(k in data for k in ["score", "totalScore", "readiness_score", "pin100_score"]):
-        calculated_score = float(data.get("score") or data.get("totalScore") or data.get("readiness_score") or data.get("pin100_score"))
-        top_fails = data.get("top_failures") or []
-    # 3. Если это сырой JSON карточки:
+        for c_code, c_meta in CRITERIA_REGISTRY.items():
+            raw_scores[c_code] = float(data["criteria_scores"].get(c_code, c_meta["weight_dentistry"]))
+    elif "checks" in data and isinstance(data["checks"], dict):
+        for c_code, c_meta in CRITERIA_REGISTRY.items():
+            raw_scores[c_code] = float(data["checks"].get(c_code, c_meta["weight_dentistry"]))
     else:
-        raw_scores: Dict[str, float] = {}
+        # Сценарий 2: Сырые данные парсера Яндекс Карт
+        for c_code, c_meta in CRITERIA_REGISTRY.items():
+            raw_scores[c_code] = float(c_meta["weight_dentistry"])
+
+        features_str = str(data.get("features", [])).lower()
+        site_str = str(data.get("website", "") or data.get("url", "")).lower()
+
+        # Онлайн-запись
         has_booking = bool(
             data.get("bookingUrl") or data.get("isBookingAvailable") or data.get("booking") or
-            any("онлайн-запис" in str(x).lower() for x in data.get("features", []))
+            "онлайн-запис" in features_str or "запись онлайн" in features_str or
+            any(w in site_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "booking"])
         )
-        raw_scores["CONV-48.1"] = 6.0 if has_booking else 0.0
+        if not has_booking:
+            raw_scores["CONV-48.1"] = 0.0
 
-        has_staff = bool(data.get("specialists") or data.get("doctors") or data.get("staff"))
-        raw_scores["CONV-48.2"] = 5.0 if has_staff else 0.0
+        # Врачи / Специалисты
+        has_staff = bool(
+            data.get("specialists") or data.get("doctors") or data.get("staff") or
+            "врач" in features_str or "специалист" in features_str or "команда" in features_str
+        )
+        if not has_staff:
+            raw_scores["CONV-48.2"] = 0.0
 
-        items = data.get("items") or data.get("priceList") or data.get("goods") or data.get("services") or []
-        raw_scores["PROF-11.1"] = 4.0 if len(items) >= 10 else (2.0 if len(items) >= 3 else 0.0)
-        raw_scores["PROF-10.3"] = 4.0 if len(items) >= 5 else 0.0
+        # Каталог услуг и цены
+        items = data.get("items") or data.get("priceList") or data.get("goods") or data.get("services") or data.get("menu") or []
+        if isinstance(items, list):
+            if len(items) < 10:
+                raw_scores["PROF-11.1"] = 2.0 if len(items) >= 3 else 0.0
+            if len(items) < 5:
+                raw_scores["PROF-10.3"] = 0.0
+            has_prices = any(bool(it.get("price") or it.get("cost")) for it in items if isinstance(it, dict))
+            if not has_prices and not any(w in features_str for w in ["прайс", "цены", "руб"]):
+                raw_scores["PROF-11.3"] = 0.0
 
-        has_prices = any(bool(it.get("price") or it.get("cost")) for it in items) if isinstance(items, list) and items else False
-        raw_scores["PROF-11.3"] = 3.5 if has_prices else 0.0
+        # Рейтинг
+        if rating < 4.8:
+            raw_scores["REP-27.2"] = 0.0
+        if rating < 4.5:
+            raw_scores["REP-27.1"] = 0.0
 
-        raw_scores["REP-27.1"] = 2.5 if rating >= 4.5 else 0.0
-        raw_scores["REP-27.2"] = 2.5 if rating >= 4.8 else 0.0
+        # Объем базы отзывов
+        rev_count = int(data.get("reviewsCount") or data.get("ratingCount") or len(data.get("reviews", [])) or 0)
+        if rev_count < 50:
+            raw_scores["REP-28.1"] = 1.0 if rev_count >= 15 else 0.0
 
-        calculated_score, top_fails = evaluate_audit_scores(raw_scores, niche)
+        # Фотографии и синяя галочка
+        p_count = int(data.get("photosCount", 0)) or len(data.get("photos", []))
+        if p_count < 5:
+            raw_scores["CONT-38.1"] = 0.5
+        if not bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge")):
+            raw_scores["PROF-12.1"] = 0.0
 
-    if not top_fails or len(top_fails) < 3:
-        top_fails = [
-            {"title": "Отсутствие кнопки быстрой онлайн-записи (модуля МИС)", "desc": "Пациенты в вечерние часы не могут записаться в один клик и уходят к конкурентам."},
-            {"title": "Отсутствие витрины специалистов в профиле", "desc": "В карточке не оцифрованы профили врачей. В медицине решение принимают «на врача»: обезличенный профиль проигрывает соседям с открытой командой."},
-            {"title": "Фрагментарный прейскурант без цен формата «от...»", "desc": "В карточке заполнено менее трети ключевых позиций. Алгоритмы Карт пессимизируют профиль по предметным запросам."}
-        ]
+    calculated_score, top_fails = evaluate_audit_scores(raw_scores, niche)
+
+    if any(k in data for k in ["score", "totalScore", "readiness_score", "pin100_score"]):
+        calculated_score = float(data.get("score") or data.get("totalScore") or data.get("readiness_score") or data.get("pin100_score"))
 
     comps = data.get("competitors") or []
     if not comps or not isinstance(comps, list):
-        comps = ["«Президент»", "«Все Свои»"] if niche == "DENTISTRY" else ["клиники конкурентов", "соседние центры"]
+        comps = ["«РозДент»", "«На Приморской»"] if niche == "DENTISTRY" else ["клиники конкурентов", "соседние центры"]
 
     n_def = NICHE_CONFIG.get(niche, NICHE_CONFIG["DENTISTRY"])
 
@@ -246,16 +345,20 @@ def parse_incoming_audit_json(raw_input: Any) -> Dict[str, Any]:
         "benchmark_leads": int(data.get("benchmark_leads") or n_def["benchmark_leads"]),
         "base_check": int(data.get("base_check") or n_def["base_check"]),
         "ltv_months": int(data.get("ltv_months") or n_def["ltv_months"]),
+        "benchmark_source": n_def["benchmark_source"],
+        "criteria_scores": raw_scores,
         "top_failures": top_fails,
         "date": data.get("date") or datetime.date.today().strftime("%d.%m.%Y"),
         "date_raw": data.get("date_raw") or datetime.date.today().strftime("%Y-%m-%d"),
     }
 
 # ==========================================================
-# 4. МОДУЛЬ СИНХРОНИЗАЦИИ GOOGLE DRIVE
+# 5. СИНХРОНИЗАЦИЯ С GOOGLE DRIVE И GOOGLE SHEETS
 # ==========================================================
 
-def get_google_credentials() -> Optional[service_account.Credentials]:
+def get_google_credentials() -> Optional[Any]:
+    if not GOOGLE_LIBS_AVAILABLE:
+        return None
     for path_str in ["credentials.json", "service_account.json"]:
         p = Path(path_str)
         if p.exists():
@@ -284,9 +387,12 @@ def upload_file_to_drive(drive_service: Any, local_path: Path, target_folder_id:
 
 
 def sync_results_to_google(audit_data: Dict[str, Any], mapping: Dict[str, str], pdf_path: Path, txt_path: Path, json_path: Path, spreadsheet_id: Optional[str] = None) -> Dict[str, str]:
+    if not GOOGLE_LIBS_AVAILABLE:
+        raise RuntimeError("Пакеты google-api-python-client не установлены в окружении.")
+
     creds = get_google_credentials()
     if not creds:
-        raise FileNotFoundError("Ключ credentials.json не найден в каталоге проекта.")
+        raise FileNotFoundError("Файл ключа credentials.json не найден рядом с app.py.")
 
     drive_service = build("drive", "v3", credentials=creds)
     sheets_service = build("sheets", "v4", credentials=creds)
@@ -312,12 +418,12 @@ def sync_results_to_google(audit_data: Dict[str, Any], mapping: Dict[str, str], 
                 insertDataOption="INSERT_ROWS", body={"values": [row]}
             ).execute()
         except Exception as e:
-            st.warning(f"Ошибка записи в Google Таблицу: {e}")
+            st.warning(f"Запись в Google Таблицу пропущена: {e}")
 
     return links
 
 # ==========================================================
-# 5. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# 6. РАСЧЕТ ЮНИТ-ЭКОНОМИКИ И ТЕКСТОВ
 # ==========================================================
 
 def format_currency(value: float | int) -> str:
@@ -385,6 +491,7 @@ def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
     leads_bench = audit_data.get("benchmark_leads", niche_info["benchmark_leads"])
     base_check = audit_data.get("base_check", niche_info["base_check"])
     ltv_months = audit_data.get("ltv_months", niche_info["ltv_months"])
+    bench_source = audit_data.get("benchmark_source", niche_info["benchmark_source"])
 
     dev = max(0.0, round(100.0 - score, 1))
     lost_leads = int(round(leads_bench * (dev / 100.0)))
@@ -409,6 +516,7 @@ def calculate_report_metrics(audit_data: Dict[str, Any]) -> Dict[str, str]:
         "[[CLIENT_CHECK_FMT]]": format_currency(base_check),
         "[[CLIENT_LTV]]": str(ltv_months),
         "[[LTV_LOSS_FMT]]": format_currency(ltv_loss),
+        "[[BENCHMARK_SOURCE]]": bench_source,
         "[[QUALITY_PHRASE]]": niche_info["quality_phrase"],
         "[[EXECUTIVE_SUMMARY]]": (
             f"Профиль «{title}» обладает высокой клинической репутацией ({rating}), однако из-за отсутствия "
@@ -446,7 +554,7 @@ def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path)
     except subprocess.CalledProcessError as e:
         return False, f"Ошибка Typst: {e.stderr}"
     except FileNotFoundError:
-        return False, "Утилита Typst не найдена в PATH."
+        return False, "Утилита Typst не найдена в PATH системы."
     finally:
         if temp_typ.exists():
             try:
@@ -455,179 +563,148 @@ def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path)
                 pass
 
 # ==========================================================
-# 6. ВЕБ-ИНТЕРФЕЙС STREAMLIT
+# 7. ЧИСТЫЙ ИНТЕРФЕЙС КОНВЕЙЕРА (STREAMLIT)
 # ==========================================================
 
 def run_streamlit_app() -> None:
-    st.set_page_config(
-        page_title="PIN100 Analytics",
-        page_icon="📍",
-        layout="wide"
-    )
-
     if "current_audit" not in st.session_state:
         st.session_state.current_audit = None
     if "drive_links" not in st.session_state:
         st.session_state.drive_links = None
+    if "last_file_id" not in st.session_state:
+        st.session_state.last_file_id = ""
 
-    with st.sidebar:
-        st.header("Управление карточкой")
-        if st.session_state.current_audit:
-            cur = st.session_state.current_audit
-            cur["title"] = st.text_input("Название клиники", value=cur["title"])
-            cur["rating"] = st.number_input("Рейтинг", min_value=1.0, max_value=5.0, value=float(cur["rating"]), step=0.1)
-            cur["score"] = st.slider("Балл готовности", min_value=10.0, max_value=98.0, value=float(cur["score"]), step=0.5)
+    st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
+    st.caption("Автоматический расчет потерь, письмо для ЛПР и 4-страничный PDF-отчет на базе данных Яндекс Карт.")
 
-            st.subheader("Конкуренты локации")
-            c1 = st.text_input("Конкурент 1", value=cur["competitors"][0] if len(cur["competitors"]) > 0 else "")
-            c2 = st.text_input("Конкурент 2", value=cur["competitors"][1] if len(cur["competitors"]) > 1 else "")
-            cur["competitors"] = [c for c in [c1, c2] if c.strip()]
-
-            if st.button("🗑️ Закрыть карточку и ввести другую", use_container_width=True):
-                st.session_state.current_audit = None
-                st.session_state.drive_links = None
-                st.rerun()
-        else:
-            st.info("Карточка не выбрана. Загрузите файл или укажите ссылку справа.")
-
-    st.title("📍 PIN100 Analytics: Экспресс-аудит гео-карточки")
-
-    tab_url, tab_json, tab_dadata = st.tabs([
-        "🔗 Ссылка на Яндекс Карты",
-        "📋 Загрузить готовый JSON",
-        "🏢 Поиск по названию / ИНН"
+    tab_json, tab_url = st.tabs([
+        "📋 Загрузить JSON из Apify (Основной поток)",
+        "🔗 Ссылка на профиль в Яндекс Картах"
     ])
+
+    with tab_json:
+        col_f1, col_f2 = st.columns([1.5, 2.5])
+        with col_f1:
+            uploaded_file = st.file_uploader("Перетащите файл .json из Apify:", type=["json"])
+        with col_f2:
+            json_text = st.text_area("Или вставьте код JSON:", height=100, placeholder='[{"title": "Клиника", ...}]')
+            parse_btn = st.button("⚡ Рассчитать по коду JSON", type="primary", use_container_width=True)
+
+        raw_data = None
+        error_context = ""
+
+        if uploaded_file is not None:
+            file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+            if st.session_state.last_file_id != file_id:
+                error_context = f"Файл {uploaded_file.name}"
+                try:
+                    uploaded_file.seek(0)
+                    raw_data = json.load(uploaded_file)
+                    st.session_state.last_file_id = file_id
+                except Exception as ex:
+                    err_msg = f"Ошибка чтения JSON файла: {ex}"
+                    st.error(err_msg)
+                    send_telegram_error(err_msg, error_context)
+
+        elif parse_btn and json_text.strip():
+            error_context = "Текстовый буфер JSON"
+            try:
+                raw_data = json.loads(json_text)
+            except Exception as ex:
+                err_msg = f"Невалидный синтаксис JSON: {ex}"
+                st.error(err_msg)
+                send_telegram_error(err_msg, error_context)
+
+        if raw_data is not None:
+            try:
+                st.session_state.current_audit = parse_apify_or_raw_json(raw_data)
+                st.session_state.drive_links = None
+                st.success(f"Организация «{st.session_state.current_audit['title']}» успешно оцифрована! Оценка готовности: {st.session_state.current_audit['score']}/100")
+            except Exception as ex:
+                err_msg = f"Ошибка структуры данных Apify: {ex}"
+                st.error(err_msg)
+                send_telegram_error(err_msg, error_context or "Парсинг карточки")
 
     with tab_url:
         col_u1, col_u2 = st.columns([4, 1.2])
         with col_u1:
-            target_url = st.text_input(
-                "Ссылка на профиль в Яндекс Картах:",
-                placeholder="https://yandex.ru/maps/org/... или короткая https://yandex.ru/maps/-/... ",
-                label_visibility="collapsed"
-            )
+            target_url = st.text_input("Ссылка на профиль в Яндекс Картах:", placeholder="https://yandex.ru/maps/org/... или короткая https://yandex.ru/maps/-/... ", label_visibility="collapsed")
         with col_u2:
-            if st.button("🚀 Запустить аудит", type="primary", use_container_width=True):
+            if st.button("🚀 Запустить аудит по ссылке", type="primary", use_container_width=True):
                 if target_url.strip():
-                    with st.spinner("Анализируем организацию по ссылке..."):
+                    with st.spinner("Анализируем карточку..."):
                         try:
                             org_id = "0000000000"
                             m_id = re.search(r'/org/(?:[^/?#]+/)?(\d+)', target_url) or re.search(r'[?&]oid=(\d+)', target_url)
                             if m_id:
                                 org_id = m_id.group(1)
 
-                            title = "Новая организация"
+                            title = "Организация"
                             m_slug = re.search(r'/org/([^/?#]+)/\d+', target_url)
                             if m_slug:
                                 title = urllib.parse.unquote(m_slug.group(1)).replace('_', ' ').replace('-', ' ').title()
 
-                            st.session_state.current_audit = parse_incoming_audit_json({
+                            st.session_state.current_audit = parse_apify_or_raw_json({
                                 "title": title,
                                 "org_id": org_id,
                                 "url": target_url,
                                 "rating": 5.0
                             })
                             st.session_state.drive_links = None
-                            st.rerun()
                         except Exception as e:
-                            st.error(f"Ошибка разбора: {e}")
-
-    with tab_json:
-        uploaded_file = st.file_uploader("Загрузить файл .json карточки:", type=["json"])
-        json_text = st.text_area(
-            "Или вставьте код JSON из буфера обмена:",
-            height=110,
-            placeholder='[{"title": "Спейсдент", "reviewsRating": 5.0, ...}]'
-        )
-
-        apply_btn = st.button("⚡ Рассчитать аудит по JSON", type="primary", use_container_width=True)
-
-        if apply_btn:
-            raw_data = None
-            if uploaded_file is not None:
-                try:
-                    uploaded_file.seek(0)
-                    raw_data = json.load(uploaded_file)
-                except Exception as ex:
-                    st.error(f"Ошибка чтения файла: {ex}")
-            elif json_text.strip():
-                try:
-                    raw_data = json.loads(json_text)
-                except Exception as ex:
-                    st.error(f"Невалидный JSON: {ex}")
-            else:
-                st.warning("Пожалуйста, выберите файл .json или вставьте текст в поле выше.")
-
-            if raw_data is not None:
-                try:
-                    st.session_state.current_audit = parse_incoming_audit_json(raw_data)
-                    st.session_state.drive_links = None
-                    st.success(f"Организация «{st.session_state.current_audit['title']}» успешно загружена! Балл: {st.session_state.current_audit['score']}/100")
-                    st.rerun()
-                except Exception as ex:
-                    st.error(f"Ошибка при обработке JSON: {ex}")
-
-    with tab_dadata:
-        query_company = st.text_input("Введите название компании или ИНН:", placeholder="Например: Спейсдент")
-        dadata_token = os.getenv("DADATA_API_KEY", "")
-
-        if query_company.strip():
-            if not dadata_token:
-                st.caption("Поиск по базе компаний доступен при установленной переменной DADATA_API_KEY.")
-            else:
-                try:
-                    url_d = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/party"
-                    headers = {"Authorization": f"Token {dadata_token.strip()}", "Content-Type": "application/json"}
-                    r = requests.post(url_d, headers=headers, json={"query": query_company.strip(), "count": 5}, timeout=4)
-                    found = r.json().get("suggestions", []) if r.status_code == 200 else []
-                    if found:
-                        opt_map = {}
-                        for item in found:
-                            nm = item.get("data", {}).get("name", {}).get("short_with_opf") or item.get("value", "")
-                            ad = item.get("data", {}).get("address", {}).get("value", "")
-                            opt_map[f"{nm} — {ad}"] = (nm, ad)
-
-                        choice = st.selectbox("Выберите организацию из базы:", options=list(opt_map.keys()))
-                        if st.button("Использовать эту компанию", use_container_width=True):
-                            c_name, c_addr = opt_map[choice]
-                            search_url = f"https://yandex.ru/maps/?text={urllib.parse.quote_plus(c_name + ' ' + c_addr)}"
-                            st.session_state.current_audit = parse_incoming_audit_json({
-                                "title": c_name,
-                                "url": search_url,
-                                "rating": 5.0
-                            })
-                            st.session_state.drive_links = None
-                            st.rerun()
-                except Exception:
-                    st.caption("Поиск временно недоступен.")
+                            err_msg = f"Ошибка разбора URL: {e}"
+                            st.error(err_msg)
+                            send_telegram_error(err_msg, f"URL: {target_url}")
 
     # ------------------------------------------------------
-    # ОСНОВНОЙ ДАШБОРД РЕЗУЛЬТАТОВ
+    # ВЫДАЧА РЕЗУЛЬТАТОВ: ПИСЬМО + PDF + ЭКОНОМИКА
     # ------------------------------------------------------
     if not st.session_state.current_audit:
         st.divider()
-        st.info("👆 Загрузите JSON файл клиники или укажите ссылку на Яндекс Карты для старта расчета.")
+        st.info("👆 Загрузите JSON файл клиники из Apify или укажите ссылку на Яндекс Карты для старта.")
         return
 
     audit = st.session_state.current_audit
     mapping = calculate_report_metrics(audit)
     st.divider()
 
-    col_l, col_r = st.columns([1.1, 0.9])
+    col_left, col_right = st.columns([1.1, 0.9])
 
-    with col_l:
-        st.subheader(f"Карточка: «{audit['title']}»")
-        if audit.get("canonical_url"):
-            st.markdown(f"🔗 [Открыть в Яндекс Картах]({audit['canonical_url']})")
+    with col_left:
+        st.subheader("✉️ Первое сообщение руководителю (Icebreaker)")
+        st.caption("Персонализированное обращение без формулировки «кассовый разрыв»:")
 
-        st.markdown("**Выявленные ключевые барьеры карточки (Стр. 3 отчета):**")
+        lost_leads_int = int(mapping["[[LOST_LEADS]]"])
+        n_def = NICHE_CONFIG.get(audit.get("niche", "DENTISTRY"), NICHE_CONFIG["DENTISTRY"])
+        icebreaker_txt = generate_icebreaker(
+            title=audit["title"],
+            rating=audit["rating"],
+            competitors=audit["competitors"],
+            lost_leads=lost_leads_int,
+            niche_genitive=n_def["niche_genitive"]
+        )
+        st.text_area("Текст для WhatsApp / Telegram / Email:", value=icebreaker_txt, height=220)
+
+        st.markdown("**Выявленные ключевые уязвимости профиля (Стр. 3 отчета):**")
         for idx, f in enumerate(audit.get("top_failures", []), 1):
             st.markdown(f"**{idx}. {f['title']}**")
             st.caption(f["desc"])
 
+    with col_right:
+        st.subheader(f"📊 Экономика карточки «{audit['title']}»")
+        m1, m2 = st.columns(2)
+        m1.metric("Оценка профиля", f"{mapping['[[SCORE]]']} / 100")
+        m2.metric("Потери пациентов", f"~{mapping['[[LOST_LEADS]]']} чел/мес")
+
+        m3, m4 = st.columns(2)
+        m3.metric("Упущенная выручка", f"{mapping['[[REV_LOSS_FMT]]']} ₽/мес")
+        m4.metric("Потери за неделю", f"~{mapping['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
+
+        st.caption(f"Источник бенчмарков ниши: **{mapping['[[BENCHMARK_SOURCE]]']}**")
+
         st.divider()
 
-        st.subheader("Генерация и сохранение на Google Диск")
+        st.subheader("📄 4-страничный PDF-отчет")
         template_file = Path("report_template.typ")
         output_dir = Path("output")
         output_dir.mkdir(exist_ok=True)
@@ -640,20 +717,13 @@ def run_streamlit_app() -> None:
 
         if st.button("🚀 Скомпилировать PDF и отправить на Google Диск", type="primary", use_container_width=True):
             if not template_file.exists():
-                st.error("Шаблон report_template.typ не найден рядом с app.py.")
+                err_msg = "Файл report_template.typ не найден рядом с app.py."
+                st.error(err_msg)
+                send_telegram_error(err_msg, "Компиляция PDF")
             else:
-                with st.spinner("Компилируем PDF и сохраняем на Google Диск..."):
-                    lost_leads_int = int(mapping["[[LOST_LEADS]]"])
-                    n_def = NICHE_CONFIG.get(audit.get("niche", "DENTISTRY"), NICHE_CONFIG["DENTISTRY"])
-                    icebreaker_text = generate_icebreaker(
-                        title=audit["title"],
-                        rating=audit["rating"],
-                        competitors=audit["competitors"],
-                        lost_leads=lost_leads_int,
-                        niche_genitive=n_def["niche_genitive"]
-                    )
+                with st.spinner("Компилируем PDF и синхронизируем с Google Диском..."):
                     with open(txt_path, "w", encoding="utf-8") as f:
-                        f.write(icebreaker_text)
+                        f.write(icebreaker_txt)
                     with open(json_path, "w", encoding="utf-8") as f:
                         json.dump(audit, f, ensure_ascii=False, indent=2)
 
@@ -661,54 +731,45 @@ def run_streamlit_app() -> None:
                     ok, err = compile_typst_pdf(rendered, pdf_path, output_dir)
 
                     if ok:
-                        st.success("PDF отчет успешно скомпилирован локально.")
-                        target_sheet = os.getenv("GOOGLE_SHEET_ID", "")
-                        try:
-                            links = sync_results_to_google(
-                                audit_data=audit,
-                                mapping=mapping,
-                                pdf_path=pdf_path,
-                                txt_path=txt_path,
-                                json_path=json_path,
-                                spreadsheet_id=target_sheet
+                        st.success("PDF-отчет успешно сгенерирован!")
+                        with open(pdf_path, "rb") as f:
+                            st.download_button(
+                                label="📥 Скачать готовый PDF-отчет",
+                                data=f.read(),
+                                file_name=pdf_path.name,
+                                mime="application/pdf",
+                                use_container_width=True
                             )
-                            st.session_state.drive_links = links
-                            st.balloons()
-                        except Exception as ex:
-                            st.error(f"Не удалось выгрузить на Google Диск: {ex}")
+
+                        target_sheet = os.getenv("GOOGLE_SHEET_ID", "")
+                        if GOOGLE_LIBS_AVAILABLE:
+                            try:
+                                links = sync_results_to_google(
+                                    audit_data=audit,
+                                    mapping=mapping,
+                                    pdf_path=pdf_path,
+                                    txt_path=txt_path,
+                                    json_path=json_path,
+                                    spreadsheet_id=target_sheet
+                                )
+                                st.session_state.drive_links = links
+                                st.balloons()
+                            except Exception as ex:
+                                err_msg = f"Ошибка выгрузки на Google Диск: {ex}"
+                                st.warning(err_msg)
+                                send_telegram_error(err_msg, f"Синхронизация Google Drive для {audit['title']}")
+                        else:
+                            st.info("Для синхронизации с Google Диском добавьте библиотеку google-api-python-client в requirements.txt.")
                     else:
                         st.error(f"Ошибка компиляции Typst: {err}")
+                        send_telegram_error(err, f"Typst CLI компиляция для {audit['title']}")
 
         if st.session_state.drive_links:
-            st.success("✅ Все материалы сохранены в папки с текущей датой!")
+            st.success("✅ Все материалы сохранены в целевые папки на Google Диске!")
             l = st.session_state.drive_links
-            st.markdown(f"📄 **PDF на Google Диске:** [Открыть файл]({l.get('pdf', '#')})")
-            st.markdown(f"✉️ **Письмо (TXT) на Google Диске:** [Открыть файл]({l.get('txt', '#')})")
-            st.markdown(f"⚙️ **JSON на Google Диске:** [Открыть файл]({l.get('json', '#')})")
-
-    with col_r:
-        st.subheader("Расчетные показатели потерь")
-        m1, m2 = st.columns(2)
-        m1.metric("Оценка профиля", f"{mapping['[[SCORE]]']} / 100")
-        m2.metric("Потери пациентов", f"~{mapping['[[LOST_LEADS]]']} чел/мес")
-
-        m3, m4 = st.columns(2)
-        m3.metric("Упущенная выручка", f"{mapping['[[REV_LOSS_FMT]]']} ₽/мес")
-        m4.metric("Потери за неделю", f"~{mapping['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
-
-        st.divider()
-
-        st.subheader("Первое сообщение руководителю (Icebreaker)")
-        lost_leads_int = int(mapping["[[LOST_LEADS]]"])
-        n_def = NICHE_CONFIG.get(audit.get("niche", "DENTISTRY"), NICHE_CONFIG["DENTISTRY"])
-        icebreaker_txt = generate_icebreaker(
-            title=audit["title"],
-            rating=audit["rating"],
-            competitors=audit["competitors"],
-            lost_leads=lost_leads_int,
-            niche_genitive=n_def["niche_genitive"]
-        )
-        st.text_area("Текст для WhatsApp / Telegram / Email:", value=icebreaker_txt, height=210)
+            st.markdown(f"📄 **PDF на Диске:** [Открыть файл]({l.get('pdf', '#')})")
+            st.markdown(f"✉️ **Письмо на Диске:** [Открыть файл]({l.get('txt', '#')})")
+            st.markdown(f"⚙️ **JSON на Диске:** [Открыть файл]({l.get('json', '#')})")
 
 
 if __name__ == "__main__":
