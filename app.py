@@ -163,7 +163,6 @@ def send_telegram_error(error_message: str, context: str = "") -> bool:
 # ==========================================================
 
 def get_declension(number: int, word_type: str = "пациент") -> str:
-    """Возвращает правильное склонение слова по числу."""
     n = abs(int(number)) % 100
     n1 = n % 10
     if word_type in ["пациент", "клиент"]:
@@ -340,7 +339,6 @@ def build_metrics(audit: Dict[str, Any]) -> Dict[str, str]:
     table_declension = get_declension(lost_leads, n_info["client_word"])
     failures = audit.get("top_failures", [])
 
-    # --- АДАПТИВНЫЙ АЛГОРИТМ ДЛЯ EXECUTIVE SUMMARY ---
     group_losses = {}
     for code, meta in CRITERIA_REGISTRY.items():
         max_w = meta["weight"]
@@ -453,11 +451,29 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger):
         mapping = build_metrics(audit)
         st.session_state.current_mapping = mapping
 
-        # 2. Письмо
+        # 2. Адаптивное письмо
         logger.log("Генерация письма Icebreaker...", "STEP")
         c_str = f"«{audit['competitors'][0]}» и «{audit['competitors'][1]}»" if "сосед" not in audit['competitors'][0].lower() else "соседние клиники локации"
         ll = int(mapping["[[LOST_LEADS]]"])
-        ib_txt = f"Добрый день!\n\nАнализировали выдачу в вашем районе и обратили внимание на карточку «{audit['title']}». При сильной репутации ({audit['rating']:.1f}) первичный поток перехватывают {c_str}.\n\nНа поверхности лежат пара недочетов (например, пациенты вечером не могут записаться в 1 клик и уходят к соседям). По емкости района это отток около {max(1, ll-2)}–{ll+3} пациентов в месяц.\n\nСобрали наглядный разбор карточки и расчет потерь в PDF на 4 страницы. Скинуть файл для ознакомления?"
+
+        top_fail_title = audit["top_failures"][0]["title"].lower()
+        if "запись" in top_fail_title or "мис" in top_fail_title:
+            ib_fail_text = "На поверхности лежит отсутствие быстрой онлайн-записи (пациенты вечером не хотят звонить и уходят к соседям)"
+        elif "врач" in top_fail_title or "специалист" in top_fail_title:
+            ib_fail_text = "На поверхности лежит отсутствие витрины врачей (пациенты выбирают клиники с открытой командой)"
+        elif "услуг" in top_fail_title or "прайс" in top_fail_title or "цены" in top_fail_title:
+            ib_fail_text = "На поверхности лежит отсутствие понятного каталога услуг (пациенты боятся скрытых накруток и уходят к соседям)"
+        elif "отзыв" in top_fail_title or "рейтинг" in top_fail_title:
+            ib_fail_text = "На поверхности лежат репутационные недочеты (алгоритмы Яндекса пессимизируют профиль за просадку в отзывах)"
+        else:
+            ib_fail_text = f"На поверхности лежат пара недочетов (например, алгоритмы Яндекса пессимизируют профиль за пункт «{audit['top_failures'][0]['title']}»)"
+
+        ib_txt = (
+            f"Добрый день!\n\n"
+            f"Анализировали выдачу в вашем районе и обратили внимание на карточку «{audit['title']}». При сильной репутации ({audit['rating']:.1f}) первичный поток перехватывают {c_str}.\n\n"
+            f"{ib_fail_text}. По емкости района это отток около {max(1, ll-2)}–{ll+3} пациентов в месяц.\n\n"
+            f"Собрали наглядный разбор карточки и расчет потерь в PDF на 4 страницы. Скинуть файл для ознакомления?"
+        )
         st.session_state.current_icebreaker = ib_txt
 
         # 3. Файлы и компиляция
