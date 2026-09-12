@@ -159,18 +159,34 @@ def send_telegram_error(error_message: str, context: str = "") -> bool:
     except: return False
 
 # ==========================================================
-# 4. ГЛУБОКИЙ ПАРСИНГ И СКОРИНГ (ИСПРАВЛЕНО ДЛЯ APIFY)
+# 4. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ==========================================================
+
+def get_declension(number: int, word_type: str = "пациент") -> str:
+    """Возвращает правильное склонение слова по числу."""
+    n = abs(int(number)) % 100
+    n1 = n % 10
+    if word_type in ["пациент", "клиент"]:
+        if 11 <= n <= 19:
+            return f"{word_type}ов"
+        if n1 == 1:
+            return word_type
+        if 2 <= n1 <= 4:
+            return f"{word_type}а"
+        return f"{word_type}ов"
+    return "обращений"
+
+# ==========================================================
+# 5. ГЛУБОКИЙ ПАРСИНГ И СКОРИНГ (ИСПРАВЛЕНО ДЛЯ APIFY)
 # ==========================================================
 
 def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[float, List[Dict[str, Any]], Dict[str, float]]:
     logger.log("Запуск глубокого эвристического анализа по всему дереву JSON...", "STEP")
     raw_scores = {}
     
-    # 1. Создаем строковый "слепок" структуры (отрезаем отзывы, чтобы не было ложных срабатываний на текст пациентов)
     data_no_reviews = {k: v for k, v in data.items() if k not in ["reviews", "reviewsCount", "ratingCount"]}
     struct_str = json.dumps(data_no_reviews, ensure_ascii=False).lower()
 
-    # 2. Вытягиваем массивы для количественных проверок
     reviews = data.get("reviews", [])
     working_hours = data.get("workingHours", [])
     photos_count = int(data.get("photosCount", 0)) or len(data.get("photos", []))
@@ -178,11 +194,10 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[
     rev_count = int(data.get("reviewsCount") or data.get("ratingCount") or len(reviews))
     categories = data.get("categories", [])
 
-    # Изначально выдаем всем 41 критериям максимальный балл
     for c_code, c_meta in CRITERIA_REGISTRY.items():
         raw_scores[c_code] = float(c_meta["weight"])
 
-    # --- БЛОК: КОНВЕРСИЯ (Ищем везде по ключевикам) ---
+    # --- БЛОК: КОНВЕРСИЯ ---
     has_booking = any(w in struct_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "dikidi", "записаться", "онлайн-запис", "bookingurl"])
     if not has_booking: raw_scores["CONV-48.1"] = 0.0
 
@@ -229,7 +244,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[
     # --- БЛОК: КОНТЕНТ ---
     if photos_count < 10: raw_scores["CONT-38.1"] = 0.5 if photos_count >= 5 else 0.0
 
-    # --- ПОДСЧЕТ И ЛОГИРОВАНИЕ ---
     total_score = 0.0
     gap_list = []
 
@@ -310,7 +324,7 @@ def process_company_data(raw_input: Any, logger: TerminalLogger) -> Dict[str, An
     }
 
 # ==========================================================
-# 5. СИНХРОНИЗАЦИЯ, PDF И ЭКОНОМИКА
+# 6. СИНХРОНИЗАЦИЯ, PDF И ЭКОНОМИКА
 # ==========================================================
 
 def build_metrics(audit: Dict[str, Any]) -> Dict[str, str]:
@@ -410,7 +424,7 @@ def sync_to_google(audit: Dict, mapping: Dict, p_pdf: Path, p_txt: Path, p_json:
         res = drive.files().list(q=q, fields="files(id)").execute().get("files", [])
         fid = res[0]["id"] if res else drive.files().create(body={"name": d_str, "mimeType": "application/vnd.google-apps.folder", "parents": [folder_id]}, fields="id").execute()["id"]
         file_meta = drive.files().create(body={"name": path.name, "parents": [fid]}, media_body=MediaFileUpload(str(path), mimetype=mime), fields="id, webViewLink").execute()
-        logger.log(f"Файл {path.name} загружен в Google Drive. ID: {file_meta.get('id')}", "SUCCESS")
+        logger.log(f"Файл {path.name} загружен. ID: {file_meta.get('id')}", "SUCCESS")
         return file_meta.get("webViewLink", "")
 
     links = {
@@ -428,7 +442,7 @@ def sync_to_google(audit: Dict, mapping: Dict, p_pdf: Path, p_txt: Path, p_json:
     return links
 
 # ==========================================================
-# 6. КОНВЕЙЕР И СТРИМЛИТ ИНТЕРФЕЙС
+# 7. КОНВЕЙЕР И СТРИМЛИТ ИНТЕРФЕЙС
 # ==========================================================
 
 def run_pipeline(raw_data: Any, logger: TerminalLogger):
@@ -505,7 +519,7 @@ def app():
             logger.log(str(e), "ERROR")
 
     # ВЫДАЧА
-    if st.session_state.get("current_audit"):
+    if st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
         st.divider()
         c1, c2 = st.columns([1.1, 0.9])
         map_d = st.session_state.current_mapping
