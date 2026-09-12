@@ -6,7 +6,7 @@
     #grid(
       columns: (1fr, 1fr),
       align(left)[PIN100 Analytics | Независимый аудит поисковой гео-выдачи],
-      align(right)[Стр. #counter(page).display()]
+      align(right)[Стр. #context counter(page).display()]
     )
     #v(0.5cm)
     #line(length: 100%, stroke: 0.5pt + luma(200))
