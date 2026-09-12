@@ -14,7 +14,6 @@
   footer: []
 )
 
-// Безопасный стек шрифтов для Linux-серверов
 #set text(font: ("Arial", "Liberation Sans", "PT Sans", "sans-serif"), size: 10pt, lang: "ru")
 
 // СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ
@@ -124,7 +123,7 @@
 #v(1cm)
 
 #grid(
-  columns: (1fr),
+  columns: (1fr,),
   row-gutter: 1.5cm,
   [
     #text(size: 14pt, weight: "bold", fill: rgb("#e11d48"))[1. [[FAIL_1_TITLE]]]
@@ -202,7 +201,7 @@
   #text(size: 14pt, weight: "bold", fill: rgb("#1d4ed8"))[Персональный 3-минутный видеоразбор]
   #v(0.5em)
   #text(size: 11pt)[
-    Отправьте слово *«РАЗБОР»* в Telegram \@paulvenkov* — мы покажем на экране 3 скрытые ошибки вашей карточки и ответим на вопросы руководителя.
+    Отправьте слово *«РАЗБОР»* в Telegram \\@paulvenkov — мы покажем на экране 3 скрытые ошибки вашей карточки и ответим на вопросы руководителя.
   ]
 ]
 
