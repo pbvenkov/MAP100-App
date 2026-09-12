@@ -192,11 +192,9 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[
     if "акция" not in struct_str and "скидк" not in struct_str: raw_scores["CONV-53.1"] = 0.0
 
     # --- БЛОК: БАЗОВОЕ ЗАПОЛНЕНИЕ (УСЛУГИ) ---
-    # Ищем цены и структуру в слепке
     has_prices = any(w in struct_str for w in ["price", "cost", "руб", "₽", "прайс"])
     if not has_prices: raw_scores["PROF-11.3"] = 0.0
 
-    # Проверяем массив items/priceList/goods
     items = data.get("items") or data.get("priceList") or data.get("services") or data.get("goods") or []
     if isinstance(items, list):
         if len(items) < 10: raw_scores["PROF-11.1"] = 2.0 if len(items) >= 3 else 0.0
@@ -221,13 +219,12 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[
     if rating < 4.5: raw_scores["REP-27.1"] = 0.0
     if rev_count < 50: raw_scores["REP-28.1"] = 1.0 if rev_count >= 15 else 0.0
 
-    # Высчитываем % ответов клиники на отзывы
     if reviews and isinstance(reviews, list):
         replied = sum(1 for r in reviews if isinstance(r, dict) and (r.get("reply") or r.get("comments")))
         reply_rate = replied / len(reviews)
         if reply_rate < 0.9: raw_scores["REP-30.1"] = 1.5 if reply_rate >= 0.5 else 0.0
     else:
-        raw_scores["REP-30.1"] = 1.5 # Дефолт, если отзывов нет в выгрузке
+        raw_scores["REP-30.1"] = 1.5
 
     # --- БЛОК: КОНТЕНТ ---
     if photos_count < 10: raw_scores["CONT-38.1"] = 0.5 if photos_count >= 5 else 0.0
@@ -246,9 +243,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[
             impact = lost * (6.0 - meta["complexity"])
             gap_list.append({"code": code, "title": meta["title"], "desc": meta["desc"], "impact": impact})
             logger.log(f"[{code}] {meta['title']} -> Снят балл: -{lost:.1f}", "WARN")
-        else:
-            # Скрыт успех каждого пункта, чтобы не засорять терминал (выводим только потери)
-            pass
 
     gap_list.sort(key=lambda x: x["impact"], reverse=True)
     top_3 = gap_list[:3]
@@ -296,7 +290,6 @@ def process_company_data(raw_input: Any, logger: TerminalLogger) -> Dict[str, An
 
     score, top_fails, raw_scores = perform_deep_scoring(data, logger)
     
-    # Принудительный оверрайд, если был готов в JSON
     if data.get("score"): score = float(data["score"])
 
     logger.log(f"Итоговый балл готовности: {score:.1f} / 100", "INFO")
@@ -312,7 +305,8 @@ def process_company_data(raw_input: Any, logger: TerminalLogger) -> Dict[str, An
         "competitors": comps, "canonical_url": data.get("url", ""),
         "benchmark_leads": n_def["benchmark_leads"], "base_check": n_def["base_check"], 
         "ltv_months": n_def["ltv_months"], "benchmark_source": n_def["benchmark_source"],
-        "top_failures": top_fails, "date": datetime.date.today().strftime("%d.%m.%Y")
+        "top_failures": top_fails, "date": datetime.date.today().strftime("%d.%m.%Y"),
+        "criteria_scores": raw_scores
     }
 
 # ==========================================================
@@ -326,19 +320,65 @@ def build_metrics(audit: Dict[str, Any]) -> Dict[str, str]:
     
     lost_leads = int(round(audit["benchmark_leads"] * (dev / 100.0)))
     rev_loss = lost_leads * audit["base_check"]
+    weekly_loss = int(round(rev_loss / 4.33))
+    ltv_loss = rev_loss * audit["ltv_months"]
+
+    table_declension = get_declension(lost_leads, n_info["client_word"])
+    failures = audit.get("top_failures", [])
+
+    # --- АДАПТИВНЫЙ АЛГОРИТМ ДЛЯ EXECUTIVE SUMMARY ---
+    group_losses = {}
+    for code, meta in CRITERIA_REGISTRY.items():
+        max_w = meta["weight"]
+        cur_w = audit.get("criteria_scores", {}).get(code, max_w)
+        lost = max_w - cur_w
+        if lost > 0:
+            group_losses[meta["group"]] = group_losses.get(meta["group"], 0.0) + lost
+
+    worst_group = max(group_losses, key=group_losses.get) if group_losses else ""
+
+    reason_phrases = {
+        "Конверсия": "из-за отсутствия прямого конверсионного инструментария (онлайн-записи, витрины врачей или чата)",
+        "Базовое заполнение": "из-за критических пробелов в заполнении карточки (отсутствие цен, структуры услуг или реквизитов)",
+        "Репутация": "из-за просадки в репутационных факторах (паузы в отзывах, рейтинг или игнорирование обратной связи)",
+        "SEO и Трафик": "из-за слабой гео-оптимизации профиля (нехватка нишевых атрибутов, топонимов или смежных рубрик)",
+        "Контент": "из-за недостатка визуального доверия (мало качественных фотографий интерьера или отсутствие видео)"
+    }
+    
+    reason_text = reason_phrases.get(worst_group, "из-за технических недочетов в оформлении и настройках профиля")
+
+    executive_summary = (
+        f"Профиль «{audit['title']}» обладает высокой клинической репутацией ({audit['rating']:.1f}), "
+        f"однако {reason_text} алгоритм перенаправляет до {lost_leads} готовых обращений в месяц "
+        f"прямым конкурентам локации."
+    )
     
     return {
-        "[[TITLE]]": audit["title"], "[[NICHE]]": n_info["niche_name"], "[[DATE]]": audit["date"],
-        "[[SCORE]]": f"{score:.1f}", "[[SCORE_COLOR]]": "16a34a" if score >= 80 else ("d97706" if score >= 60 else "dc2626"),
+        "[[TITLE]]": audit["title"],
+        "[[NICHE]]": n_info["niche_name"],
+        "[[DATE]]": audit["date"],
+        "[[SCORE]]": f"{score:.1f}",
+        "[[SCORE_COLOR]]": "16a34a" if score >= 80 else ("d97706" if score >= 60 else "dc2626"),
         "[[REV_LOSS_FMT]]": f"{int(rev_loss):,}".replace(",", " "),
-        "[[CLIENT_LEADS]]": str(audit["benchmark_leads"]), "[[DEV]]": f"{dev:.1f}",
-        "[[LOST_LEADS]]": str(lost_leads), "[[CLIENT_CHECK_FMT]]": f"{int(audit['base_check']):,}".replace(",", " "),
-        "[[CLIENT_LTV]]": str(audit["ltv_months"]), "[[LTV_LOSS_FMT]]": f"{int(rev_loss * audit['ltv_months']):,}".replace(",", " "),
-        "[[BENCHMARK_SOURCE]]": audit["benchmark_source"], "[[QUALITY_PHRASE]]": n_info["quality_phrase"],
-        "[[WEEKLY_LOSS_FMT]]": f"{int(rev_loss / 4.33):,}".replace(",", " "),
-        "[[FAIL_1_TITLE]]": audit["top_failures"][0]["title"], "[[FAIL_1_DESC]]": audit["top_failures"][0]["desc"],
-        "[[FAIL_2_TITLE]]": audit["top_failures"][1]["title"], "[[FAIL_2_DESC]]": audit["top_failures"][1]["desc"],
-        "[[FAIL_3_TITLE]]": audit["top_failures"][2]["title"], "[[FAIL_3_DESC]]": audit["top_failures"][2]["desc"],
+        "[[CLIENT_LEADS]]": str(audit["benchmark_leads"]),
+        "[[DEV]]": f"{dev:.1f}",
+        "[[LOST_LEADS]]": str(lost_leads),
+        "[[TABLE_DECLENSION]]": table_declension,
+        "[[CLIENT_CHECK_FMT]]": f"{int(audit['base_check']):,}".replace(",", " "),
+        "[[CLIENT_LTV]]": str(audit["ltv_months"]),
+        "[[LTV_LOSS_FMT]]": f"{int(ltv_loss):,}".replace(",", " "),
+        "[[BENCHMARK_SOURCE]]": audit["benchmark_source"],
+        "[[QUALITY_PHRASE]]": n_info["quality_phrase"],
+        "[[EXECUTIVE_SUMMARY]]": executive_summary,
+        "[[PAGE_3_HEADING]]": "Топ-3 фактора потери пациентов",
+        "[[PAGE_3_SUBTITLE]]": "Технические барьеры карточки, снижающие конверсию в первичное обращение:",
+        "[[FAIL_1_TITLE]]": failures[0]["title"] if len(failures) > 0 else "Барьер конверсии",
+        "[[FAIL_1_DESC]]": failures[0]["desc"] if len(failures) > 0 else "Требуется оптимизация карточки.",
+        "[[FAIL_2_TITLE]]": failures[1]["title"] if len(failures) > 1 else "Барьер доверия",
+        "[[FAIL_2_DESC]]": failures[1]["desc"] if len(failures) > 1 else "Требуется заполнение команды.",
+        "[[FAIL_3_TITLE]]": failures[2]["title"] if len(failures) > 2 else "Барьер прейскуранта",
+        "[[FAIL_3_DESC]]": failures[2]["desc"] if len(failures) > 2 else "Требуется открытие цен.",
+        "[[WEEKLY_LOSS_FMT]]": f"{int(weekly_loss):,}".replace(",", " "),
     }
 
 def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: TerminalLogger) -> bool:
@@ -369,10 +409,7 @@ def sync_to_google(audit: Dict, mapping: Dict, p_pdf: Path, p_txt: Path, p_json:
         q = f"'{folder_id}' in parents and name = '{d_str}' and trashed = false"
         res = drive.files().list(q=q, fields="files(id)").execute().get("files", [])
         fid = res[0]["id"] if res else drive.files().create(body={"name": d_str, "mimeType": "application/vnd.google-apps.folder", "parents": [folder_id]}, fields="id").execute()["id"]
-        # Сохраняем файл и возвращаем WebViewLink
         file_meta = drive.files().create(body={"name": path.name, "parents": [fid]}, media_body=MediaFileUpload(str(path), mimetype=mime), fields="id, webViewLink").execute()
-        
-        # Логируем ID файла в терминал как пруф
         logger.log(f"Файл {path.name} загружен в Google Drive. ID: {file_meta.get('id')}", "SUCCESS")
         return file_meta.get("webViewLink", "")
 
