@@ -25,14 +25,12 @@ if env_file.exists():
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip().strip("'\""))
 
-# Импорт Python-библиотеки Typst
 try:
     import typst
     PY_TYPST_AVAILABLE = True
 except ImportError:
     PY_TYPST_AVAILABLE = False
 
-# Импорт библиотек Google
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
@@ -62,16 +60,15 @@ GDRIVE_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
-# Верифицированные экономические бенчмарки ниш с официальными источниками
 NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
     "DENTISTRY": {
         "niche_name": "Стоматологическая клиника",
         "niche_genitive": "стоматологий",
         "client_word": "пациент",
         "quality_phrase": "медицинской помощи и врачебной квалификации",
-        "benchmark_leads": 70,       # Медиана первичных обращений ТОП-3 клиник района
-        "base_check": 5500,          # Средний чек первичного визита (диагностика + лечение/гигиена)
-        "ltv_months": 12,            # Средний горизонт прикрепления семьи (2.4 визита в год)
+        "benchmark_leads": 70,
+        "base_check": 5500,
+        "ltv_months": 12,
         "benchmark_source": "BusinesStat («Анализ рынка стоматологии в РФ») и РБК Исследования рынков",
     },
     "COSMETOLOGY": {
@@ -165,20 +162,38 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
 }
 
 # ==========================================================
-# 3. УВЕДОМЛЕНИЯ В TELEGRAM
+# 3. ТЕРМИНАЛ ЛОГОВ И TELEGRAM
 # ==========================================================
 
+class TerminalLogger:
+    """Управляет выводом консольного окна выполнения на экран Streamlit."""
+    def __init__(self, placeholder):
+        self.placeholder = placeholder
+        self.logs: List[str] = []
+
+    def log(self, msg: str, level: str = "INFO"):
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        prefix = {
+            "INFO": "[INFO]   ",
+            "SUCCESS": "[SUCCESS]",
+            "WARN": "[WARN]   ",
+            "ERROR": "[ERROR]  ",
+            "STEP": "[STEP]   "
+        }.get(level, "[INFO]   ")
+        formatted = f"{ts} {prefix} {msg}"
+        self.logs.append(formatted)
+        self.placeholder.code("\n".join(self.logs), language="bash")
+
+
 def send_telegram_error(error_message: str, context: str = "") -> bool:
-    """Отправляет уведомление об ошибке в Telegram (таймаут 3с, не блокируя UI)."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-
     if not bot_token or not chat_id:
         return False
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     text = (
-        f"🚨 <b>PIN100 Analytics: Ошибка обработки</b>\n\n"
+        f"🚨 <b>PIN100 Analytics: Сбой в конвейере</b>\n\n"
         f"<b>Контекст:</b> {context}\n"
         f"<b>Причина:</b> <code>{error_message}</code>\n"
         f"<b>Время:</b> {datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
@@ -190,22 +205,23 @@ def send_telegram_error(error_message: str, context: str = "") -> bool:
         return False
 
 # ==========================================================
-# 4. APIFY API КРАУЛЕР ЯНДЕКС КАРТ
+# 4. APIFY ПАРСЕР ПО ССЫЛКЕ
 # ==========================================================
 
-def fetch_profile_via_apify(target_url: str) -> Dict[str, Any]:
-    """
-    Запускает синхронный краулинг ссылки через Apify Actor,
-    ждет завершения (15-30 сек) и возвращает оцифрованный JSON профиля.
-    """
+def fetch_profile_via_apify(target_url: str, logger: Optional[TerminalLogger] = None) -> Dict[str, Any]:
     token = os.getenv("APIFY_API_TOKEN", "").strip()
     if not token:
-        raise ValueError("APIFY_API_TOKEN не найден в .env или системных переменных.")
+        raise ValueError("В .env не найден APIFY_API_TOKEN. Укажите действующий токен Apify.")
 
-    actor_id = os.getenv("APIFY_ACTOR_ID", "tri_angle~yandex-maps-scraper").strip()
-    actor_id_url = actor_id.replace("/", "~")
+    actor = os.getenv("APIFY_ACTOR_ID", "").strip()
+    if not actor:
+        raise ValueError("В .env не найден APIFY_ACTOR_ID. Укажите ID или имя актора (например: compass/yandex-maps-scraper).")
 
-    run_url = f"https://api.apify.com/v2/acts/{actor_id_url}/run-sync-get-dataset-items?token={token}&timeout=60"
+    actor_id_url = actor.replace("/", "~")
+    run_url = f"https://api.apify.com/v2/acts/{actor_id_url}/run-sync-get-dataset-items?token={token}&timeout=70"
+
+    if logger:
+        logger.log(f"Запуск Apify Actor '{actor}'...", "STEP")
 
     payload = {
         "startUrls": [{"url": target_url.strip()}],
@@ -215,23 +231,25 @@ def fetch_profile_via_apify(target_url: str) -> Dict[str, Any]:
         "includePhotos": True
     }
 
-    resp = requests.post(run_url, json=payload, timeout=75)
-
+    resp = requests.post(run_url, json=payload, timeout=80)
+    if resp.status_code == 404:
+        raise RuntimeError(f"Актор '{actor}' не найден в Apify (404). Проверьте APIFY_ACTOR_ID в .env.")
     if resp.status_code not in [200, 201]:
-        err_detail = resp.text[:400]
-        raise RuntimeError(f"Сбой Apify API (HTTP {resp.status_code}): {err_detail}")
+        raise RuntimeError(f"Ошибка Apify API (HTTP {resp.status_code}): {resp.text[:250]}")
 
     items = resp.json()
     if not items or not isinstance(items, list):
-        raise ValueError(f"Apify отработал, но вернул пустой результат по ссылке: {target_url}")
+        raise ValueError(f"Apify вернул пустой набор данных для {target_url}")
 
+    if logger:
+        logger.log("Данные успешно получены из облака Apify", "SUCCESS")
     return items[0]
 
 # ==========================================================
-# 5. СКОРИНГ И ПАРСИНГ ДАННЫХ ПРОФИЛЯ
+# 5. СКОРИНГ 41 КРИТЕРИЯ И РАСЧЕТ МЕТРИК
 # ==========================================================
 
-def evaluate_audit_scores(raw_scores: Dict[str, float], niche: str = "DENTISTRY") -> Tuple[float, List[Dict[str, Any]]]:
+def evaluate_audit_scores(raw_scores: Dict[str, float], niche: str = "DENTISTRY", logger: Optional[TerminalLogger] = None) -> Tuple[float, List[Dict[str, Any]]]:
     is_dentistry = (niche == "DENTISTRY")
     total_score = 0.0
     gap_list = []
@@ -252,6 +270,8 @@ def evaluate_audit_scores(raw_scores: Dict[str, float], niche: str = "DENTISTRY"
                 "lost": lost,
                 "impact": impact
             })
+            if logger:
+                logger.log(f"[{code}] {meta['title']} -> Потеряно: -{lost:.1f} б.", "WARN")
 
     gap_list.sort(key=lambda x: x["impact"], reverse=True)
     top_3 = gap_list[:3]
@@ -268,8 +288,7 @@ def evaluate_audit_scores(raw_scores: Dict[str, float], niche: str = "DENTISTRY"
     return round(total_score, 1), top_3
 
 
-def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
-    """Универсальный парсер JSON (массивы Apify, одиночные объекты, с детальной валидацией)."""
+def parse_apify_or_raw_json(raw_input: Any, logger: Optional[TerminalLogger] = None) -> Dict[str, Any]:
     if isinstance(raw_input, list):
         if not raw_input:
             raise ValueError("Передан пустой список JSON.")
@@ -280,49 +299,60 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
                 raise ValueError("Ключ 'items' в файле пуст.")
             data = raw_input["items"][0]
         elif "data" in raw_input and isinstance(raw_input["data"], (dict, list)):
-            return parse_apify_or_raw_json(raw_input["data"])
+            return parse_apify_or_raw_json(raw_input["data"], logger)
         else:
             data = raw_input
     else:
-        raise ValueError(f"Неподдерживаемый тип данных: {type(raw_input).__name__}.")
-
-    if not isinstance(data, dict):
-        raise ValueError(f"Корневой элемент карточки не является объектом: {type(data).__name__}.")
+        raise ValueError(f"Неподдерживаемый тип JSON: {type(raw_input).__name__}")
 
     title = data.get("title") or data.get("name") or data.get("companyName")
     if not title:
-        raise ValueError("В переданном JSON отсутствует название организации.")
+        raise ValueError("В структуре JSON отсутствует имя организации ('title' или 'name').")
 
     org_id = str(data.get("org_id") or data.get("id") or data.get("companyId") or "0000000000")
     rating = float(data.get("rating") or data.get("reviewsRating") or data.get("totalScore") or 5.0)
 
-    # Определение ниши
+    if logger:
+        logger.log(f"Организация: «{title}» (ID: {org_id}), Рейтинг: {rating}", "INFO")
+
     low_txt = (str(title) + " " + str(data.get("categories", "")) + " " + str(data.get("rubrics", ""))).lower()
     if any(k in low_txt for k in ["космет", "beauty", "эстет"]):
         niche = "COSMETOLOGY"
-    elif any(k in low_txt for k in ["авто", "сервис", "мотор", "ремонт авто"]):
+    elif any(k in low_txt for k in ["авто", "сервис", "мотор"]):
         niche = "AUTOSERVICES"
-    elif any(k in low_txt for k in ["многопрофильн", "медцентр", "поликлиник"]):
+    elif any(k in low_txt for k in ["многопрофильн", "медцентр"]):
         niche = "GENERAL_MEDICINE"
     else:
         niche = "DENTISTRY"
 
+    if logger:
+        logger.log(f"Определена ниша: {NICHE_CONFIG[niche]['niche_name']}", "INFO")
+
     raw_scores: Dict[str, float] = {}
 
+    # Сценарий 1: Уже готовые оценки критериев
     if "criteria_scores" in data and isinstance(data["criteria_scores"], dict):
+        if logger:
+            logger.log("Считывание готовой матрицы скоринга из criteria_scores...", "INFO")
         for c_code, c_meta in CRITERIA_REGISTRY.items():
             raw_scores[c_code] = float(data["criteria_scores"].get(c_code, c_meta["weight_dentistry"]))
     elif "checks" in data and isinstance(data["checks"], dict):
+        if logger:
+            logger.log("Считывание чеклиста проверок из checks...", "INFO")
         for c_code, c_meta in CRITERIA_REGISTRY.items():
             raw_scores[c_code] = float(data["checks"].get(c_code, c_meta["weight_dentistry"]))
     else:
+        # Сценарий 2: Расчет по 41 правилу таблицы PIN100
+        if logger:
+            logger.log("Запуск полного скоринга по 41 правилу таблицы PIN100...", "STEP")
+
         for c_code, c_meta in CRITERIA_REGISTRY.items():
             raw_scores[c_code] = float(c_meta["weight_dentistry"])
 
         features_str = str(data.get("features", [])).lower()
         site_str = str(data.get("website", "") or data.get("url", "")).lower()
 
-        # 1. Онлайн-запись
+        # 1. Онлайн-запись (CONV-48.1)
         has_booking = bool(
             data.get("bookingUrl") or data.get("isBookingAvailable") or data.get("booking") or
             "онлайн-запис" in features_str or "запись онлайн" in features_str or
@@ -331,7 +361,7 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
         if not has_booking:
             raw_scores["CONV-48.1"] = 0.0
 
-        # 2. Врачи / Специалисты
+        # 2. Врачи / Специалисты (CONV-48.2)
         has_staff = bool(
             data.get("specialists") or data.get("doctors") or data.get("staff") or
             "врач" in features_str or "специалист" in features_str or "команда" in features_str
@@ -339,7 +369,7 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
         if not has_staff:
             raw_scores["CONV-48.2"] = 0.0
 
-        # 3. Каталог услуг и цены
+        # 3. Каталог услуг и цены (PROF-11.1, PROF-10.3, PROF-11.3)
         items = data.get("items") or data.get("priceList") or data.get("goods") or data.get("services") or data.get("menu") or []
         if isinstance(items, list):
             if len(items) < 10:
@@ -350,7 +380,7 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
             if not has_prices and not any(w in features_str for w in ["прайс", "цены", "руб"]):
                 raw_scores["PROF-11.3"] = 0.0
 
-        # 4. Рейтинг (для 5.0 оба закрыты на 100%)
+        # 4. Рейтинг
         if rating < 4.8:
             raw_scores["REP-27.2"] = 0.0
         if rating < 4.5:
@@ -368,17 +398,19 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
         if not bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge")):
             raw_scores["PROF-12.1"] = 0.0
 
-    calculated_score, top_fails = evaluate_audit_scores(raw_scores, niche)
+    calculated_score, top_fails = evaluate_audit_scores(raw_scores, niche, logger)
 
     if any(k in data for k in ["score", "totalScore", "readiness_score", "pin100_score"]):
         calculated_score = float(data.get("score") or data.get("totalScore") or data.get("readiness_score") or data.get("pin100_score"))
 
-    # Конкуренты: подставляем нейтральные формулировки без вымышленных клиник
     comps = data.get("competitors") or []
     if not comps or not isinstance(comps, list):
         comps = ["соседние клиники локации", "сетевые клиники района"]
 
     n_def = NICHE_CONFIG.get(niche, NICHE_CONFIG["DENTISTRY"])
+
+    if logger:
+        logger.log(f"Итоговый балл карточки: {calculated_score:.1f} / 100", "SUCCESS")
 
     return {
         "title": title,
@@ -399,77 +431,7 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
     }
 
 # ==========================================================
-# 6. СИНХРОНИЗАЦИЯ С GOOGLE DRIVE И GOOGLE SHEETS
-# ==========================================================
-
-def get_google_credentials() -> Optional[Any]:
-    if not GOOGLE_LIBS_AVAILABLE:
-        return None
-    for path_str in ["credentials.json", "service_account.json"]:
-        p = Path(path_str)
-        if p.exists():
-            return service_account.Credentials.from_service_account_file(str(p), scopes=GDRIVE_SCOPES)
-    if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-        return service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=GDRIVE_SCOPES)
-    return None
-
-
-def get_or_create_date_folder(drive_service: Any, parent_folder_id: str, date_str: str) -> str:
-    query = f"'{parent_folder_id}' in parents and name = '{date_str}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    res = drive_service.files().list(q=query, spaces="drive", fields="files(id, name)").execute()
-    files = res.get("files", [])
-    if files:
-        return files[0]["id"]
-    metadata = {"name": date_str, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_folder_id]}
-    folder = drive_service.files().create(body=metadata, fields="id").execute()
-    return folder["id"]
-
-
-def upload_file_to_drive(drive_service: Any, local_path: Path, target_folder_id: str, mime_type: str) -> Dict[str, str]:
-    metadata = {"name": local_path.name, "parents": [target_folder_id]}
-    media = MediaFileUpload(str(local_path), mimetype=mime_type, resumable=True)
-    uploaded = drive_service.files().create(body=metadata, media_body=media, fields="id, webViewLink").execute()
-    return {"id": uploaded.get("id", ""), "link": uploaded.get("webViewLink", "")}
-
-
-def sync_results_to_google(audit_data: Dict[str, Any], mapping: Dict[str, str], pdf_path: Path, txt_path: Path, json_path: Path, spreadsheet_id: Optional[str] = None) -> Dict[str, str]:
-    if not GOOGLE_LIBS_AVAILABLE:
-        raise RuntimeError("Пакеты google-api-python-client не установлены в окружении.")
-
-    creds = get_google_credentials()
-    if not creds:
-        raise FileNotFoundError("Файл ключа credentials.json не найден рядом с app.py.")
-
-    drive_service = build("drive", "v3", credentials=creds)
-    sheets_service = build("sheets", "v4", credentials=creds)
-    date_str = datetime.date.today().strftime("%Y-%m-%d")
-
-    pdf_res = upload_file_to_drive(drive_service, pdf_path, get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["PDF"], date_str), "application/pdf")
-    txt_res = upload_file_to_drive(drive_service, txt_path, get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["LETTERS"], date_str), "text/plain")
-    json_res = upload_file_to_drive(drive_service, json_path, get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["JSON"], date_str), "application/json")
-
-    links = {"pdf": pdf_res["link"], "txt": txt_res["link"], "json": json_res["link"]}
-
-    if spreadsheet_id and spreadsheet_id.strip():
-        now_time = datetime.datetime.now().strftime("%H:%M:%S")
-        row = [
-            mapping["[[DATE]]"], now_time, audit_data.get("title", ""), audit_data.get("org_id", ""),
-            audit_data.get("canonical_url", ""), mapping["[[NICHE]]"], audit_data.get("rating", ""),
-            mapping["[[SCORE]]"], mapping["[[LOST_LEADS]]"], mapping["[[REV_LOSS_FMT]]"],
-            links["pdf"], links["txt"], links["json"]
-        ]
-        try:
-            sheets_service.spreadsheets().values().append(
-                spreadsheetId=spreadsheet_id.strip(), range="Лист1!A:M", valueInputOption="USER_ENTERED",
-                insertDataOption="INSERT_ROWS", body={"values": [row]}
-            ).execute()
-        except Exception as e:
-            st.warning(f"Запись в Google Таблицу пропущена: {e}")
-
-    return links
-
-# ==========================================================
-# 7. РАСЧЕТ ЮНИТ-ЭКОНОМИКИ И ТЕКСТОВ
+# 6. ТЕКСТЫ, ЮНИТ-ЭКОНОМИКА И КОМПИЛЯЦИЯ PDF
 # ==========================================================
 
 def format_currency(value: float | int) -> str:
@@ -594,32 +556,38 @@ def render_typst_template(template_path: Path, mapping: Dict[str, str]) -> str:
     return content
 
 
-def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path) -> Tuple[bool, str]:
-    """Компилирует PDF через модуль typst из requirements.txt либо через системный CLI."""
+def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path, logger: Optional[TerminalLogger] = None) -> Tuple[bool, str]:
     temp_typ = work_dir / f"temp_{output_pdf_path.stem}.typ"
     try:
+        if logger:
+            logger.log("Подготовка исходного файла Typst...", "INFO")
         with open(temp_typ, "w", encoding="utf-8") as f:
             f.write(typst_content)
 
-        # 1. Приоритет: установленная библиотека Python typst
         if PY_TYPST_AVAILABLE:
+            if logger:
+                logger.log("Компиляция PDF через Python-модуль typst...", "STEP")
             try:
                 typst.compile(str(temp_typ), output=str(output_pdf_path))
+                if logger:
+                    logger.log("PDF-отчет успешно собран через модуль typst!", "SUCCESS")
                 return True, ""
             except Exception as ex_py:
-                pass
+                if logger:
+                    logger.log(f"Сбой модуля typst: {ex_py}. Пробуем системный CLI...", "WARN")
 
-        # 2. Резерв: CLI typst
         cmd = ["typst", "compile", str(temp_typ), str(output_pdf_path)]
         res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode == 0:
+            if logger:
+                logger.log("PDF-отчет успешно скомпилирован через Typst CLI!", "SUCCESS")
             return True, ""
         return False, f"Ошибка CLI Typst: {res.stderr}"
 
     except FileNotFoundError:
-        return False, "Typst не найден. Убедитесь, что пакет typst установлен в requirements.txt."
+        return False, "Typst не найден в Python и не установлен в системе."
     except Exception as e:
-        return False, f"Сбой компиляции Typst: {e}"
+        return False, f"Ошибка компиляции Typst: {e}"
     finally:
         if temp_typ.exists():
             try:
@@ -628,112 +596,106 @@ def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path)
                 pass
 
 # ==========================================================
-# 8. ЧИСТЫЙ ИНТЕРФЕЙС КОНВЕЙЕРА (STREAMLIT)
+# 7. GOOGLE DRIVE И GOOGLE SHEETS
 # ==========================================================
 
-def run_streamlit_app() -> None:
-    if "current_audit" not in st.session_state:
-        st.session_state.current_audit = None
-    if "drive_links" not in st.session_state:
-        st.session_state.drive_links = None
+def get_google_credentials() -> Optional[Any]:
+    if not GOOGLE_LIBS_AVAILABLE:
+        return None
+    for path_str in ["credentials.json", "service_account.json"]:
+        p = Path(path_str)
+        if p.exists():
+            return service_account.Credentials.from_service_account_file(str(p), scopes=GDRIVE_SCOPES)
+    if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
+        return service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=GDRIVE_SCOPES)
+    return None
 
-    st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
-    st.caption("Прямой API-краулинг Яндекс Карт, персонализированное письмо для ЛПР и 4-страничный PDF-отчет.")
 
-    tab_url, tab_json = st.tabs([
-        "🔗 Ссылка на Яндекс Карты (Прямой API Apify)",
-        "📋 Вставить готовый JSON из Apify"
-    ])
+def get_or_create_date_folder(drive_service: Any, parent_folder_id: str, date_str: str) -> str:
+    query = f"'{parent_folder_id}' in parents and name = '{date_str}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    res = drive_service.files().list(q=query, spaces="drive", fields="files(id, name)").execute()
+    files = res.get("files", [])
+    if files:
+        return files[0]["id"]
+    metadata = {"name": date_str, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_folder_id]}
+    folder = drive_service.files().create(body=metadata, fields="id").execute()
+    return folder["id"]
 
-    # Вкладка 1: Ссылка с прямым запуском Apify Actor
-    with tab_url:
-        with st.form("maps_url_form", clear_on_submit=False):
-            target_url = st.text_input(
-                "Ссылка на организацию в Яндекс Картах:",
-                placeholder="Вставьте ссылку любого формата: https://yandex.ru/maps/org/... или короткую https://yandex.ru/maps/-/... "
-            )
-            submit_url = st.form_submit_button("🚀 Запустить полный аудит по ссылке", type="primary", use_container_width=True)
 
-        if submit_url:
-            if not target_url.strip():
-                st.warning("⚠️ Пожалуйста, вставьте ссылку на организацию в поле выше.")
-            else:
-                with st.spinner("⏳ Отправляем ссылку в Apify Actor, ждем выгрузку полного профиля (15–20 сек) и рассчитываем скоринг..."):
-                    try:
-                        raw_card = fetch_profile_via_apify(target_url)
-                        st.session_state.current_audit = parse_apify_or_raw_json(raw_card)
-                        st.session_state.drive_links = None
-                        st.success(f"✅ Карточка «{st.session_state.current_audit['title']}» успешно оцифрована через Apify! Оценка: {st.session_state.current_audit['score']}/100")
-                        st.rerun()
-                    except Exception as e:
-                        err_msg = f"Сбой краулинга через Apify: {e}"
-                        st.error(err_msg)
-                        send_telegram_error(err_msg, f"Apify Actor для URL: {target_url}")
+def upload_file_to_drive(drive_service: Any, local_path: Path, target_folder_id: str, mime_type: str) -> Dict[str, str]:
+    metadata = {"name": local_path.name, "parents": [target_folder_id]}
+    media = MediaFileUpload(str(local_path), mimetype=mime_type, resumable=True)
+    uploaded = drive_service.files().create(body=metadata, media_body=media, fields="id, webViewLink").execute()
+    return {"id": uploaded.get("id", ""), "link": uploaded.get("webViewLink", "")}
 
-    # Вкладка 2: Загрузка готового JSON
-    with tab_json:
-        col_f1, col_f2 = st.columns([1.5, 2.5])
-        with col_f1:
-            uploaded_file = st.file_uploader("Перетащите файл .json из Apify:", type=["json"])
-        with col_f2:
-            json_text = st.text_area("Или вставьте код JSON из буфера:", height=100, placeholder='[{"title": "СпейсДент", ...}]')
 
-        calc_json_btn = st.button("⚡ Рассчитать аудит по готовому JSON", type="primary", use_container_width=True)
+def sync_results_to_google(audit_data: Dict[str, Any], mapping: Dict[str, str], pdf_path: Path, txt_path: Path, json_path: Path, spreadsheet_id: Optional[str] = None, logger: Optional[TerminalLogger] = None) -> Dict[str, str]:
+    if not GOOGLE_LIBS_AVAILABLE:
+        raise RuntimeError("Пакеты google-api-python-client не установлены в окружении.")
 
-        if calc_json_btn:
-            with st.spinner("⏳ Анализируем карточку по 41 критерию..."):
-                raw_data = None
-                error_context = ""
+    creds = get_google_credentials()
+    if not creds:
+        raise FileNotFoundError("Ключ credentials.json не найден в корне проекта.")
 
-                if uploaded_file is not None:
-                    error_context = f"Файл: {uploaded_file.name}"
-                    try:
-                        uploaded_file.seek(0)
-                        raw_data = json.load(uploaded_file)
-                    except Exception as ex:
-                        err_msg = f"Ошибка чтения JSON файла: {ex}"
-                        st.error(err_msg)
-                        send_telegram_error(err_msg, error_context)
-                elif json_text.strip():
-                    error_context = "Текстовый ввод JSON"
-                    try:
-                        raw_data = json.loads(json_text)
-                    except Exception as ex:
-                        err_msg = f"Невалидный синтаксис JSON: {ex}"
-                        st.error(err_msg)
-                        send_telegram_error(err_msg, error_context)
-                else:
-                    st.warning("⚠️ Пожалуйста, загрузите .json файл или вставьте текст в поле выше.")
+    drive_service = build("drive", "v3", credentials=creds)
+    sheets_service = build("sheets", "v4", credentials=creds)
+    date_str = datetime.date.today().strftime("%Y-%m-%d")
 
-                if raw_data is not None:
-                    try:
-                        st.session_state.current_audit = parse_apify_or_raw_json(raw_data)
-                        st.session_state.drive_links = None
-                        st.success(f"✅ Организация «{st.session_state.current_audit['title']}» успешно оцифрована! Балл: {st.session_state.current_audit['score']}/100")
-                        st.rerun()
-                    except Exception as ex:
-                        err_msg = f"Ошибка структуры данных карточки: {ex}"
-                        st.error(err_msg)
-                        send_telegram_error(err_msg, error_context or "Парсинг JSON")
+    if logger:
+        logger.log(f"Синхронизация файлов с Google Диском в папку '{date_str}'...", "STEP")
 
-    # ------------------------------------------------------
-    # ДАШБОРД РЕЗУЛЬТАТОВ: ПИСЬМО + ПОТЕРИ + PDF
-    # ------------------------------------------------------
-    if not st.session_state.current_audit:
-        st.divider()
-        st.info("👆 Вставьте ссылку на Яндекс Карты для автоматического запуска краулера или загрузите готовый JSON.")
-        return
+    pdf_res = upload_file_to_drive(drive_service, pdf_path, get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["PDF"], date_str), "application/pdf")
+    txt_res = upload_file_to_drive(drive_service, txt_path, get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["LETTERS"], date_str), "text/plain")
+    json_res = upload_file_to_drive(drive_service, json_path, get_or_create_date_folder(drive_service, GDRIVE_FOLDERS["JSON"], date_str), "application/json")
 
-    audit = st.session_state.current_audit
-    mapping = calculate_report_metrics(audit)
-    st.divider()
+    if logger:
+        logger.log("Файлы (PDF, TXT, JSON) успешно загружены на Google Диск", "SUCCESS")
 
-    col_left, col_right = st.columns([1.1, 0.9])
+    links = {"pdf": pdf_res["link"], "txt": txt_res["link"], "json": json_res["link"]}
 
-    with col_left:
-        st.subheader("✉️ Первое сообщение руководителю (Icebreaker)")
-        st.caption("Персонализированное обращение без формулировки «кассовый разрыв»:")
+    if spreadsheet_id and spreadsheet_id.strip():
+        if logger:
+            logger.log("Добавление строки аудита в Google Таблицу...", "STEP")
+        now_time = datetime.datetime.now().strftime("%H:%M:%S")
+        row = [
+            mapping["[[DATE]]"], now_time, audit_data.get("title", ""), audit_data.get("org_id", ""),
+            audit_data.get("canonical_url", ""), mapping["[[NICHE]]"], audit_data.get("rating", ""),
+            mapping["[[SCORE]]"], mapping["[[LOST_LEADS]]"], mapping["[[REV_LOSS_FMT]]"],
+            links["pdf"], links["txt"], links["json"]
+        ]
+        try:
+            sheets_service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id.strip(), range="Лист1!A:M", valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS", body={"values": [row]}
+            ).execute()
+            if logger:
+                logger.log("Строка аудита успешно зафиксирована в Google Таблице!", "SUCCESS")
+        except Exception as e:
+            if logger:
+                logger.log(f"Запись в Google Таблицу пропущена: {e}", "WARN")
 
+    return links
+
+# ==========================================================
+# 8. СКВОЗНОЙ КОНВЕЙЕР ОБРАБОТКИ (PIPELINE RUNNER)
+# ==========================================================
+
+def execute_full_pipeline(raw_data: Any, logger: TerminalLogger):
+    """Выполняет полный цикл аудита, сборки PDF и облачной синхронизации за один проход."""
+    try:
+        # 1. Парсинг и скоринг 41 критерия
+        logger.log("ЭТАП 1/5: Анализ карточки и скоринг 41 критерия PIN100", "STEP")
+        audit = parse_apify_or_raw_json(raw_data, logger)
+        st.session_state.current_audit = audit
+
+        # 2. Расчет финансовых метрик
+        logger.log("ЭТАП 2/5: Расчет юнит-экономики и упущенной выручки", "STEP")
+        mapping = calculate_report_metrics(audit)
+        st.session_state.current_mapping = mapping
+        logger.log(f"Упущенная выручка: {mapping['[[REV_LOSS_FMT]]']} ₽/мес, Потери: ~{mapping['[[LOST_LEADS]]']} чел/мес", "INFO")
+
+        # 3. Формирование письма
+        logger.log("ЭТАП 3/5: Генерация персонализированного письма для ЛПР (Icebreaker)", "STEP")
         lost_leads_int = int(mapping["[[LOST_LEADS]]"])
         n_def = NICHE_CONFIG.get(audit.get("niche", "DENTISTRY"), NICHE_CONFIG["DENTISTRY"])
         icebreaker_txt = generate_icebreaker(
@@ -743,28 +705,11 @@ def run_streamlit_app() -> None:
             lost_leads=lost_leads_int,
             niche_genitive=n_def["niche_genitive"]
         )
-        st.text_area("Текст для WhatsApp / Telegram / Email:", value=icebreaker_txt, height=220)
+        st.session_state.current_icebreaker = icebreaker_txt
+        logger.log("Текст первого касания подготовлен без использования клише", "SUCCESS")
 
-        st.markdown("**Выявленные ключевые уязвимости профиля (Стр. 3 отчета):**")
-        for idx, f in enumerate(audit.get("top_failures", []), 1):
-            st.markdown(f"**{idx}. {f['title']}**")
-            st.caption(f["desc"])
-
-    with col_right:
-        st.subheader(f"📊 Экономика потерь «{audit['title']}»")
-        m1, m2 = st.columns(2)
-        m1.metric("Оценка карточки", f"{mapping['[[SCORE]]']} / 100")
-        m2.metric("Потери пациентов", f"~{mapping['[[LOST_LEADS]]']} чел/мес")
-
-        m3, m4 = st.columns(2)
-        m3.metric("Упущенная выручка", f"{mapping['[[REV_LOSS_FMT]]']} ₽/мес")
-        m4.metric("Потери за неделю", f"~{mapping['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
-
-        st.caption(f"Источник бенчмарков ниши: **{mapping['[[BENCHMARK_SOURCE]]']}**")
-
-        st.divider()
-
-        st.subheader("📄 4-страничный PDF-отчет")
+        # 4. Компиляция PDF-отчета
+        logger.log("ЭТАП 4/5: Компиляция 4-страничного PDF-отчета (Typst)", "STEP")
         template_file = Path("report_template.typ")
         output_dir = Path("output")
         output_dir.mkdir(exist_ok=True)
@@ -775,61 +720,183 @@ def run_streamlit_app() -> None:
         txt_path = output_dir / f"{file_prefix}_icebreaker.txt"
         json_path = output_dir / f"{file_prefix}_data.json"
 
-        if st.button("🚀 Скомпилировать PDF и отправить на Google Диск", type="primary", use_container_width=True):
-            if not template_file.exists():
-                err_msg = "Файл report_template.typ не найден рядом с app.py."
-                st.error(err_msg)
-                send_telegram_error(err_msg, "Компиляция PDF")
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(icebreaker_txt)
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(audit, f, ensure_ascii=False, indent=2)
+
+        if not template_file.exists():
+            err = "Шаблон report_template.typ не найден рядом с app.py"
+            logger.log(err, "ERROR")
+            send_telegram_error(err, "Компиляция PDF")
+        else:
+            rendered = render_typst_template(template_file, mapping)
+            ok, err_typst = compile_typst_pdf(rendered, pdf_path, output_dir, logger)
+            if ok:
+                st.session_state.pdf_path = str(pdf_path)
             else:
-                with st.spinner("Компилируем PDF-отчет и сохраняем файлы на Google Диск..."):
-                    with open(txt_path, "w", encoding="utf-8") as f:
-                        f.write(icebreaker_txt)
-                    with open(json_path, "w", encoding="utf-8") as f:
-                        json.dump(audit, f, ensure_ascii=False, indent=2)
+                logger.log(f"Сбой компиляции Typst: {err_typst}", "ERROR")
+                send_telegram_error(err_typst, f"Typst компиляция {audit['title']}")
 
-                    rendered = render_typst_template(template_file, mapping)
-                    ok, err = compile_typst_pdf(rendered, pdf_path, output_dir)
+        # 5. Синхронизация с Google
+        logger.log("ЭТАП 5/5: Облачная синхронизация (Google Drive и Таблица)", "STEP")
+        target_sheet = os.getenv("GOOGLE_SHEET_ID", "")
+        if GOOGLE_LIBS_AVAILABLE and pdf_path.exists():
+            try:
+                links = sync_results_to_google(
+                    audit_data=audit,
+                    mapping=mapping,
+                    pdf_path=pdf_path,
+                    txt_path=txt_path,
+                    json_path=json_path,
+                    spreadsheet_id=target_sheet,
+                    logger=logger
+                )
+                st.session_state.drive_links = links
+            except Exception as ex_g:
+                logger.log(f"Google Drive: {ex_g}", "WARN")
+                send_telegram_error(str(ex_g), f"Синхронизация {audit['title']}")
+        else:
+            logger.log("Выгрузка в облако пропущена (пакеты Google не подключены или PDF не собран)", "WARN")
 
-                    if ok:
-                        st.success("PDF-отчет успешно сгенерирован!")
-                        with open(pdf_path, "rb") as f:
-                            st.download_button(
-                                label="📥 Скачать готовый PDF-отчет",
-                                data=f.read(),
-                                file_name=pdf_path.name,
-                                mime="application/pdf",
-                                use_container_width=True
-                            )
+        logger.log("🏁 КОНВЕЙЕР УСПЕШНО ЗАВЕРШЕН!", "SUCCESS")
 
-                        target_sheet = os.getenv("GOOGLE_SHEET_ID", "")
-                        if GOOGLE_LIBS_AVAILABLE:
-                            try:
-                                links = sync_results_to_google(
-                                    audit_data=audit,
-                                    mapping=mapping,
-                                    pdf_path=pdf_path,
-                                    txt_path=txt_path,
-                                    json_path=json_path,
-                                    spreadsheet_id=target_sheet
-                                )
-                                st.session_state.drive_links = links
-                                st.balloons()
-                            except Exception as ex:
-                                err_msg = f"Ошибка выгрузки на Google Диск: {ex}"
-                                st.warning(err_msg)
-                                send_telegram_error(err_msg, f"Синхронизация Google Drive для {audit['title']}")
-                        else:
-                            st.info("Для синхронизации с Google Диском добавьте google-api-python-client в requirements.txt.")
-                    else:
-                        st.error(f"Ошибка компиляции Typst: {err}")
-                        send_telegram_error(err, f"Typst компиляция для {audit['title']}")
+    except Exception as ex:
+        err_msg = f"Критический сбой: {ex}"
+        logger.log(err_msg, "ERROR")
+        send_telegram_error(err_msg, "Выполнение конвейера PIN100")
 
-        if st.session_state.drive_links:
-            st.success("✅ Все материалы сохранены в целевые папки на Google Диске!")
-            l = st.session_state.drive_links
-            st.markdown(f"📄 **PDF на Диске:** [Открыть файл]({l.get('pdf', '#')})")
-            st.markdown(f"✉️ **Письмо на Диске:** [Открыть файл]({l.get('txt', '#')})")
-            st.markdown(f"⚙️ **JSON на Диске:** [Открыть файл]({l.get('json', '#')})")
+# ==========================================================
+# 9. ИНТЕРФЕЙС STREAMLIT
+# ==========================================================
+
+def run_streamlit_app() -> None:
+    if "current_audit" not in st.session_state:
+        st.session_state.current_audit = None
+    if "current_mapping" not in st.session_state:
+        st.session_state.current_mapping = None
+    if "current_icebreaker" not in st.session_state:
+        st.session_state.current_icebreaker = ""
+    if "drive_links" not in st.session_state:
+        st.session_state.drive_links = None
+    if "pdf_path" not in st.session_state:
+        st.session_state.pdf_path = ""
+
+    st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
+    st.caption("Прямой API-краулинг Яндекс Карт, персонализированное письмо для ЛПР и 4-страничный PDF-отчет.")
+
+    tab_json, tab_url = st.tabs([
+        "📋 Загрузить готовый JSON из Apify",
+        "🔗 Ссылка на Яндекс Карты (Прямой API Apify)"
+    ])
+
+    # Вкладка 1: Загрузка готового JSON
+    with tab_json:
+        col_f1, col_f2 = st.columns([1.5, 2.5])
+        with col_f1:
+            uploaded_file = st.file_uploader("Перетащите файл .json из Apify:", type=["json"])
+        with col_f2:
+            json_text = st.text_area("Или вставьте код JSON из буфера:", height=100, placeholder='[{"title": "СпейсДент", ...}]')
+
+        run_json_btn = st.button("🚀 Запустить полный конвейер по JSON", type="primary", use_container_width=True)
+
+    # Вкладка 2: Ссылка через Apify
+    with tab_url:
+        with st.form("maps_url_form", clear_on_submit=False):
+            target_url = st.text_input(
+                "Ссылка на профиль в Яндекс Картах:",
+                placeholder="https://yandex.ru/maps/org/... или короткая https://yandex.ru/maps/-/... "
+            )
+            run_url_btn = st.form_submit_button("🚀 Запустить краулинг и полный аудит", type="primary", use_container_width=True)
+
+    # Терминал выполнения конвейера
+    st.subheader("🖥️ Терминал выполнения конвейера (Live Diagnostics)")
+    terminal_box = st.empty()
+    logger = TerminalLogger(terminal_box)
+
+    if run_json_btn:
+        logger.log("Старт конвейера из источника JSON...", "INFO")
+        raw_data = None
+        if uploaded_file is not None:
+            logger.log(f"Чтение загруженного файла '{uploaded_file.name}'...", "INFO")
+            uploaded_file.seek(0)
+            raw_data = json.load(uploaded_file)
+        elif json_text.strip():
+            logger.log("Чтение кода JSON из текстового поля...", "INFO")
+            raw_data = json.loads(json_text)
+        else:
+            logger.log("Ошибка: файл не выбран и текстовое поле пусто!", "ERROR")
+
+        if raw_data is not None:
+            execute_full_pipeline(raw_data, logger)
+
+    if run_url_btn:
+        if not target_url.strip():
+            logger.log("Ошибка: укажите ссылку на организацию!", "ERROR")
+        else:
+            logger.log(f"Старт конвейера по URL: {target_url}", "INFO")
+            try:
+                raw_data = fetch_profile_via_apify(target_url, logger)
+                execute_full_pipeline(raw_data, logger)
+            except Exception as ex_url:
+                logger.log(f"Ошибка Apify: {ex_url}", "ERROR")
+                send_telegram_error(str(ex_url), f"Apify URL: {target_url}")
+
+    # ==========================================================
+    # ВЫДАЧА РЕЗУЛЬТАТОВ (ОТОБРАЖАЕТСЯ АВТОМАТИЧЕСКИ ПОСЛЕ ЗАВЕРШЕНИЯ)
+    # ==========================================================
+    if st.session_state.current_audit and st.session_state.current_mapping:
+        audit = st.session_state.current_audit
+        mapping = st.session_state.current_mapping
+        icebreaker_txt = st.session_state.current_icebreaker
+
+        st.divider()
+        col_left, col_right = st.columns([1.1, 0.9])
+
+        with col_left:
+            st.subheader("✉️ Первое сообщение руководителю (Icebreaker)")
+            st.caption("Персонализированное обращение без формулировки «кассовый разрыв»:")
+            st.text_area("Текст для WhatsApp / Telegram / Email:", value=icebreaker_txt, height=220)
+
+            st.markdown("**Выявленные ключевые уязвимости профиля (Стр. 3 отчета):**")
+            for idx, f in enumerate(audit.get("top_failures", []), 1):
+                st.markdown(f"**{idx}. {f['title']}**")
+                st.caption(f["desc"])
+
+        with col_right:
+            st.subheader(f"📊 Экономика потерь «{audit['title']}»")
+            m1, m2 = st.columns(2)
+            m1.metric("Оценка карточки", f"{mapping['[[SCORE]]']} / 100")
+            m2.metric("Потери пациентов", f"~{mapping['[[LOST_LEADS]]']} чел/мес")
+
+            m3, m4 = st.columns(2)
+            m3.metric("Упущенная выручка", f"{mapping['[[REV_LOSS_FMT]]']} ₽/мес")
+            m4.metric("Потери за неделю", f"~{mapping['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
+
+            st.caption(f"Источник бенчмарков ниши: **{mapping['[[BENCHMARK_SOURCE]]']}**")
+
+            st.divider()
+
+            st.subheader("📄 4-страничный PDF-отчет")
+            if st.session_state.pdf_path and Path(st.session_state.pdf_path).exists():
+                with open(st.session_state.pdf_path, "rb") as f:
+                    st.download_button(
+                        label="📥 Скачать готовый PDF-отчет",
+                        data=f.read(),
+                        file_name=Path(st.session_state.pdf_path).name,
+                        mime="application/pdf",
+                        type="primary",
+                        use_container_width=True
+                    )
+            else:
+                st.warning("Файл PDF еще не собран. Проверьте сообщения в терминале выше.")
+
+            if st.session_state.drive_links:
+                st.success("✅ Все материалы сохранены на Google Диск!")
+                l = st.session_state.drive_links
+                st.markdown(f"📄 **PDF на Диске:** [Открыть файл]({l.get('pdf', '#')})")
+                st.markdown(f"✉️ **Письмо на Диске:** [Открыть файл]({l.get('txt', '#')})")
+                st.markdown(f"⚙️ **JSON на Диске:** [Открыть файл]({l.get('json', '#')})")
 
 
 if __name__ == "__main__":
