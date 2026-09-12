@@ -24,6 +24,14 @@ if env_file.exists():
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip().strip("'\""))
 
+# Импорт Python-библиотеки Typst
+try:
+    import typst
+    PY_TYPST_AVAILABLE = True
+except ImportError:
+    PY_TYPST_AVAILABLE = False
+
+# Импорт библиотек Google
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
@@ -61,7 +69,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "client_word": "пациент",
         "quality_phrase": "медицинской помощи и врачебной квалификации",
         "benchmark_leads": 70,       # Медиана первичных обращений ТОП-3 клиник района
-        "base_check": 5500,          # Средний чек первичного визита (диагностика + лечение/гигиена)
+        "base_check": 5500,          # Средний чек первичного визита (диагностика + гигиена/лечение)
         "ltv_months": 12,            # Средний горизонт прикрепления семьи (2.4 визита в год)
         "benchmark_source": "BusinesStat («Анализ рынка стоматологии в РФ») и РБК Исследования рынков",
     },
@@ -160,7 +168,7 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
 # ==========================================================
 
 def send_telegram_error(error_message: str, context: str = "") -> bool:
-    """Отправляет уведомление об ошибке в Telegram (не блокируя интерфейс)."""
+    """Отправляет уведомление об ошибке в Telegram (таймаут 3с, не вешает UI)."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
@@ -169,7 +177,7 @@ def send_telegram_error(error_message: str, context: str = "") -> bool:
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     text = (
-        f"🚨 <b>PIN100 Analytics: Ошибка обработки</b>\n\n"
+        f"🚨 <b>PIN100 Analytics: Ошибка конвейера</b>\n\n"
         f"<b>Контекст:</b> {context}\n"
         f"<b>Причина:</b> <code>{error_message}</code>\n"
         f"<b>Время:</b> {datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
@@ -185,10 +193,7 @@ def send_telegram_error(error_message: str, context: str = "") -> bool:
 # ==========================================================
 
 def fetch_yandex_maps_profile(raw_url: str) -> Dict[str, Any]:
-    """
-    Распаковывает короткие ссылки Яндекс Карт (/maps/-/), следует по редиректам
-    и извлекает данные организации из мета-тегов и микроразметки.
-    """
+    """Распаковывает короткие ссылки и извлекает метаданные с сохранением регистра названия."""
     clean_url = raw_url.strip()
     if not clean_url:
         raise ValueError("URL ссылки пуст.")
@@ -211,7 +216,7 @@ def fetch_yandex_maps_profile(raw_url: str) -> Dict[str, Any]:
     if m_id:
         org_id = m_id.group(1)
 
-    # 2. Извлечение названия
+    # 2. Извлечение названия (сохраняем оригинальный регистр)
     title = None
     m_og = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\'](.*?)["\']', html_text, re.IGNORECASE)
     if m_og:
@@ -221,10 +226,11 @@ def fetch_yandex_maps_profile(raw_url: str) -> Dict[str, Any]:
     if not title:
         m_slug = re.search(r'/org/([^/?#]+)/\d+', canonical_url)
         if m_slug:
-            title = urllib.parse.unquote(m_slug.group(1)).replace('_', ' ').replace('-', ' ').title()
+            raw_slug = urllib.parse.unquote(m_slug.group(1)).replace('_', ' ').replace('-', ' ')
+            title = raw_slug[:1].upper() + raw_slug[1:]
 
-    if not title:
-        title = "Новая организация"
+    if not title or title.lower() in ["яндекс карты", "yandex maps"]:
+        title = "Организация"
 
     # 3. Рейтинг
     rating = 5.0
@@ -296,10 +302,10 @@ def evaluate_audit_scores(raw_scores: Dict[str, float], niche: str = "DENTISTRY"
 
 
 def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
-    """Универсальный парсер JSON (массивы Apify, одиночные объекты, с детальной валидацией)."""
+    """Универсальный парсер JSON с корректной обработкой конкурентов и названий."""
     if isinstance(raw_input, list):
         if not raw_input:
-            raise ValueError("Передан пустой список JSON. В файле нет объектов карточек.")
+            raise ValueError("Передан пустой список JSON.")
         data = raw_input[0]
     elif isinstance(raw_input, dict):
         if "items" in raw_input and isinstance(raw_input["items"], list):
@@ -311,14 +317,14 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
         else:
             data = raw_input
     else:
-        raise ValueError(f"Неподдерживаемый тип данных: ожидался dict или list, получен {type(raw_input).__name__}.")
+        raise ValueError(f"Неподдерживаемый тип данных: {type(raw_input).__name__}.")
 
     if not isinstance(data, dict):
-        raise ValueError(f"Корневой элемент карточки не является объектом. Получен {type(data).__name__}.")
+        raise ValueError(f"Корневой элемент карточки не является объектом: {type(data).__name__}.")
 
     title = data.get("title") or data.get("name") or data.get("companyName")
     if not title:
-        raise ValueError("В переданном JSON отсутствует название организации (поля 'title', 'name' или 'companyName').")
+        raise ValueError("В переданном JSON отсутствует название организации.")
 
     org_id = str(data.get("org_id") or data.get("id") or data.get("companyId") or "0000000000")
     rating = float(data.get("rating") or data.get("reviewsRating") or data.get("totalScore") or 5.0)
@@ -400,9 +406,10 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
     if any(k in data for k in ["score", "totalScore", "readiness_score", "pin100_score"]):
         calculated_score = float(data.get("score") or data.get("totalScore") or data.get("readiness_score") or data.get("pin100_score"))
 
+    # Конкуренты: нейтральные формулировки без чужих городов
     comps = data.get("competitors") or []
     if not comps or not isinstance(comps, list):
-        comps = ["«РозДент»", "«На Приморской»"] if niche == "DENTISTRY" else ["клиники конкурентов", "соседние центры"]
+        comps = ["соседние клиники локации", "сетевые клиники района"]
 
     n_def = NICHE_CONFIG.get(niche, NICHE_CONFIG["DENTISTRY"])
 
@@ -530,12 +537,18 @@ def sanitize_filename(name: str) -> str:
 
 
 def generate_icebreaker(title: str, rating: float | str, competitors: List[str], lost_leads: int, niche_genitive: str = "стоматологий") -> str:
-    if competitors and len(competitors) >= 2:
+    # Проверяем, являются ли конкуренты реальными названиями
+    has_real_comps = (
+        competitors and 
+        isinstance(competitors, list) and 
+        len(competitors) >= 2 and 
+        not any(w in competitors[0].lower() for w in ["конкурент", "клиник", "сосед"])
+    )
+
+    if has_real_comps:
         comp_str = f"«{competitors[0].strip('«»')}» и «{competitors[1].strip('«»')}»"
-    elif competitors and len(competitors) == 1:
-        comp_str = f"«{competitors[0].strip('«»')}»"
     else:
-        comp_str = "прямые конкуренты района"
+        comp_str = "соседние клиники локации"
 
     leads_range_str = f"{max(1, lost_leads - 2)}–{lost_leads + 3}"
 
@@ -616,17 +629,31 @@ def render_typst_template(template_path: Path, mapping: Dict[str, str]) -> str:
 
 
 def compile_typst_pdf(typst_content: str, output_pdf_path: Path, work_dir: Path) -> Tuple[bool, str]:
+    """Компилирует PDF через Python-модуль typst либо через системный CLI."""
     temp_typ = work_dir / f"temp_{output_pdf_path.stem}.typ"
     try:
         with open(temp_typ, "w", encoding="utf-8") as f:
             f.write(typst_content)
+
+        # 1. Приоритет: библиотека typst из requirements.txt
+        if PY_TYPST_AVAILABLE:
+            try:
+                typst.compile(str(temp_typ), output=str(output_pdf_path))
+                return True, ""
+            except Exception as ex_py:
+                pass  # пробуем CLI как fallback
+
+        # 2. Резерв: CLI typst
         cmd = ["typst", "compile", str(temp_typ), str(output_pdf_path)]
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return True, ""
-    except subprocess.CalledProcessError as e:
-        return False, f"Ошибка Typst: {e.stderr}"
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0:
+            return True, ""
+        return False, f"Ошибка CLI Typst: {res.stderr}"
+
     except FileNotFoundError:
-        return False, "Утилита Typst не найдена в PATH системы."
+        return False, "Библиотека Typst не установлена в Python и не найдена в PATH системы."
+    except Exception as e:
+        return False, f"Сбой компиляции Typst: {e}"
     finally:
         if temp_typ.exists():
             try:
@@ -645,14 +672,14 @@ def run_streamlit_app() -> None:
         st.session_state.drive_links = None
 
     st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
-    st.caption("Автоматический расчет потерь, письмо для ЛПР и 4-страничный PDF-отчет на базе данных Яндекс Карт.")
+    st.caption("Автоматический расчет потерь, персонализированное письмо для ЛПР и 4-страничный PDF-отчет.")
 
     tab_url, tab_json = st.tabs([
         "🔗 Ссылка на профиль в Яндекс Картах (Основной поток)",
         "📋 Загрузить JSON из Apify"
     ])
 
-    # Вкладка 1: Ссылка на профиль (в форме для мгновенной реакции на Enter)
+    # Вкладка 1: Ссылка на профиль в Яндекс Картах
     with tab_url:
         with st.form("maps_url_form", clear_on_submit=False):
             target_url = st.text_input(
@@ -683,7 +710,7 @@ def run_streamlit_app() -> None:
         with col_f1:
             uploaded_file = st.file_uploader("Перетащите файл .json из Apify:", type=["json"])
         with col_f2:
-            json_text = st.text_area("Или вставьте код JSON из буфера:", height=100, placeholder='[{"title": "Спейсдент", ...}]')
+            json_text = st.text_area("Или вставьте код JSON из буфера:", height=100, placeholder='[{"title": "СпейсДент", ...}]')
 
         calc_json_btn = st.button("⚡ Рассчитать аудит по JSON", type="primary", use_container_width=True)
 
@@ -829,7 +856,7 @@ def run_streamlit_app() -> None:
                             st.info("Для синхронизации с Google Диском добавьте google-api-python-client в requirements.txt.")
                     else:
                         st.error(f"Ошибка компиляции Typst: {err}")
-                        send_telegram_error(err, f"Typst CLI для {audit['title']}")
+                        send_telegram_error(err, f"Typst компиляция для {audit['title']}")
 
         if st.session_state.drive_links:
             st.success("✅ Все материалы сохранены в целевые папки на Google Диске!")
