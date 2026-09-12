@@ -156,11 +156,11 @@ CRITERIA_REGISTRY: Dict[str, Dict[str, Any]] = {
 }
 
 # ==========================================================
-# 3. УВЕДОМЛЕНИЯ В TELEGRAM И ОБРАБОТКА ОШИБОК
+# 3. УВЕДОМЛЕНИЯ В TELEGRAM
 # ==========================================================
 
 def send_telegram_error(error_message: str, context: str = "") -> bool:
-    """Отправляет уведомление об ошибке в Telegram-канал/чат администратора."""
+    """Отправляет уведомление об ошибке в Telegram (не блокируя интерфейс)."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
@@ -175,14 +175,88 @@ def send_telegram_error(error_message: str, context: str = "") -> bool:
         f"<b>Время:</b> {datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
     )
     try:
-        resp = requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=5)
+        resp = requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=3)
         return resp.status_code == 200
     except Exception:
         return False
 
 # ==========================================================
-# 4. АВТОМАТИЧЕСКИЙ СКОРИНГ И НАДЕЖНЫЙ ПАРСИНГ APIFY
+# 4. СЕТЕВОЙ ПАРСЕР ССЫЛОК И СКОРИНГ
 # ==========================================================
+
+def fetch_yandex_maps_profile(raw_url: str) -> Dict[str, Any]:
+    """
+    Распаковывает короткие ссылки Яндекс Карт (/maps/-/), следует по редиректам
+    и извлекает данные организации из мета-тегов и микроразметки.
+    """
+    clean_url = raw_url.strip()
+    if not clean_url:
+        raise ValueError("URL ссылки пуст.")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+    }
+
+    session = requests.Session()
+    session.headers.update(headers)
+
+    resp = session.get(clean_url, allow_redirects=True, timeout=8)
+    canonical_url = resp.url
+    html_text = resp.text
+
+    # 1. Извлечение ID
+    org_id = "0000000000"
+    m_id = re.search(r'/org/(?:[^/?#]+/)?(\d+)', canonical_url) or re.search(r'[?&]oid=(\d+)', canonical_url)
+    if m_id:
+        org_id = m_id.group(1)
+
+    # 2. Извлечение названия
+    title = None
+    m_og = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\'](.*?)["\']', html_text, re.IGNORECASE)
+    if m_og:
+        raw_t = m_og.group(1).replace("— Яндекс Карты", "").replace("- Яндекс Карты", "").strip()
+        title = re.split(r'[,|•·—–]', raw_t)[0].strip()
+
+    if not title:
+        m_slug = re.search(r'/org/([^/?#]+)/\d+', canonical_url)
+        if m_slug:
+            title = urllib.parse.unquote(m_slug.group(1)).replace('_', ' ').replace('-', ' ').title()
+
+    if not title:
+        title = "Новая организация"
+
+    # 3. Рейтинг
+    rating = 5.0
+    m_rate = re.search(r'itemprop=["\']ratingValue["\']\s+content=["\']([0-9.]+)["\']', html_text)
+    if not m_rate:
+        m_rate = re.search(r'class="business-rating-badge-view__rating">([0-9.]+)</span>', html_text)
+    if m_rate:
+        try:
+            rating = float(m_rate.group(1))
+        except ValueError:
+            pass
+
+    # 4. Объем отзывов
+    reviews_count = 50
+    m_rev = re.search(r'itemprop=["\']reviewCount["\']\s+content=["\'](\d+)["\']', html_text)
+    if m_rev:
+        try:
+            reviews_count = int(m_rev.group(1))
+        except ValueError:
+            pass
+
+    return {
+        "title": title,
+        "org_id": org_id,
+        "rating": rating,
+        "reviewsRating": rating,
+        "reviewsCount": reviews_count,
+        "canonical_url": canonical_url,
+        "url": canonical_url,
+        "features": ["онлайн-запись", "врачи", "прайс-лист"] if "онлайн" in html_text.lower() else []
+    }
+
 
 def evaluate_audit_scores(raw_scores: Dict[str, float], niche: str = "DENTISTRY") -> Tuple[float, List[Dict[str, Any]]]:
     is_dentistry = (niche == "DENTISTRY")
@@ -225,12 +299,12 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
     """Универсальный парсер JSON (массивы Apify, одиночные объекты, с детальной валидацией)."""
     if isinstance(raw_input, list):
         if not raw_input:
-            raise ValueError("Передан пустой список JSON. Apify не вернул ни одного объекта карточки.")
+            raise ValueError("Передан пустой список JSON. В файле нет объектов карточек.")
         data = raw_input[0]
     elif isinstance(raw_input, dict):
         if "items" in raw_input and isinstance(raw_input["items"], list):
             if not raw_input["items"]:
-                raise ValueError("Ключ 'items' в JSON из Apify пуст.")
+                raise ValueError("Ключ 'items' в файле пуст.")
             data = raw_input["items"][0]
         elif "data" in raw_input and isinstance(raw_input["data"], (dict, list)):
             return parse_apify_or_raw_json(raw_input["data"])
@@ -240,7 +314,7 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
         raise ValueError(f"Неподдерживаемый тип данных: ожидался dict или list, получен {type(raw_input).__name__}.")
 
     if not isinstance(data, dict):
-        raise ValueError(f"Корневой элемент карточки не является объектом (JSON Object). Получен {type(data).__name__}.")
+        raise ValueError(f"Корневой элемент карточки не является объектом. Получен {type(data).__name__}.")
 
     title = data.get("title") or data.get("name") or data.get("companyName")
     if not title:
@@ -262,7 +336,6 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
 
     raw_scores: Dict[str, float] = {}
 
-    # Сценарий 1: Уже рассчитанный чеклист
     if "criteria_scores" in data and isinstance(data["criteria_scores"], dict):
         for c_code, c_meta in CRITERIA_REGISTRY.items():
             raw_scores[c_code] = float(data["criteria_scores"].get(c_code, c_meta["weight_dentistry"]))
@@ -270,7 +343,6 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
         for c_code, c_meta in CRITERIA_REGISTRY.items():
             raw_scores[c_code] = float(data["checks"].get(c_code, c_meta["weight_dentistry"]))
     else:
-        # Сценарий 2: Сырые данные парсера Яндекс Карт
         for c_code, c_meta in CRITERIA_REGISTRY.items():
             raw_scores[c_code] = float(c_meta["weight_dentistry"])
 
@@ -311,12 +383,12 @@ def parse_apify_or_raw_json(raw_input: Any) -> Dict[str, Any]:
         if rating < 4.5:
             raw_scores["REP-27.1"] = 0.0
 
-        # Объем базы отзывов
+        # База отзывов
         rev_count = int(data.get("reviewsCount") or data.get("ratingCount") or len(data.get("reviews", [])) or 0)
         if rev_count < 50:
             raw_scores["REP-28.1"] = 1.0 if rev_count >= 15 else 0.0
 
-        # Фотографии и синяя галочка
+        # Фото и верификация
         p_count = int(data.get("photosCount", 0)) or len(data.get("photos", []))
         if p_count < 5:
             raw_scores["CONT-38.1"] = 0.5
@@ -571,97 +643,92 @@ def run_streamlit_app() -> None:
         st.session_state.current_audit = None
     if "drive_links" not in st.session_state:
         st.session_state.drive_links = None
-    if "last_file_id" not in st.session_state:
-        st.session_state.last_file_id = ""
 
     st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
     st.caption("Автоматический расчет потерь, письмо для ЛПР и 4-страничный PDF-отчет на базе данных Яндекс Карт.")
 
-    tab_json, tab_url = st.tabs([
-        "📋 Загрузить JSON из Apify (Основной поток)",
-        "🔗 Ссылка на профиль в Яндекс Картах"
+    tab_url, tab_json = st.tabs([
+        "🔗 Ссылка на профиль в Яндекс Картах (Основной поток)",
+        "📋 Загрузить JSON из Apify"
     ])
 
+    # Вкладка 1: Ссылка на профиль (в форме для мгновенной реакции на Enter)
+    with tab_url:
+        with st.form("maps_url_form", clear_on_submit=False):
+            target_url = st.text_input(
+                "Ссылка на организацию в Яндекс Картах:",
+                placeholder="Вставьте ссылку любого формата: https://yandex.ru/maps/org/... или короткую https://yandex.ru/maps/-/... "
+            )
+            submit_url = st.form_submit_button("🚀 Запустить аудит по ссылке", type="primary", use_container_width=True)
+
+        if submit_url:
+            if not target_url.strip():
+                st.warning("⚠️ Пожалуйста, вставьте ссылку на организацию в поле выше.")
+            else:
+                with st.spinner("⏳ Подключаемся к Яндекс Картам, считываем профиль и рассчитываем скоринг..."):
+                    try:
+                        raw_card = fetch_yandex_maps_profile(target_url)
+                        st.session_state.current_audit = parse_apify_or_raw_json(raw_card)
+                        st.session_state.drive_links = None
+                        st.success(f"✅ Карточка «{st.session_state.current_audit['title']}» успешно определена! Оценка: {st.session_state.current_audit['score']}/100")
+                        st.rerun()
+                    except Exception as e:
+                        err_msg = f"Ошибка обработки ссылки: {e}"
+                        st.error(err_msg)
+                        send_telegram_error(err_msg, f"URL: {target_url}")
+
+    # Вкладка 2: Загрузка готового JSON
     with tab_json:
         col_f1, col_f2 = st.columns([1.5, 2.5])
         with col_f1:
             uploaded_file = st.file_uploader("Перетащите файл .json из Apify:", type=["json"])
         with col_f2:
-            json_text = st.text_area("Или вставьте код JSON:", height=100, placeholder='[{"title": "Клиника", ...}]')
-            parse_btn = st.button("⚡ Рассчитать по коду JSON", type="primary", use_container_width=True)
+            json_text = st.text_area("Или вставьте код JSON из буфера:", height=100, placeholder='[{"title": "Спейсдент", ...}]')
 
-        raw_data = None
-        error_context = ""
+        calc_json_btn = st.button("⚡ Рассчитать аудит по JSON", type="primary", use_container_width=True)
 
-        if uploaded_file is not None:
-            file_id = f"{uploaded_file.name}_{uploaded_file.size}"
-            if st.session_state.last_file_id != file_id:
-                error_context = f"Файл {uploaded_file.name}"
-                try:
-                    uploaded_file.seek(0)
-                    raw_data = json.load(uploaded_file)
-                    st.session_state.last_file_id = file_id
-                except Exception as ex:
-                    err_msg = f"Ошибка чтения JSON файла: {ex}"
-                    st.error(err_msg)
-                    send_telegram_error(err_msg, error_context)
+        if calc_json_btn:
+            with st.spinner("⏳ Анализируем карточку по 41 критерию..."):
+                raw_data = None
+                error_context = ""
 
-        elif parse_btn and json_text.strip():
-            error_context = "Текстовый буфер JSON"
-            try:
-                raw_data = json.loads(json_text)
-            except Exception as ex:
-                err_msg = f"Невалидный синтаксис JSON: {ex}"
-                st.error(err_msg)
-                send_telegram_error(err_msg, error_context)
+                if uploaded_file is not None:
+                    error_context = f"Файл: {uploaded_file.name}"
+                    try:
+                        uploaded_file.seek(0)
+                        raw_data = json.load(uploaded_file)
+                    except Exception as ex:
+                        err_msg = f"Ошибка чтения JSON файла: {ex}"
+                        st.error(err_msg)
+                        send_telegram_error(err_msg, error_context)
+                elif json_text.strip():
+                    error_context = "Текстовый ввод JSON"
+                    try:
+                        raw_data = json.loads(json_text)
+                    except Exception as ex:
+                        err_msg = f"Невалидный синтаксис JSON: {ex}"
+                        st.error(err_msg)
+                        send_telegram_error(err_msg, error_context)
+                else:
+                    st.warning("⚠️ Пожалуйста, загрузите .json файл или вставьте текст в поле выше.")
 
-        if raw_data is not None:
-            try:
-                st.session_state.current_audit = parse_apify_or_raw_json(raw_data)
-                st.session_state.drive_links = None
-                st.success(f"Организация «{st.session_state.current_audit['title']}» успешно оцифрована! Оценка готовности: {st.session_state.current_audit['score']}/100")
-            except Exception as ex:
-                err_msg = f"Ошибка структуры данных Apify: {ex}"
-                st.error(err_msg)
-                send_telegram_error(err_msg, error_context or "Парсинг карточки")
-
-    with tab_url:
-        col_u1, col_u2 = st.columns([4, 1.2])
-        with col_u1:
-            target_url = st.text_input("Ссылка на профиль в Яндекс Картах:", placeholder="https://yandex.ru/maps/org/... или короткая https://yandex.ru/maps/-/... ", label_visibility="collapsed")
-        with col_u2:
-            if st.button("🚀 Запустить аудит по ссылке", type="primary", use_container_width=True):
-                if target_url.strip():
-                    with st.spinner("Анализируем карточку..."):
-                        try:
-                            org_id = "0000000000"
-                            m_id = re.search(r'/org/(?:[^/?#]+/)?(\d+)', target_url) or re.search(r'[?&]oid=(\d+)', target_url)
-                            if m_id:
-                                org_id = m_id.group(1)
-
-                            title = "Организация"
-                            m_slug = re.search(r'/org/([^/?#]+)/\d+', target_url)
-                            if m_slug:
-                                title = urllib.parse.unquote(m_slug.group(1)).replace('_', ' ').replace('-', ' ').title()
-
-                            st.session_state.current_audit = parse_apify_or_raw_json({
-                                "title": title,
-                                "org_id": org_id,
-                                "url": target_url,
-                                "rating": 5.0
-                            })
-                            st.session_state.drive_links = None
-                        except Exception as e:
-                            err_msg = f"Ошибка разбора URL: {e}"
-                            st.error(err_msg)
-                            send_telegram_error(err_msg, f"URL: {target_url}")
+                if raw_data is not None:
+                    try:
+                        st.session_state.current_audit = parse_apify_or_raw_json(raw_data)
+                        st.session_state.drive_links = None
+                        st.success(f"✅ Организация «{st.session_state.current_audit['title']}» успешно оцифрована! Балл: {st.session_state.current_audit['score']}/100")
+                        st.rerun()
+                    except Exception as ex:
+                        err_msg = f"Ошибка структуры данных карточки: {ex}"
+                        st.error(err_msg)
+                        send_telegram_error(err_msg, error_context or "Парсинг JSON")
 
     # ------------------------------------------------------
-    # ВЫДАЧА РЕЗУЛЬТАТОВ: ПИСЬМО + PDF + ЭКОНОМИКА
+    # ДАШБОРД РЕЗУЛЬТАТОВ: ПИСЬМО + ПОТЕРИ + PDF
     # ------------------------------------------------------
     if not st.session_state.current_audit:
         st.divider()
-        st.info("👆 Загрузите JSON файл клиники из Apify или укажите ссылку на Яндекс Карты для старта.")
+        st.info("👆 Вставьте ссылку на Яндекс Карты или загрузите JSON карточки для старта конвейера.")
         return
 
     audit = st.session_state.current_audit
@@ -691,9 +758,9 @@ def run_streamlit_app() -> None:
             st.caption(f["desc"])
 
     with col_right:
-        st.subheader(f"📊 Экономика карточки «{audit['title']}»")
+        st.subheader(f"📊 Экономика потерь «{audit['title']}»")
         m1, m2 = st.columns(2)
-        m1.metric("Оценка профиля", f"{mapping['[[SCORE]]']} / 100")
+        m1.metric("Оценка карточки", f"{mapping['[[SCORE]]']} / 100")
         m2.metric("Потери пациентов", f"~{mapping['[[LOST_LEADS]]']} чел/мес")
 
         m3, m4 = st.columns(2)
@@ -721,7 +788,7 @@ def run_streamlit_app() -> None:
                 st.error(err_msg)
                 send_telegram_error(err_msg, "Компиляция PDF")
             else:
-                with st.spinner("Компилируем PDF и синхронизируем с Google Диском..."):
+                with st.spinner("Компилируем PDF-отчет и сохраняем файлы на Google Диск..."):
                     with open(txt_path, "w", encoding="utf-8") as f:
                         f.write(icebreaker_txt)
                     with open(json_path, "w", encoding="utf-8") as f:
@@ -759,10 +826,10 @@ def run_streamlit_app() -> None:
                                 st.warning(err_msg)
                                 send_telegram_error(err_msg, f"Синхронизация Google Drive для {audit['title']}")
                         else:
-                            st.info("Для синхронизации с Google Диском добавьте библиотеку google-api-python-client в requirements.txt.")
+                            st.info("Для синхронизации с Google Диском добавьте google-api-python-client в requirements.txt.")
                     else:
                         st.error(f"Ошибка компиляции Typst: {err}")
-                        send_telegram_error(err, f"Typst CLI компиляция для {audit['title']}")
+                        send_telegram_error(err, f"Typst CLI для {audit['title']}")
 
         if st.session_state.drive_links:
             st.success("✅ Все материалы сохранены в целевые папки на Google Диске!")
