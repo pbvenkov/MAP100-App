@@ -14,7 +14,8 @@
   footer: []
 )
 
-#set text(font: "Arial", size: 10pt, lang: "ru")
+// Безопасный стек шрифтов для Linux-серверов
+#set text(font: ("Arial", "Liberation Sans", "PT Sans", "sans-serif"), size: 10pt, lang: "ru")
 
 // СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ
 #text(size: 24pt, weight: "bold", fill: rgb("#e11d48"))[PIN100 ANALYTICS]
@@ -51,14 +52,14 @@
   columns: (1fr, 1fr),
   gutter: 1cm,
   rect(fill: rgb("#f8fafc"), inset: 15pt, width: 100%, radius: 4pt)[
-    #text(size: 10pt, fill: luma(100), transform: "uppercase")[Готовность карточки к приему трафика]
+    #text(size: 10pt, fill: luma(100))[ГОТОВНОСТЬ КАРТОЧКИ К ПРИЕМУ ТРАФИКА]
     #v(0.5em)
     #text(size: 24pt, weight: "bold", fill: rgb("#[[SCORE_COLOR]]"))[[[SCORE]]/100]
     #v(0.5em)
     #text(size: 9pt, fill: luma(80))[Оценка факторов конверсии и ранжирования]
   ],
   rect(fill: rgb("#fff1f2"), inset: 15pt, width: 100%, radius: 4pt)[
-    #text(size: 10pt, fill: rgb("#e11d48"), transform: "uppercase")[Прямые потери выручки]
+    #text(size: 10pt, fill: rgb("#e11d48"))[ПРЯМЫЕ ПОТЕРИ ВЫРУЧКИ]
     #v(0.5em)
     #text(size: 24pt, weight: "bold", fill: rgb("#e11d48"))[[[REV_LOSS_FMT]] ₽/мес]
     #v(0.5em)
@@ -73,7 +74,7 @@
 
 #v(1cm)
 #rect(stroke: (left: 4pt + rgb("#e11d48")), fill: rgb("#fafafa"), inset: 1em, width: 100%)[
-  #text(weight: "bold")[Критический вывод анализа:]\
+  #text(weight: "bold")[Критический вывод анализа:]
   #v(0.5em)
   [[EXECUTIVE_SUMMARY]]
 ]
@@ -85,23 +86,23 @@
   columns: (1fr, 1fr, 1fr),
   gutter: 0.5cm,
   rect(fill: rgb("#f8fafc"), inset: 10pt, width: 100%)[
-    #text(weight: "bold", size: 10pt)[1. ТРАФИК ЛИДЕРОВ РАЙОНА]\
+    #text(weight: "bold", size: 10pt)[1. ТРАФИК ЛИДЕРОВ РАЙОНА]
     #v(0.5em)
-    #text(size: 16pt, weight: "bold", fill: rgb("#3b82f6"))[[[CLIENT_LEADS]] обр./мес]\
+    #text(size: 16pt, weight: "bold", fill: rgb("#3b82f6"))[[[CLIENT_LEADS]] обр./мес]
     #v(0.5em)
     #text(size: 9pt)[Медиана прямых контактов: звонки, маршруты и онлайн-запись в ТОП-3 локации.]
   ],
   rect(fill: rgb("#f8fafc"), inset: 10pt, width: 100%)[
-    #text(weight: "bold", size: 10pt)[2. ЭКРАННЫЙ ФИЛЬТР]\
+    #text(weight: "bold", size: 10pt)[2. ЭКРАННЫЙ ФИЛЬТР]
     #v(0.5em)
-    #text(size: 16pt, weight: "bold", fill: rgb("#d97706"))[Отказ от звонка]\
+    #text(size: 16pt, weight: "bold", fill: rgb("#d97706"))[Отказ от звонка]
     #v(0.5em)
     #text(size: 9pt)[65% людей не звонят, если нет онлайн-записи или не виден понятный прайс.]
   ],
   rect(fill: rgb("#fff1f2"), inset: 10pt, width: 100%)[
-    #text(weight: "bold", size: 10pt)[3. УХОД К СОСЕДЯМ]\
+    #text(weight: "bold", size: 10pt)[3. УХОД К СОСЕДЯМ]
     #v(0.5em)
-    #text(size: 16pt, weight: "bold", fill: rgb("#e11d48"))[-[[REV_LOSS_FMT]] ₽/мес]\
+    #text(size: 16pt, weight: "bold", fill: rgb("#e11d48"))[-[[REV_LOSS_FMT]] ₽/мес]
     #v(0.5em)
     #text(size: 9pt)[[[LOST_LEADS]] [[TABLE_DECLENSION]] ежемесячно перетекают в активные карточки района.]
   ]
@@ -154,23 +155,23 @@
   columns: (1fr, 1fr, 1fr),
   gutter: 0.5cm,
   rect(fill: rgb("#f8fafc"), inset: 15pt, width: 100%, radius: 4pt)[
-    #text(weight: "bold", fill: rgb("#3b82f6"))[ЭТАП 1: СТАРТ]\
+    #text(weight: "bold", fill: rgb("#3b82f6"))[ЭТАП 1: СТАРТ]
     #v(0.3em)
-    #text(size: 9pt, weight: "bold")[3-5 дней]\
+    #text(size: 9pt, weight: "bold")[3-5 дней]
     #v(0.5em)
     #text(size: 10pt)[Привязка услуг к частым запросам пациентов, исправление меток входа, парковки и дублирующих адресов.]
   ],
   rect(fill: rgb("#f8fafc"), inset: 15pt, width: 100%, radius: 4pt)[
-    #text(weight: "bold", fill: rgb("#3b82f6"))[ЭТАП 2: ОЦИФРОВКА]\
+    #text(weight: "bold", fill: rgb("#3b82f6"))[ЭТАП 2: ОЦИФРОВКА]
     #v(0.3em)
-    #text(size: 9pt, weight: "bold")[14 дней]\
+    #text(size: 9pt, weight: "bold")[14 дней]
     #v(0.5em)
     #text(size: 10pt)[Подключение быстрой онлайн-записи, оформление карточек специалистов с опытом и фото, наглядный прейскурант.]
   ],
   rect(fill: rgb("#f8fafc"), inset: 15pt, width: 100%, radius: 4pt)[
-    #text(weight: "bold", fill: rgb("#3b82f6"))[ЭТАП 3: ЗАКРЕПЛЕНИЕ]\
+    #text(weight: "bold", fill: rgb("#3b82f6"))[ЭТАП 3: ЗАКРЕПЛЕНИЕ]
     #v(0.3em)
-    #text(size: 9pt, weight: "bold")[Постоянно]\
+    #text(size: 9pt, weight: "bold")[Постоянно]
     #v(0.5em)
     #text(size: 10pt)[Регламент ответов на отзывы пациентов, защита профиля от недостоверных правок, удержание в ТОП-3 района.]
   ]
