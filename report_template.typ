@@ -1,6 +1,6 @@
 #set page(
   paper: "a4",
-  margin: (x: 2cm, y: 2.5cm),
+  margin: (x: 2cm, y: 2cm),
   header: [
     #set text(8pt, fill: luma(120), font: ("Arial", "sans-serif"))
     #grid(
@@ -8,7 +8,7 @@
       align(left)[*PIN100 Analytics* | Конфиденциальный аудит гео-выдачи],
       align(right)[Стр. #context counter(page).display()]
     )
-    #v(0.3cm)
+    #v(0.2cm)
     #line(length: 100%, stroke: 0.5pt + luma(200))
   ],
   footer: [
@@ -17,9 +17,9 @@
   ]
 )
 
-// Базовые настройки типографики: читаемый размер, мягкий темный цвет текста
+// Базовые настройки типографики
 #set text(font: ("Arial", "Liberation Sans", "PT Sans", "sans-serif"), size: 11pt, fill: rgb("#0f172a"), lang: "ru")
-#set par(leading: 0.6em, justify: true)
+#set par(leading: 0.55em, justify: true)
 
 // =========================================================
 // СТРАНИЦА 1: ТИТУЛЬНЫЙ ЛИСТ
@@ -56,10 +56,10 @@
 #pagebreak()
 
 // =========================================================
-// СТРАНИЦА 2: РЕЗЮМЕ
+// СТРАНИЦА 2: РЕЗЮМЕ И ВОРОНКА ПОТЕРЬ
 // =========================================================
 #text(size: 18pt, weight: "bold")[Резюме для руководителя]
-#v(0.8cm)
+#v(0.5cm)
 
 #grid(
   columns: (1fr, 1fr),
@@ -80,11 +80,6 @@
   ]
 )
 
-#v(1cm)
-#text(size: 14pt, weight: "bold")[Парадокс локального поиска: почему высокого рейтинга больше недостаточно]
-#v(0.5em)
-Более 65% людей выбирают организацию в мобильных Картах за 40-60 секунд, не переходя на сайт (модель Zero-Click). Высокий рейтинг создает первичное доверие, но современные алгоритмы выдачи отдают верхние позиции карточкам с активным функционалом: мгновенная онлайн-запись, оцифрованный прайс и прямой чат. Карточка без этих инструментов теряет горячих клиентов еще до звонка администратору.
-
 #v(0.8cm)
 #rect(stroke: (left: 4pt + rgb("#be123c")), fill: rgb("#fafafa"), inset: 1.2em, width: 100%)[
   #text(weight: "bold", size: 12pt)[Критический вывод анализа:]
@@ -94,7 +89,7 @@
 
 #v(0.8cm)
 #text(size: 14pt, weight: "bold")[Воронка потерь: где именно карточка теряет клиентов]
-#v(0.5em)
+#v(0.5cm)
 #grid(
   columns: (1fr, 1fr, 1fr),
   gutter: 0.5cm,
@@ -121,13 +116,11 @@
   ]
 )
 
-#v(0.5cm)
-#block(breakable: false)[
-  #text(size: 8.5pt, fill: luma(120))[
-    \* Консервативный расчет первого визита (базовый чек [[CLIENT_CHECK_FMT]] ₽). С учетом повторных визитов и прикрепления клиентов годовой отток районного бюджета составляет до [[LTV_LOSS_FMT]] ₽. Источник бенчмарков: [[BENCHMARK_SOURCE]].\
-    \
-    Важное примечание: Оценка [[SCORE]] / 100 фиксирует исключительно техническую готовность профиля в гео-выдаче Яндекса, а не реальное качество [[QUALITY_PHRASE]]. Это программные особенности поисковой системы, которые не зависят от работы администраторов и специалистов.
-  ]
+#v(0.8cm)
+#text(size: 8.5pt, fill: luma(120))[
+  \* Консервативный расчет первого визита (базовый чек [[CLIENT_CHECK_FMT]] ₽). С учетом повторных визитов и прикрепления клиентов годовой отток районного бюджета составляет до [[LTV_LOSS_FMT]] ₽. Источник бенчмарков: [[BENCHMARK_SOURCE]].\
+  \
+  Важное примечание: Оценка [[SCORE]] / 100 фиксирует исключительно техническую готовность профиля в гео-выдаче Яндекса, а не реальное качество [[QUALITY_PHRASE]]. Это программные особенности поисковой системы, которые не зависят от работы администраторов и специалистов.
 ]
 
 #pagebreak()
@@ -135,6 +128,7 @@
 // =========================================================
 // СТРАНИЦА 3: ТОП ОШИБОК
 // =========================================================
+#v(1cm)
 #text(size: 18pt, weight: "bold")[[[PAGE_3_HEADING]]]
 #v(0.3cm)
 #text(size: 12pt)[[[PAGE_3_SUBTITLE]]]
@@ -143,17 +137,17 @@
 #grid(
   columns: (1fr),
   row-gutter: 0.8cm,
-  rect(fill: rgb("#f8fafc"), stroke: 1pt + rgb("#e2e8f0"), inset: 1.2cm, width: 100%, radius: 6pt)[
+  rect(fill: rgb("#f8fafc"), stroke: 1pt + rgb("#e2e8f0"), inset: 1.5cm, width: 100%, radius: 6pt)[
     #text(size: 14pt, weight: "bold", fill: rgb("#be123c"))[1. [[FAIL_1_TITLE]]]
     #v(0.8em)
     #text(size: 12pt)[[[FAIL_1_DESC]]]
   ],
-  rect(fill: rgb("#f8fafc"), stroke: 1pt + rgb("#e2e8f0"), inset: 1.2cm, width: 100%, radius: 6pt)[
+  rect(fill: rgb("#f8fafc"), stroke: 1pt + rgb("#e2e8f0"), inset: 1.5cm, width: 100%, radius: 6pt)[
     #text(size: 14pt, weight: "bold", fill: rgb("#be123c"))[2. [[FAIL_2_TITLE]]]
     #v(0.8em)
     #text(size: 12pt)[[[FAIL_2_DESC]]]
   ],
-  rect(fill: rgb("#f8fafc"), stroke: 1pt + rgb("#e2e8f0"), inset: 1.2cm, width: 100%, radius: 6pt)[
+  rect(fill: rgb("#f8fafc"), stroke: 1pt + rgb("#e2e8f0"), inset: 1.5cm, width: 100%, radius: 6pt)[
     #text(size: 14pt, weight: "bold", fill: rgb("#be123c"))[3. [[FAIL_3_TITLE]]]
     #v(0.8em)
     #text(size: 12pt)[[[FAIL_3_DESC]]]
@@ -168,35 +162,35 @@
 #text(size: 18pt, weight: "bold")[Дорожная карта перехвата локального спроса]
 #v(0.3cm)
 #text(size: 12pt)[Пошаговый план возврата первичных клиентов в кассу организации:]
-#v(1cm)
+#v(0.8cm)
 
 #grid(
   columns: (1fr, 1fr, 1fr),
   gutter: 0.5cm,
-  rect(fill: rgb("#f8fafc"), inset: 15pt, width: 100%, radius: 6pt)[
+  rect(fill: rgb("#f8fafc"), inset: 12pt, width: 100%, radius: 6pt)[
     #text(weight: "bold", fill: rgb("#2563eb"))[ЭТАП 1: СТАРТ]
     #v(0.3em)
     #text(size: 9pt, weight: "bold")[3-5 дней]
     #v(0.5em)
-    #text(size: 10.5pt)[Привязка услуг к частым запросам пациентов, исправление меток входа, парковки и дублирующих адресов.]
+    #text(size: 10.5pt)[Привязка услуг к запросам, исправление меток входа, парковки и дублирующих адресов.]
   ],
-  rect(fill: rgb("#f8fafc"), inset: 15pt, width: 100%, radius: 6pt)[
+  rect(fill: rgb("#f8fafc"), inset: 12pt, width: 100%, radius: 6pt)[
     #text(weight: "bold", fill: rgb("#2563eb"))[ЭТАП 2: ОЦИФРОВКА]
     #v(0.3em)
     #text(size: 9pt, weight: "bold")[14 дней]
     #v(0.5em)
-    #text(size: 10.5pt)[Подключение быстрой онлайн-записи, оформление карточек специалистов с опытом и фото, наглядный прейскурант.]
+    #text(size: 10.5pt)[Подключение онлайн-записи, оформление карточек специалистов с опытом, наглядный прейскурант.]
   ],
-  rect(fill: rgb("#f8fafc"), inset: 15pt, width: 100%, radius: 6pt)[
+  rect(fill: rgb("#f8fafc"), inset: 12pt, width: 100%, radius: 6pt)[
     #text(weight: "bold", fill: rgb("#2563eb"))[ЭТАП 3: ЗАКРЕПЛЕНИЕ]
     #v(0.3em)
     #text(size: 9pt, weight: "bold")[Постоянно]
     #v(0.5em)
-    #text(size: 10.5pt)[Регламент ответов на отзывы пациентов, защита профиля от недостоверных правок, удержание в ТОП-3 района.]
+    #text(size: 10.5pt)[Регламент ответов на отзывы, защита от недостоверных правок, удержание в ТОП-3 района.]
   ]
 )
 
-#v(1cm)
+#v(0.8cm)
 #grid(
   columns: (1fr, 1fr),
   gutter: 1cm,
@@ -212,11 +206,11 @@
     #v(0.5em)
     #text(size: 13pt, weight: "bold")[Всего 2-3 первичных визита]
     #v(0.5em)
-    #text(size: 10pt)[полностью перекрывают любые затраты на профессиональную техническую оптимизацию профиля.]
+    #text(size: 10pt)[полностью перекрывают любые затраты на профессиональную оптимизацию профиля.]
   ]
 )
 
-#v(1cm)
+#v(0.8cm)
 #rect(fill: rgb("#eff6ff"), stroke: 1pt + rgb("#bfdbfe"), inset: 1.2cm, width: 100%, radius: 6pt)[
   #text(size: 15pt, weight: "bold", fill: rgb("#1d4ed8"))[Персональный 3-минутный видеоразбор]
   #v(0.8em)
@@ -225,12 +219,10 @@
   ]
 ]
 
-#v(1cm)
-#block(breakable: false)[
-  #text(size: 12pt, weight: "bold")[С уважением,]\
-  #v(0.3em)
-  #text(size: 11pt, fill: luma(80))[Команда аналитиков PIN100]
-]
+#v(0.8cm)
+#text(size: 12pt, weight: "bold")[С уважением,]\
+#v(0.3em)
+#text(size: 11pt, fill: luma(80))[Команда аналитиков PIN100]
 
 #v(0.8cm)
 #text(size: 8.5pt, fill: luma(120))[
