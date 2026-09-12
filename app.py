@@ -159,54 +159,59 @@ def send_telegram_error(error_message: str, context: str = "") -> bool:
     except: return False
 
 # ==========================================================
-# 4. ГЛУБОКИЙ ПАРСИНГ И СКОРИНГ
+# 4. ГЛУБОКИЙ ПАРСИНГ И СКОРИНГ (ИСПРАВЛЕНО ДЛЯ APIFY)
 # ==========================================================
 
 def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[float, List[Dict[str, Any]], Dict[str, float]]:
-    logger.log("Запуск глубокого эвристического анализа по 41 правилу PIN100...", "STEP")
+    logger.log("Запуск глубокого эвристического анализа по всему дереву JSON...", "STEP")
     raw_scores = {}
     
-    # Извлечение массивов данных из Apify
-    features_str = str(data.get("features", [])).lower()
-    site_str = str(data.get("website", "") or data.get("url", "")).lower()
+    # 1. Создаем строковый "слепок" структуры (отрезаем отзывы, чтобы не было ложных срабатываний на текст пациентов)
+    data_no_reviews = {k: v for k, v in data.items() if k not in ["reviews", "reviewsCount", "ratingCount"]}
+    struct_str = json.dumps(data_no_reviews, ensure_ascii=False).lower()
+
+    # 2. Вытягиваем массивы для количественных проверок
     reviews = data.get("reviews", [])
     working_hours = data.get("workingHours", [])
     photos_count = int(data.get("photosCount", 0)) or len(data.get("photos", []))
-    items = data.get("items") or data.get("priceList") or data.get("services") or data.get("goods") or []
     rating = float(data.get("rating") or data.get("reviewsRating") or 5.0)
     rev_count = int(data.get("reviewsCount") or data.get("ratingCount") or len(reviews))
     categories = data.get("categories", [])
 
-    # Изначально выдаем всем критериям максимальный балл, затем штрафуем за отсутствие
+    # Изначально выдаем всем 41 критериям максимальный балл
     for c_code, c_meta in CRITERIA_REGISTRY.items():
         raw_scores[c_code] = float(c_meta["weight"])
 
-    # --- БЛОК: КОНВЕРСИЯ ---
-    has_booking = bool(data.get("bookingUrl") or data.get("booking") or "онлайн-запис" in features_str or any(w in site_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "booking", "stoma"]))
+    # --- БЛОК: КОНВЕРСИЯ (Ищем везде по ключевикам) ---
+    has_booking = any(w in struct_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "dikidi", "записаться", "онлайн-запис", "bookingurl"])
     if not has_booking: raw_scores["CONV-48.1"] = 0.0
 
-    has_staff = bool(data.get("specialists") or data.get("doctors") or data.get("staff") or "врач" in features_str or "специалист" in features_str)
+    has_staff = any(w in struct_str for w in ["specialist", "doctor", "staff", "стаж", "опыт работы", "врач ", "специалист "])
     if not has_staff: raw_scores["CONV-48.2"] = 0.0
     
-    if "акция" not in features_str and "скидк" not in features_str: raw_scores["CONV-53.1"] = 0.0
+    if "акция" not in struct_str and "скидк" not in struct_str: raw_scores["CONV-53.1"] = 0.0
 
     # --- БЛОК: БАЗОВОЕ ЗАПОЛНЕНИЕ (УСЛУГИ) ---
+    # Ищем цены и структуру в слепке
+    has_prices = any(w in struct_str for w in ["price", "cost", "руб", "₽", "прайс"])
+    if not has_prices: raw_scores["PROF-11.3"] = 0.0
+
+    # Проверяем массив items/priceList/goods
+    items = data.get("items") or data.get("priceList") or data.get("services") or data.get("goods") or []
     if isinstance(items, list):
         if len(items) < 10: raw_scores["PROF-11.1"] = 2.0 if len(items) >= 3 else 0.0
         if len(items) < 5:  raw_scores["PROF-10.3"] = 0.0
-        
-        has_prices = any(bool(it.get("price") or it.get("cost")) for it in items if isinstance(it, dict))
-        if not has_prices and "прайс" not in features_str: raw_scores["PROF-11.3"] = 0.0
 
     if not bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge")):
         raw_scores["PROF-12.1"] = 0.0
 
+    site_str = str(data.get("website", "") or data.get("url", "")).lower()
     if not site_str: raw_scores["PROF-04.1"] = 0.0
     if not data.get("phones"): raw_scores["PROF-05.1"] = 0.0
     
     if len(working_hours) < 7: raw_scores["PROF-07.1"] = 1.0 if len(working_hours) > 0 else 0.0
     
-    if "wa.me" not in site_str and "t.me" not in site_str and "whatsapp" not in features_str:
+    if "wa.me" not in struct_str and "t.me" not in struct_str and "whatsapp" not in struct_str:
         raw_scores["PROF-13.1"] = 0.0
         
     if len(categories) < 3: raw_scores["PROF-03.2"] = 0.75 if len(categories) == 2 else 0.0
@@ -214,7 +219,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[
     # --- БЛОК: РЕПУТАЦИЯ ---
     if rating < 4.8: raw_scores["REP-27.2"] = 0.0
     if rating < 4.5: raw_scores["REP-27.1"] = 0.0
-    
     if rev_count < 50: raw_scores["REP-28.1"] = 1.0 if rev_count >= 15 else 0.0
 
     # Высчитываем % ответов клиники на отзывы
@@ -223,7 +227,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[
         reply_rate = replied / len(reviews)
         if reply_rate < 0.9: raw_scores["REP-30.1"] = 1.5 if reply_rate >= 0.5 else 0.0
     else:
-        raw_scores["REP-30.1"] = 1.5 # Средний балл, если парсер не вытянул отзывы
+        raw_scores["REP-30.1"] = 1.5 # Дефолт, если отзывов нет в выгрузке
 
     # --- БЛОК: КОНТЕНТ ---
     if photos_count < 10: raw_scores["CONT-38.1"] = 0.5 if photos_count >= 5 else 0.0
@@ -243,7 +247,8 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[
             gap_list.append({"code": code, "title": meta["title"], "desc": meta["desc"], "impact": impact})
             logger.log(f"[{code}] {meta['title']} -> Снят балл: -{lost:.1f}", "WARN")
         else:
-            logger.log(f"[{code}] {meta['title']} -> Проверка пройдена ({max_w:.1f} б)", "SUCCESS")
+            # Скрыт успех каждого пункта, чтобы не засорять терминал (выводим только потери)
+            pass
 
     gap_list.sort(key=lambda x: x["impact"], reverse=True)
     top_3 = gap_list[:3]
@@ -279,10 +284,9 @@ def process_company_data(raw_input: Any, logger: TerminalLogger) -> Dict[str, An
 
     title = data.get("title") or data.get("name") or "Организация"
     org_id = str(data.get("org_id") or data.get("id") or "0000000000")
-    rating = float(data.get("rating") or data.get("reviewsRating") or 5.0)
+    rating = round(float(data.get("rating") or data.get("reviewsRating") or 5.0), 1)
 
-    # Нормализация регистра для писем (Спейсдент -> СпейсДент сохраняем, если так в базе)
-    logger.log(f"Найдена карточка: «{title}» (Рейтинг: {rating:.1f})", "INFO")
+    logger.log(f"Найдена карточка: «{title}» (Рейтинг: {rating})", "INFO")
 
     niche = "DENTISTRY"
     low_txt = (str(title) + " " + str(data.get("categories", ""))).lower()
@@ -365,7 +369,12 @@ def sync_to_google(audit: Dict, mapping: Dict, p_pdf: Path, p_txt: Path, p_json:
         q = f"'{folder_id}' in parents and name = '{d_str}' and trashed = false"
         res = drive.files().list(q=q, fields="files(id)").execute().get("files", [])
         fid = res[0]["id"] if res else drive.files().create(body={"name": d_str, "mimeType": "application/vnd.google-apps.folder", "parents": [folder_id]}, fields="id").execute()["id"]
-        return drive.files().create(body={"name": path.name, "parents": [fid]}, media_body=MediaFileUpload(str(path), mimetype=mime), fields="webViewLink").execute().get("webViewLink", "")
+        # Сохраняем файл и возвращаем WebViewLink
+        file_meta = drive.files().create(body={"name": path.name, "parents": [fid]}, media_body=MediaFileUpload(str(path), mimetype=mime), fields="id, webViewLink").execute()
+        
+        # Логируем ID файла в терминал как пруф
+        logger.log(f"Файл {path.name} загружен в Google Drive. ID: {file_meta.get('id')}", "SUCCESS")
+        return file_meta.get("webViewLink", "")
 
     links = {
         "pdf": upload(p_pdf, GDRIVE_FOLDERS["PDF"], "application/pdf"),
@@ -377,6 +386,8 @@ def sync_to_google(audit: Dict, mapping: Dict, p_pdf: Path, p_txt: Path, p_json:
     if sheet_id:
         row = [mapping["[[DATE]]"], datetime.datetime.now().strftime("%H:%M:%S"), audit["title"], audit["org_id"], audit["canonical_url"], audit["niche"], audit["rating"], mapping["[[SCORE]]"], mapping["[[LOST_LEADS]]"], mapping["[[REV_LOSS_FMT]]"], links["pdf"], links["txt"], links["json"]]
         sheets.spreadsheets().values().append(spreadsheetId=sheet_id, range="Лист1!A:M", valueInputOption="USER_ENTERED", body={"values": [row]}).execute()
+        logger.log("Данные занесены в Google Таблицу.", "SUCCESS")
+        
     return links
 
 # ==========================================================
@@ -420,7 +431,6 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger):
         # 4. Google Drive
         logger.log("Выгрузка результатов на Google Диск...", "STEP")
         st.session_state.drive_links = sync_to_google(audit, mapping, p_pdf, p_txt, p_json, logger)
-        if st.session_state.drive_links: logger.log("Файлы успешно загружены в облако.", "SUCCESS")
         
         logger.log("КОНВЕЙЕР УСПЕШНО ЗАВЕРШЕН!", "SUCCESS")
 
