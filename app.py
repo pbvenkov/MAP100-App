@@ -176,51 +176,77 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
     return "обращений"
 
 # ==========================================================
-# 5. ГЛУБОКИЙ ПАРСИНГ И СКОРИНГ (ИСПРАВЛЕНО ДЛЯ APIFY)
+# 5. ХАРДКОРНЫЙ ПАРСИНГ И СКОРИНГ (ВСЕ 41 КРИТЕРИЙ)
 # ==========================================================
 
 def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[float, List[Dict[str, Any]], Dict[str, float]]:
-    logger.log("Запуск глубокого эвристического анализа по всему дереву JSON...", "STEP")
+    logger.log("Запуск хардкорного эвристического анализа (Путь 1)...", "STEP")
     raw_scores = {}
     
-    data_no_reviews = {k: v for k, v in data.items() if k not in ["reviews", "reviewsCount", "ratingCount"]}
-    struct_str = json.dumps(data_no_reviews, ensure_ascii=False).lower()
-
     reviews = data.get("reviews", [])
     working_hours = data.get("workingHours", [])
     photos_count = int(data.get("photosCount", 0)) or len(data.get("photos", []))
     rating = float(data.get("rating") or data.get("reviewsRating") or 5.0)
     rev_count = int(data.get("reviewsCount") or data.get("ratingCount") or len(reviews))
     categories = data.get("categories", [])
+    title = str(data.get("title") or data.get("name") or "").lower()
+    description = str(data.get("description") or data.get("about") or "").lower()
+    website = str(data.get("website") or data.get("url") or "").lower()
+    items = data.get("items") or data.get("priceList") or data.get("services") or data.get("goods") or []
 
+    # Строим слепок без отзывов для глобального поиска триггеров
+    data_no_reviews = {k: v for k, v in data.items() if k not in ["reviews", "reviewsCount", "ratingCount"]}
+    struct_str = json.dumps(data_no_reviews, ensure_ascii=False).lower()
+
+    # Инициализация 100 баллов
     for c_code, c_meta in CRITERIA_REGISTRY.items():
         raw_scores[c_code] = float(c_meta["weight"])
 
-    # --- БЛОК: КОНВЕРСИЯ ---
+    # --- БЛОК 1: КОНВЕРСИЯ ---
     has_booking = any(w in struct_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "dikidi", "записаться", "онлайн-запис", "bookingurl"])
     if not has_booking: raw_scores["CONV-48.1"] = 0.0
 
     has_staff = any(w in struct_str for w in ["specialist", "doctor", "staff", "стаж", "опыт работы", "врач ", "специалист "])
     if not has_staff: raw_scores["CONV-48.2"] = 0.0
     
-    if "акция" not in struct_str and "скидк" not in struct_str: raw_scores["CONV-53.1"] = 0.0
+    if "акция" not in struct_str and "скидк" not in struct_str and "promotion" not in struct_str: 
+        raw_scores["CONV-53.1"] = 0.0
 
-    # --- БЛОК: БАЗОВОЕ ЗАПОЛНЕНИЕ (УСЛУГИ) ---
+    if "чат" not in struct_str and "chat" not in struct_str and "сообщение" not in struct_str:
+        raw_scores["CONV-50.1"] = 0.0
+
+    if "faq" not in struct_str and "вопрос" not in struct_str:
+        raw_scores["CONV-52.1"] = 0.0
+        
+    if photos_count < 5:
+        raw_scores["CONV-46.1"] = 0.0 # Мало фото = нет кастомной обложки
+
+    # УТП в описании (ищем цифры, проценты или выгоды)
+    if not any(char.isdigit() for char in description) and "бесплатн" not in description and "гарант" not in description:
+        raw_scores["CONV-49.1"] = 0.0
+
+    # --- БЛОК 2: БАЗОВОЕ ЗАПОЛНЕНИЕ (УСЛУГИ И ИНФО) ---
     has_prices = any(w in struct_str for w in ["price", "cost", "руб", "₽", "прайс"])
     if not has_prices: raw_scores["PROF-11.3"] = 0.0
 
-    items = data.get("items") or data.get("priceList") or data.get("services") or data.get("goods") or []
     if isinstance(items, list):
         if len(items) < 10: raw_scores["PROF-11.1"] = 2.0 if len(items) >= 3 else 0.0
         if len(items) < 5:  raw_scores["PROF-10.3"] = 0.0
+        
+        # Детальные карточки услуг (ищем описание внутри услуги)
+        has_item_desc = any(isinstance(i, dict) and (i.get("description") or i.get("text")) for i in items)
+        if not has_item_desc and len(items) > 0: raw_scores["PROF-11.4"] = 0.0
 
     if not bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge")):
         raw_scores["PROF-12.1"] = 0.0
 
-    site_str = str(data.get("website", "") or data.get("url", "")).lower()
-    if not site_str: raw_scores["PROF-04.1"] = 0.0
+    if not website: 
+        raw_scores["PROF-04.1"] = 0.0
+        raw_scores["PROF-04.2"] = 0.0
+    elif "utm_" not in website:
+        raw_scores["PROF-04.2"] = 0.0 # Нет UTM-разметки
+
     if not data.get("phones"): raw_scores["PROF-05.1"] = 0.0
-    
     if len(working_hours) < 7: raw_scores["PROF-07.1"] = 1.0 if len(working_hours) > 0 else 0.0
     
     if "wa.me" not in struct_str and "t.me" not in struct_str and "whatsapp" not in struct_str:
@@ -228,21 +254,87 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger) -> Tuple[
         
     if len(categories) < 3: raw_scores["PROF-03.2"] = 0.75 if len(categories) == 2 else 0.0
 
-    # --- БЛОК: РЕПУТАЦИЯ ---
+    if len(description) < 150: raw_scores["PROF-09.1"] = 0.0 # Короткое описание
+    
+    if "инн" not in struct_str and "огрн" not in struct_str and "лиценз" not in struct_str:
+        raw_scores["PROF-15.1"] = 0.0 # Юридические данные
+
+    # --- БЛОК 3: SEO-МЕТРИКИ ---
+    if len(title) > 60 or "недорого" in title or "скидк" in title:
+        raw_scores["PROF-01.2"] = 0.0 # SEO спам
+        raw_scores["PROF-01.1"] = 0.0 # Грязное название
+
+    features_str = str(data.get("features") or data.get("attributes") or "").lower()
+    if "парковка" not in features_str and "wi-fi" not in features_str and "парковк" not in struct_str:
+        raw_scores["PROF-08.1"] = 0.0
+    if "дмс" not in features_str and "рассрочка" not in features_str and "дмс" not in struct_str:
+        raw_scores["PROF-08.2"] = 0.0
+
+    if "метро" not in description and "район" not in description and "улиц" not in description:
+        raw_scores["SEO-18.3"] = 0.0 # Топонимы
+
+    if photos_count < 10: raw_scores["CONT-38.1"] = 0.5 if photos_count >= 5 else 0.0
+    if "видео" not in struct_str and "video" not in struct_str and "youtube" not in struct_str:
+        raw_scores["CONT-42.1"] = 0.0
+
+    # --- БЛОК 4: РЕПУТАЦИЯ И ГЛУБОКИЙ АНАЛИЗ ОТЗЫВОВ ---
     if rating < 4.8: raw_scores["REP-27.2"] = 0.0
     if rating < 4.5: raw_scores["REP-27.1"] = 0.0
     if rev_count < 50: raw_scores["REP-28.1"] = 1.0 if rev_count >= 15 else 0.0
 
     if reviews and isinstance(reviews, list):
-        replied = sum(1 for r in reviews if isinstance(r, dict) and (r.get("reply") or r.get("comments")))
-        reply_rate = replied / len(reviews)
+        replied_count = 0
+        reply_lengths = []
+        has_photos = False
+        has_znatoki = False
+        seo_in_reviews = False
+
+        for r in reviews:
+            if isinstance(r, dict):
+                # Ответы клиники
+                reply = r.get("reply") or r.get("comments")
+                if reply:
+                    replied_count += 1
+                    reply_lengths.append(len(str(reply)))
+                
+                # Фото в отзывах
+                if r.get("photos") or r.get("photoCount", 0) > 0:
+                    has_photos = True
+                    
+                # Уровень автора (Знатоки)
+                author = str(r.get("author", "")).lower()
+                if "знаток" in author or "уровень" in author:
+                    has_znatoki = True
+                    
+                # SEO-ключи в тексте отзыва
+                rev_text = str(r.get("text", "")).lower()
+                if any(kw in rev_text for kw in ["врач", "процедур", "пломб", "кариес", "анализ", "прием", "клиник"]):
+                    seo_in_reviews = True
+
+        # Считаем охват ответами
+        reply_rate = replied_count / len(reviews)
         if reply_rate < 0.9: raw_scores["REP-30.1"] = 1.5 if reply_rate >= 0.5 else 0.0
+        
+        # Считаем длину ответов (если средний ответ короче 80 символов - штраф)
+        avg_reply = sum(reply_lengths) / len(reply_lengths) if reply_lengths else 0
+        if avg_reply < 80: raw_scores["REP-30.4"] = 0.0
+
+        if not has_photos: raw_scores["REP-35.1"] = 0.0
+        if not has_znatoki: raw_scores["REP-34.1"] = 0.0
+        if not seo_in_reviews: raw_scores["SEO-19.2"] = 0.0
+        if len(reviews) < 20: raw_scores["REP-29.1"] = 0.0 # Низкая активность
+
     else:
-        raw_scores["REP-30.1"] = 1.5
+        # Если отзывов нет вообще, обнуляем весь блок
+        raw_scores["REP-30.1"] = 0.0
+        raw_scores["REP-30.4"] = 0.0
+        raw_scores["REP-35.1"] = 0.0
+        raw_scores["REP-34.1"] = 0.0
+        raw_scores["SEO-19.2"] = 0.0
+        raw_scores["REP-29.1"] = 0.0
+        raw_scores["REP-32.2"] = 0.0 # Культура диалога
 
-    # --- БЛОК: КОНТЕНТ ---
-    if photos_count < 10: raw_scores["CONT-38.1"] = 0.5 if photos_count >= 5 else 0.0
-
+    # ПОДСЧЕТ
     total_score = 0.0
     gap_list = []
 
@@ -303,9 +395,9 @@ def process_company_data(raw_input: Any, logger: TerminalLogger) -> Dict[str, An
 
     score, top_fails, raw_scores = perform_deep_scoring(data, logger)
     
-    if data.get("score"): score = float(data["score"])
-
-    logger.log(f"Итоговый балл готовности: {score:.1f} / 100", "INFO")
+    # Мы больше не переопределяем score, если он случайно пришел из JSON, мы доверяем нашему алгоритму
+    
+    logger.log(f"Итоговый честный балл готовности: {score:.1f} / 100", "INFO")
 
     comps = data.get("competitors") or []
     if not isinstance(comps, list) or len(comps) < 2:
