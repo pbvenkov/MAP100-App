@@ -96,54 +96,52 @@ FALLBACK_CRITERIA_REGISTRY = {
 # ==========================================================
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_criteria_from_google() -> Dict[str, Dict[str, Any]]:
-    if not GOOGLE_LIBS_AVAILABLE: 
-        return FALLBACK_CRITERIA_REGISTRY
+def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
+    if not GOOGLE_LIBS_AVAILABLE:
+        return FALLBACK_CRITERIA_REGISTRY, "Не установлены библиотеки Google API."
+    
     creds_file = Path("credentials.json")
-    if not creds_file.exists(): 
-        return FALLBACK_CRITERIA_REGISTRY
-        
+    if not creds_file.exists():
+        return FALLBACK_CRITERIA_REGISTRY, "Файл credentials.json не найден."
+
     try:
         creds = service_account.Credentials.from_service_account_file(str(creds_file), scopes=GDRIVE_SCOPES)
         sheets = build("sheets", "v4", credentials=creds)
         result = sheets.spreadsheets().values().get(spreadsheetId=CRITERIA_SHEET_ID, range=CRITERIA_RANGE).execute()
         rows = result.get('values', [])
-        
-        if not rows or len(rows) < 2: return FALLBACK_CRITERIA_REGISTRY
+
+        if not rows or len(rows) < 2:
+            return FALLBACK_CRITERIA_REGISTRY, "Таблица пуста или не найден лист Rules."
+
         headers = [str(h).strip() for h in rows[0]]
-        
+
         try:
             idx_code = headers.index("Код")
             idx_title = headers.index("Критерий")
             idx_group = headers.index("Группа метрик")
             idx_weight = headers.index("Балл")
             idx_desc = headers.index("Обоснование_ОШИБКИ")
-        except ValueError:
-            return FALLBACK_CRITERIA_REGISTRY
-            
+        except ValueError as e:
+            return FALLBACK_CRITERIA_REGISTRY, f"В таблице не найден столбец: {e}"
+
         registry = {}
         for row in rows[1:]:
             if len(row) > max(idx_code, idx_weight):
                 code = str(row[idx_code]).strip()
                 if not code: continue
-                
-                try:
-                    weight = float(str(row[idx_weight]).replace(',', '.'))
-                except ValueError:
-                    weight = 0.0
-                
+
+                try: weight = float(str(row[idx_weight]).replace(',', '.'))
+                except ValueError: weight = 0.0
+
                 registry[code] = {
                     "title": str(row[idx_title]).strip() if len(row) > idx_title else code,
                     "group": str(row[idx_group]).strip() if len(row) > idx_group else "Анализ",
-                    "complexity": 2, 
-                    "weight": weight,
+                    "complexity": 2, "weight": weight,
                     "desc": str(row[idx_desc]).strip() if len(row) > idx_desc else ""
                 }
-                
-        return registry if registry else FALLBACK_CRITERIA_REGISTRY
+        return registry, "OK"
     except Exception as e:
-        print(f"Ошибка синхронизации: {e}")
-        return FALLBACK_CRITERIA_REGISTRY
+        return FALLBACK_CRITERIA_REGISTRY, f"Ошибка API: {str(e)}"
 
 # ==========================================================
 # 3. ТЕРМИНАЛ И УВЕДОМЛЕНИЯ
@@ -550,16 +548,21 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         send_telegram_error(str(ex), "Pipeline Run")
 
 def app():
-    # Инициализация динамических критериев
-    criteria_registry = fetch_criteria_from_google()
+    # Инициализация динамических критериев и статуса
+    criteria_registry, sync_status = fetch_criteria_from_google()
     
     with st.sidebar:
         st.header("⚙️ Настройки системы")
         if st.button("🔄 Синхронизировать критерии", use_container_width=True):
             fetch_criteria_from_google.clear()
-            st.success("✅ Кэш очищен! Матрица обновлена из Google.")
+            st.rerun() # Мгновенная перезагрузка страницы
+        
         st.caption(f"Загружено правил: {len(criteria_registry)}")
         
+        # Если есть ошибка - показываем красный блок прямо в меню
+        if sync_status != "OK":
+            st.error(f"⚠️ Сбой таблицы:\n{sync_status}")
+            
     st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
     tab_json, tab_url = st.tabs(["📋 Загрузить JSON", "🔗 Ссылка (Apify API)"])
 
