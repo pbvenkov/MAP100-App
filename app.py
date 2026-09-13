@@ -83,7 +83,6 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
     }
 }
 
-# Резервная матрица на случай падения Google API
 FALLBACK_CRITERIA_REGISTRY = {
     "CONV-48.1": {"title": "Онлайн-запись на приём", "group": "Конверсия", "complexity": 2, "weight": 6.0, "desc": "Отсутствие прямой онлайн-записи отсекает до 60% вечернего спроса."},
     "PROF-10.3": {"title": "Структура услуг в описании", "group": "Базовое заполнение", "complexity": 1, "weight": 4.0, "desc": "В описании клиники нет четкой структуры процедур."},
@@ -92,20 +91,50 @@ FALLBACK_CRITERIA_REGISTRY = {
 }
 
 # ==========================================================
-# 2. КЭШИРОВАННАЯ ЗАГРУЗКА ИЗ GOOGLE SHEETS
+# 2. УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE (СЕКРЕТЫ + ФАЙЛ)
 # ==========================================================
+
+def get_google_credentials() -> Tuple[Any, str]:
+    if not GOOGLE_LIBS_AVAILABLE:
+        return None, "Библиотеки Google API не установлены."
+    
+    # Сценарий А: Чтение из облака (Streamlit Secrets)
+    # Проверяем оба варианта ключа
+    creds_data = None
+    if "GCP_CREDENTIALS" in st.secrets:
+        creds_data = st.secrets["GCP_CREDENTIALS"]
+    elif "GOOGLE_CREDENTIALS" in st.secrets:
+        creds_data = st.secrets["GOOGLE_CREDENTIALS"]
+
+    if creds_data:
+        try:
+            if isinstance(creds_data, str):
+                creds_dict = json.loads(creds_data)
+            else:
+                creds_dict = dict(creds_data)
+            creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=GDRIVE_SCOPES)
+            return creds, "OK"
+        except Exception as e:
+            return None, f"Ошибка парсинга Streamlit Secrets: {e}"
+            
+    # Сценарий Б: Чтение локального файла (для ПК)
+    creds_file = Path("credentials.json")
+    if creds_file.exists():
+        try:
+            creds = service_account.Credentials.from_service_account_file(str(creds_file), scopes=GDRIVE_SCOPES)
+            return creds, "OK"
+        except Exception as e:
+            return None, f"Ошибка чтения локального файла: {e}"
+            
+    return None, "Ключи доступа не найдены ни в Secrets (GCP_CREDENTIALS), ни в локальном файле."
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
-    if not GOOGLE_LIBS_AVAILABLE:
-        return FALLBACK_CRITERIA_REGISTRY, "Не установлены библиотеки Google API."
-    
-    creds_file = Path("credentials.json")
-    if not creds_file.exists():
-        return FALLBACK_CRITERIA_REGISTRY, "Файл credentials.json не найден."
+    creds, status = get_google_credentials()
+    if not creds:
+        return FALLBACK_CRITERIA_REGISTRY, status
 
     try:
-        creds = service_account.Credentials.from_service_account_file(str(creds_file), scopes=GDRIVE_SCOPES)
         sheets = build("sheets", "v4", credentials=creds)
         result = sheets.spreadsheets().values().get(spreadsheetId=CRITERIA_SHEET_ID, range=CRITERIA_RANGE).execute()
         rows = result.get('values', [])
@@ -206,11 +235,9 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     data_no_reviews = {k: v for k, v in data.items() if k not in ["reviews", "reviewsCount", "ratingCount"]}
     struct_str = json.dumps(data_no_reviews, ensure_ascii=False).lower()
 
-    # Инициализация максимальных баллов
     for c_code, c_meta in criteria_registry.items():
         raw_scores[c_code] = float(c_meta["weight"])
 
-    # 1. КОНВЕРСИЯ (CONV)
     if "CONV-48.1" in raw_scores and not any(w in struct_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "dikidi", "записаться", "онлайн-запис", "bookingurl"]):
         raw_scores["CONV-48.1"] = 0.0
     if "CONV-48.2" in raw_scores and not any(w in struct_str for w in ["specialist", "doctor", "staff", "стаж", "опыт работы", "врач ", "специалист "]):
@@ -223,7 +250,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "CONV-53.1" in raw_scores and ("акция" not in struct_str and "скидк" not in struct_str and "старая цена" not in struct_str): 
         raw_scores["CONV-53.1"] = 0.0
 
-    # 2. БАЗОВОЕ ЗАПОЛНЕНИЕ (PROF)
     is_verified = bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge"))
     if "PROF-01.1" in raw_scores and not (is_verified or len(title) > 2): raw_scores["PROF-01.1"] = 0.0
     if "PROF-12.1" in raw_scores and not is_verified: raw_scores["PROF-12.1"] = 0.0
@@ -245,7 +271,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "PROF-15.1" in raw_scores and ("инн" not in struct_str and "огрн" not in struct_str and "реквизит" not in struct_str):
         raw_scores["PROF-15.1"] = 0.0
 
-    # ПРАВИЛА 80% ДЛЯ ВИТРИНЫ
     if isinstance(items, list) and len(items) > 0:
         if "PROF-11.1" in raw_scores and len(items) < 10: raw_scores["PROF-11.1"] = 2.0 if len(items) >= 3 else 0.0
         has_photo = sum(1 for i in items if i.get("image") or i.get("image_url") or i.get("photo") or i.get("picture"))
@@ -259,7 +284,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
         for k in ["PROF-11.1", "PROF-11.2", "PROF-11.3", "PROF-11.4"]:
             if k in raw_scores: raw_scores[k] = 0.0
 
-    # 3. SEO И ТРАФИК 
     if "SEO-18.3" in raw_scores and not any(kw in description for kw in ["метро", "район", "улиц", "шоссе", "проспект"]):
         raw_scores["SEO-18.3"] = 0.0
     if "PROF-01.2" in raw_scores and (len(title) > 60 or "недорого" in title or "скидк" in title):
@@ -272,7 +296,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "CONT-42.1" in raw_scores and not any(kw in struct_str for kw in ["видео", "video", "youtube", "тур", "панорам"]):
         raw_scores["CONT-42.1"] = 0.0
 
-    # 4. РЕПУТАЦИЯ И ОТЗЫВЫ
     if "REP-27.2" in raw_scores and rating < 4.8: raw_scores["REP-27.2"] = 0.0
     if "REP-27.1" in raw_scores and rating < 4.5: raw_scores["REP-27.1"] = 0.0
     if "REP-28.1" in raw_scores and rev_count < 50: raw_scores["REP-28.1"] = 1.0 if rev_count >= 15 else 0.0
@@ -348,10 +371,15 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
 def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
     token = os.getenv("APIFY_API_TOKEN", "").strip()
     actor = os.getenv("APIFY_ACTOR_ID", "").strip()
-    if not token or not actor: raise ValueError("В .env не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
+    
+    # Также подтягиваем из Secrets, если есть
+    if "APIFY_API_TOKEN" in st.secrets: token = st.secrets["APIFY_API_TOKEN"]
+    if "APIFY_ACTOR_ID" in st.secrets: actor = st.secrets["APIFY_ACTOR_ID"]
+
+    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID (добавьте их в Secrets).")
 
     run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=70"
-    logger.log(f"Отправка URL в Apify Actor '{actor}'...", "STEP")
+    logger.log(f"Отправка URL в Apify Actor...", "STEP")
     
     resp = requests.post(run_url, json={"startUrls": [{"url": target_url.strip()}], "maxItems": 1, "includeReviews": True}, timeout=80)
     if resp.status_code not in [200, 201]: raise RuntimeError(f"Сбой Apify: {resp.text[:200]}")
@@ -464,10 +492,11 @@ def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: Termin
         if temp_typ.exists(): temp_typ.unlink()
 
 def sync_to_google(audit: Dict, mapping: Dict, p_pdf: Path, p_txt: Path, p_json: Path, logger: TerminalLogger) -> Dict:
-    if not GOOGLE_LIBS_AVAILABLE: return {}
-    creds = service_account.Credentials.from_service_account_file("credentials.json", scopes=GDRIVE_SCOPES) if Path("credentials.json").exists() else None
-    if not creds: return {}
-    
+    creds, status = get_google_credentials()
+    if not creds:
+        logger.log(f"Пропуск выгрузки в Google Диск: {status}", "WARN")
+        return {}
+        
     drive = build("drive", "v3", credentials=creds)
     sheets = build("sheets", "v4", credentials=creds)
     d_str = datetime.date.today().strftime("%Y-%m-%d")
@@ -487,6 +516,8 @@ def sync_to_google(audit: Dict, mapping: Dict, p_pdf: Path, p_txt: Path, p_json:
     }
     
     sheet_id = os.getenv("GOOGLE_SHEET_ID", "").strip()
+    if "GOOGLE_SHEET_ID" in st.secrets: sheet_id = st.secrets["GOOGLE_SHEET_ID"]
+    
     if sheet_id:
         row = [mapping["[[DATE]]"], datetime.datetime.now().strftime("%H:%M:%S"), audit["title"], audit["org_id"], audit["canonical_url"], audit["niche"], audit["rating"], mapping["[[SCORE]]"], mapping["[[LOST_LEADS]]"], mapping["[[REV_LOSS_FMT]]"], links["pdf"], links["txt"], links["json"]]
         sheets.spreadsheets().values().append(spreadsheetId=sheet_id, range="Лист1!A:M", valueInputOption="USER_ENTERED", body={"values": [row]}).execute()
@@ -548,18 +579,15 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         send_telegram_error(str(ex), "Pipeline Run")
 
 def app():
-    # Инициализация динамических критериев и статуса
     criteria_registry, sync_status = fetch_criteria_from_google()
     
     with st.sidebar:
         st.header("⚙️ Настройки системы")
         if st.button("🔄 Синхронизировать критерии", use_container_width=True):
             fetch_criteria_from_google.clear()
-            st.rerun() # Мгновенная перезагрузка страницы
-        
+            st.rerun()
+            
         st.caption(f"Загружено правил: {len(criteria_registry)}")
-        
-        # Если есть ошибка - показываем красный блок прямо в меню
         if sync_status != "OK":
             st.error(f"⚠️ Сбой таблицы:\n{sync_status}")
             
@@ -591,7 +619,6 @@ def app():
         except Exception as e:
             logger.log(str(e), "ERROR")
 
-    # ВЫДАЧА
     if st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
         st.divider()
         c1, c2 = st.columns([1.1, 0.9])
