@@ -99,7 +99,6 @@ def get_google_credentials() -> Tuple[Any, str]:
         return None, "Библиотеки Google API не установлены."
     
     # Сценарий А: Чтение из облака (Streamlit Secrets)
-    # Проверяем оба варианта ключа
     creds_data = None
     if "GCP_CREDENTIALS" in st.secrets:
         creds_data = st.secrets["GCP_CREDENTIALS"]
@@ -213,7 +212,7 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
     return "обращений"
 
 # ==========================================================
-# 5. ХАРДКОРНЫЙ ПАРСИНГ (ИСПОЛЬЗУЕТ ДИНАМИЧЕСКИЙ РЕЕСТР)
+# 5. ХАРДКОРНЫЙ ПАРСИНГ (С ИСПРАВЛЕНИЯМИ ДЛЯ ВСЕХ СТРУКТУР JSON)
 # ==========================================================
 
 def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_registry: Dict) -> Tuple[float, List[Dict[str, Any]], Dict[str, float]]:
@@ -221,16 +220,24 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     raw_scores = {}
     
     reviews = data.get("reviews", [])
-    working_hours = data.get("workingHours", [])
+    working_hours = data.get("workingHours") or data.get("schedule") or []
     photos_count = int(data.get("photosCount", 0)) or len(data.get("photos", []))
     rating = float(data.get("rating") or data.get("reviewsRating") or 5.0)
     rev_count = int(data.get("reviewsCount") or data.get("ratingCount") or len(reviews))
     categories = data.get("categories", [])
     title = str(data.get("title") or data.get("name") or "").lower()
-    description = str(data.get("description") or data.get("about") or "").lower()
     website = str(data.get("website") or data.get("url") or "").lower()
-    items = data.get("items") or data.get("priceList") or data.get("services") or data.get("goods") or []
     features = data.get("features") or data.get("attributes") or []
+
+    # Сбор описания (с учетом promo)
+    base_desc = str(data.get("description") or data.get("about") or "")
+    promo_desc = str(data.get("promo", {}).get("description", "")) if isinstance(data.get("promo"), dict) else ""
+    full_description = (base_desc + " " + promo_desc).lower()
+
+    # Сбор услуг (из корня, menu или productCatalog)
+    items = data.get("items") or data.get("priceList") or data.get("services") or data.get("goods") or data.get("productCatalog") or []
+    if not items and data.get("menu") and isinstance(data.get("menu"), dict):
+        items = data.get("menu").get("items", [])
 
     data_no_reviews = {k: v for k, v in data.items() if k not in ["reviews", "reviewsCount", "ratingCount"]}
     struct_str = json.dumps(data_no_reviews, ensure_ascii=False).lower()
@@ -238,19 +245,21 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     for c_code, c_meta in criteria_registry.items():
         raw_scores[c_code] = float(c_meta["weight"])
 
-    if "CONV-48.1" in raw_scores and not any(w in struct_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "dikidi", "записаться", "онлайн-запис", "bookingurl"]):
+    # 1. КОНВЕРСИЯ (CONV)
+    if "CONV-48.1" in raw_scores and not any(w in struct_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "dikidi", "записаться", "онлайн-запис", "bookingurl", "actionbuttons"]):
         raw_scores["CONV-48.1"] = 0.0
     if "CONV-48.2" in raw_scores and not any(w in struct_str for w in ["specialist", "doctor", "staff", "стаж", "опыт работы", "врач ", "специалист "]):
         raw_scores["CONV-48.2"] = 0.0
     if "CONV-46.1" in raw_scores and photos_count < 5: raw_scores["CONV-46.1"] = 0.0 
-    if "CONV-49.1" in raw_scores and (not any(char.isdigit() for char in description) or "мы лучшие" in description or "индивидуальный подход" in description):
+    if "CONV-49.1" in raw_scores and (not any(char.isdigit() for char in full_description) or "мы лучшие" in full_description or "индивидуальный подход" in full_description):
         raw_scores["CONV-49.1"] = 0.0
     if "CONV-50.1" in raw_scores and not any(w in struct_str for w in ["чат", "chat", "ischatenabled"]): raw_scores["CONV-50.1"] = 0.0
     if "CONV-52.1" in raw_scores and not any(w in struct_str for w in ["faq", "вопрос", "ответы"]): raw_scores["CONV-52.1"] = 0.0
-    if "CONV-53.1" in raw_scores and ("акция" not in struct_str and "скидк" not in struct_str and "старая цена" not in struct_str): 
+    if "CONV-53.1" in raw_scores and ("акция" not in struct_str and "скидк" not in struct_str and "старая цена" not in struct_str and "promo" not in struct_str): 
         raw_scores["CONV-53.1"] = 0.0
 
-    is_verified = bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge"))
+    # 2. БАЗОВОЕ ЗАПОЛНЕНИЕ (PROF)
+    is_verified = bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge") or data.get("isVerifiedOwner"))
     if "PROF-01.1" in raw_scores and not (is_verified or len(title) > 2): raw_scores["PROF-01.1"] = 0.0
     if "PROF-12.1" in raw_scores and not is_verified: raw_scores["PROF-12.1"] = 0.0
     if "PROF-03.1" in raw_scores and not categories: raw_scores["PROF-03.1"] = 0.0
@@ -265,15 +274,18 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "PROF-05.1" in raw_scores and not data.get("phones"): raw_scores["PROF-05.1"] = 0.0
     if "PROF-07.1" in raw_scores and len(working_hours) < 7: raw_scores["PROF-07.1"] = 1.0 if len(working_hours) > 0 else 0.0
     if "PROF-13.1" in raw_scores and not any(w in struct_str for w in ["wa.me", "t.me", "whatsapp"]): raw_scores["PROF-13.1"] = 0.0
-    if "PROF-09.1" in raw_scores and len(description) < 1200: raw_scores["PROF-09.1"] = 0.0
-    if "PROF-10.3" in raw_scores and not any(kw in description for kw in ["лечение", "прием", "услуг", "диагностик", "терапи", "консультац"]):
+    if "PROF-09.1" in raw_scores and len(full_description) < 1200: raw_scores["PROF-09.1"] = 0.0
+    if "PROF-10.3" in raw_scores and not any(kw in full_description for kw in ["лечение", "прием", "услуг", "диагностик", "терапи", "консультац"]):
         raw_scores["PROF-10.3"] = 0.0
-    if "PROF-15.1" in raw_scores and ("инн" not in struct_str and "огрн" not in struct_str and "реквизит" not in struct_str):
+
+    has_legal = "инн" in struct_str or "огрн" in struct_str or "taxid" in struct_str or "реквизит" in struct_str or bool(data.get("legalInfo", {}).get("taxId"))
+    if "PROF-15.1" in raw_scores and not has_legal:
         raw_scores["PROF-15.1"] = 0.0
 
+    # ПРАВИЛА 80% ДЛЯ ВИТРИНЫ
     if isinstance(items, list) and len(items) > 0:
         if "PROF-11.1" in raw_scores and len(items) < 10: raw_scores["PROF-11.1"] = 2.0 if len(items) >= 3 else 0.0
-        has_photo = sum(1 for i in items if i.get("image") or i.get("image_url") or i.get("photo") or i.get("picture"))
+        has_photo = sum(1 for i in items if i.get("image") or i.get("imageUrl") or i.get("image_url") or i.get("photoUrl") or i.get("picture"))
         has_price = sum(1 for i in items if i.get("price") or i.get("cost") or i.get("priceValue"))
         has_desc = sum(1 for i in items if i.get("description") and len(str(i.get("description"))) > 50)
         total_items = len(items)
@@ -284,7 +296,8 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
         for k in ["PROF-11.1", "PROF-11.2", "PROF-11.3", "PROF-11.4"]:
             if k in raw_scores: raw_scores[k] = 0.0
 
-    if "SEO-18.3" in raw_scores and not any(kw in description for kw in ["метро", "район", "улиц", "шоссе", "проспект"]):
+    # 3. SEO И ТРАФИК 
+    if "SEO-18.3" in raw_scores and not any(kw in full_description for kw in ["метро", "район", "улиц", "шоссе", "проспект"]):
         raw_scores["SEO-18.3"] = 0.0
     if "PROF-01.2" in raw_scores and (len(title) > 60 or "недорого" in title or "скидк" in title):
         raw_scores["PROF-01.2"] = 0.0 
@@ -293,9 +306,10 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     features_str = str(features).lower()
     if "PROF-08.2" in raw_scores and "дмс" not in features_str and "рассрочка" not in features_str: raw_scores["PROF-08.2"] = 0.0
     if "CONT-38.1" in raw_scores and photos_count < 10: raw_scores["CONT-38.1"] = 0.5 if photos_count >= 5 else 0.0
-    if "CONT-42.1" in raw_scores and not any(kw in struct_str for kw in ["видео", "video", "youtube", "тур", "панорам"]):
+    if "CONT-42.1" in raw_scores and not any(kw in struct_str for kw in ["видео", "video", "youtube", "тур", "панорам", "videos"]):
         raw_scores["CONT-42.1"] = 0.0
 
+    # 4. РЕПУТАЦИЯ И ОТЗЫВЫ
     if "REP-27.2" in raw_scores and rating < 4.8: raw_scores["REP-27.2"] = 0.0
     if "REP-27.1" in raw_scores and rating < 4.5: raw_scores["REP-27.1"] = 0.0
     if "REP-28.1" in raw_scores and rev_count < 50: raw_scores["REP-28.1"] = 1.0 if rev_count >= 15 else 0.0
@@ -308,13 +322,13 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
 
         for r in reviews:
             if isinstance(r, dict):
-                reply = r.get("reply") or r.get("comments")
+                reply = r.get("reply") or r.get("comments") or r.get("businessComment")
                 if reply:
                     replied_count += 1
                     reply_lengths.append(len(str(reply)))
                     
                 rev_text = str(r.get("text", "")).lower()
-                if any(kw in rev_text for kw in ["врач", "процедур", "пломб", "кариес", "анализ"]):
+                if any(kw in rev_text for kw in ["врач", "процедур", "пломб", "кариес", "анализ", "зуб"]):
                     seo_in_reviews = True
 
                 date_str = r.get("publishedAtDate") or r.get("updatedAt") or r.get("date")
@@ -337,7 +351,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
             else: raw_scores["REP-29.1"] = 0.0
 
         last_20 = reviews[:20]
-        znatoki_count = sum(1 for r in last_20 if "знаток" in str(r.get("author", "")).lower() or "уровень" in str(r.get("author", "")).lower())
+        znatoki_count = sum(1 for r in last_20 if "знаток" in str(r.get("authorLevel") or r.get("author", "")).lower() or "уровень" in str(r.get("authorLevel") or r.get("author", "")).lower())
         photo_rev_count = sum(1 for r in last_20 if r.get("photos") or r.get("photoCount", 0) > 0)
 
         if "REP-34.1" in raw_scores and (znatoki_count / len(last_20)) < 0.25: raw_scores["REP-34.1"] = 0.0
@@ -372,7 +386,6 @@ def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
     token = os.getenv("APIFY_API_TOKEN", "").strip()
     actor = os.getenv("APIFY_ACTOR_ID", "").strip()
     
-    # Также подтягиваем из Secrets, если есть
     if "APIFY_API_TOKEN" in st.secrets: token = st.secrets["APIFY_API_TOKEN"]
     if "APIFY_ACTOR_ID" in st.secrets: actor = st.secrets["APIFY_ACTOR_ID"]
 
