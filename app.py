@@ -30,7 +30,6 @@ except ImportError:
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
-    from googleapiclient.http import MediaFileUpload
     GOOGLE_LIBS_AVAILABLE = True
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
@@ -41,12 +40,8 @@ st.set_page_config(page_title="PIN100 Analytics", page_icon="📍", layout="wide
 # 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКИ
 # ==========================================================
 
-GDRIVE_FOLDERS = {
-    "JSON": "1efm3iHSVvUPp50in3tfOGxd0xOACio2E",
-    "PDF": "15kzKEaS76HAhx22FR-BTvifbaecH_wx8",
-    "LETTERS": "10hP476EXoiPCkRfE9nqc1ZyyTBNvPKR6",
-}
-GDRIVE_SCOPES = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
+# Оставляем только доступ к таблицам, Диск больше не используется
+GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
 
@@ -98,7 +93,6 @@ def get_google_credentials() -> Tuple[Any, str]:
     if not GOOGLE_LIBS_AVAILABLE:
         return None, "Библиотеки Google API не установлены."
     
-    # Сценарий А: Чтение из облака (Streamlit Secrets)
     creds_data = None
     if "GCP_CREDENTIALS" in st.secrets:
         creds_data = st.secrets["GCP_CREDENTIALS"]
@@ -116,7 +110,6 @@ def get_google_credentials() -> Tuple[Any, str]:
         except Exception as e:
             return None, f"Ошибка парсинга Streamlit Secrets: {e}"
             
-    # Сценарий Б: Чтение локального файла (для ПК)
     creds_file = Path("credentials.json")
     if creds_file.exists():
         try:
@@ -125,7 +118,7 @@ def get_google_credentials() -> Tuple[Any, str]:
         except Exception as e:
             return None, f"Ошибка чтения локального файла: {e}"
             
-    return None, "Ключи доступа не найдены ни в Secrets (GCP_CREDENTIALS), ни в локальном файле."
+    return None, "Ключи доступа не найдены ни в Secrets, ни в файле."
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
@@ -212,7 +205,7 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
     return "обращений"
 
 # ==========================================================
-# 5. ХАРДКОРНЫЙ ПАРСИНГ (С ИСПРАВЛЕНИЯМИ ДЛЯ ВСЕХ СТРУКТУР JSON)
+# 5. ХАРДКОРНЫЙ ПАРСИНГ (ВСЕЯДНЫЙ)
 # ==========================================================
 
 def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_registry: Dict) -> Tuple[float, List[Dict[str, Any]], Dict[str, float]]:
@@ -229,12 +222,12 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     website = str(data.get("website") or data.get("url") or "").lower()
     features = data.get("features") or data.get("attributes") or []
 
-    # Сбор описания (с учетом promo)
+    # Сбор описания
     base_desc = str(data.get("description") or data.get("about") or "")
     promo_desc = str(data.get("promo", {}).get("description", "")) if isinstance(data.get("promo"), dict) else ""
     full_description = (base_desc + " " + promo_desc).lower()
 
-    # Сбор услуг (из корня, menu или productCatalog)
+    # Сбор услуг
     items = data.get("items") or data.get("priceList") or data.get("services") or data.get("goods") or data.get("productCatalog") or []
     if not items and data.get("menu") and isinstance(data.get("menu"), dict):
         items = data.get("menu").get("items", [])
@@ -245,7 +238,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     for c_code, c_meta in criteria_registry.items():
         raw_scores[c_code] = float(c_meta["weight"])
 
-    # 1. КОНВЕРСИЯ (CONV)
+    # 1. КОНВЕРСИЯ
     if "CONV-48.1" in raw_scores and not any(w in struct_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "dikidi", "записаться", "онлайн-запис", "bookingurl", "actionbuttons"]):
         raw_scores["CONV-48.1"] = 0.0
     if "CONV-48.2" in raw_scores and not any(w in struct_str for w in ["specialist", "doctor", "staff", "стаж", "опыт работы", "врач ", "специалист "]):
@@ -258,7 +251,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "CONV-53.1" in raw_scores and ("акция" not in struct_str and "скидк" not in struct_str and "старая цена" not in struct_str and "promo" not in struct_str): 
         raw_scores["CONV-53.1"] = 0.0
 
-    # 2. БАЗОВОЕ ЗАПОЛНЕНИЕ (PROF)
+    # 2. БАЗОВОЕ ЗАПОЛНЕНИЕ
     is_verified = bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge") or data.get("isVerifiedOwner"))
     if "PROF-01.1" in raw_scores and not (is_verified or len(title) > 2): raw_scores["PROF-01.1"] = 0.0
     if "PROF-12.1" in raw_scores and not is_verified: raw_scores["PROF-12.1"] = 0.0
@@ -282,7 +275,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "PROF-15.1" in raw_scores and not has_legal:
         raw_scores["PROF-15.1"] = 0.0
 
-    # ПРАВИЛА 80% ДЛЯ ВИТРИНЫ
+    # ПРАВИЛА 80%
     if isinstance(items, list) and len(items) > 0:
         if "PROF-11.1" in raw_scores and len(items) < 10: raw_scores["PROF-11.1"] = 2.0 if len(items) >= 3 else 0.0
         has_photo = sum(1 for i in items if i.get("image") or i.get("imageUrl") or i.get("image_url") or i.get("photoUrl") or i.get("picture"))
@@ -504,39 +497,67 @@ def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: Termin
     finally:
         if temp_typ.exists(): temp_typ.unlink()
 
-def sync_to_google(audit: Dict, mapping: Dict, p_pdf: Path, p_txt: Path, p_json: Path, logger: TerminalLogger) -> Dict:
+# ==========================================================
+# 6. ВЫГРУЗКА В GOOGLE ТАБЛИЦУ (НА 3 ЛИСТА)
+# ==========================================================
+def sync_to_google(audit: Dict, mapping: Dict, p_txt: Path, p_json: Path, logger: TerminalLogger) -> bool:
     creds, status = get_google_credentials()
     if not creds:
-        logger.log(f"Пропуск выгрузки в Google Диск: {status}", "WARN")
-        return {}
+        logger.log(f"Пропуск выгрузки в Google Таблицу: {status}", "WARN")
+        return False
         
-    drive = build("drive", "v3", credentials=creds)
-    sheets = build("sheets", "v4", credentials=creds)
-    d_str = datetime.date.today().strftime("%Y-%m-%d")
-
-    def upload(path: Path, folder_id: str, mime: str):
-        q = f"'{folder_id}' in parents and name = '{d_str}' and trashed = false"
-        res = drive.files().list(q=q, fields="files(id)").execute().get("files", [])
-        fid = res[0]["id"] if res else drive.files().create(body={"name": d_str, "mimeType": "application/vnd.google-apps.folder", "parents": [folder_id]}, fields="id").execute()["id"]
-        file_meta = drive.files().create(body={"name": path.name, "parents": [fid]}, media_body=MediaFileUpload(str(path), mimetype=mime), fields="id, webViewLink").execute()
-        logger.log(f"Файл {path.name} загружен. ID: {file_meta.get('id')}", "SUCCESS")
-        return file_meta.get("webViewLink", "")
-
-    links = {
-        "pdf": upload(p_pdf, GDRIVE_FOLDERS["PDF"], "application/pdf"),
-        "txt": upload(p_txt, GDRIVE_FOLDERS["LETTERS"], "text/plain"),
-        "json": upload(p_json, GDRIVE_FOLDERS["JSON"], "application/json")
-    }
-    
-    sheet_id = os.getenv("GOOGLE_SHEET_ID", "").strip()
-    if "GOOGLE_SHEET_ID" in st.secrets: sheet_id = st.secrets["GOOGLE_SHEET_ID"]
-    
-    if sheet_id:
-        row = [mapping["[[DATE]]"], datetime.datetime.now().strftime("%H:%M:%S"), audit["title"], audit["org_id"], audit["canonical_url"], audit["niche"], audit["rating"], mapping["[[SCORE]]"], mapping["[[LOST_LEADS]]"], mapping["[[REV_LOSS_FMT]]"], links["pdf"], links["txt"], links["json"]]
-        sheets.spreadsheets().values().append(spreadsheetId=sheet_id, range="Лист1!A:M", valueInputOption="USER_ENTERED", body={"values": [row]}).execute()
-        logger.log("Данные занесены в Google Таблицу.", "SUCCESS")
+    try:
+        sheets = build("sheets", "v4", credentials=creds)
+        sheet_id = os.getenv("GOOGLE_SHEET_ID", "").strip()
+        if "GOOGLE_SHEET_ID" in st.secrets: sheet_id = st.secrets["GOOGLE_SHEET_ID"]
         
-    return links
+        if not sheet_id:
+            logger.log("ID Google Таблицы (GOOGLE_SHEET_ID) не найден в секретах.", "WARN")
+            return False
+
+        # 1. Генерируем уникальный ID аудита для связи листов
+        audit_id = f"{audit['org_id']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        # 2. Подготовка данных для листа "Main"
+        row_main = [
+            audit_id, mapping["[[DATE]]"], datetime.datetime.now().strftime("%H:%M:%S"), 
+            audit["title"], audit["org_id"], audit["canonical_url"], audit["niche"], 
+            audit["rating"], mapping["[[SCORE]]"], mapping["[[LOST_LEADS]]"], mapping["[[REV_LOSS_FMT]]"]
+        ]
+
+        # 3. Подготовка данных для листа "Scores" (Сортируем ключи по алфавиту для порядка)
+        scores_dict = audit.get("criteria_scores", {})
+        sorted_codes = sorted(scores_dict.keys())
+        row_scores = [audit_id, audit["title"]] + [str(scores_dict[code]) for code in sorted_codes]
+
+        # 4. Подготовка данных для листа "RawData" (Письмо и безопасный JSON)
+        with open(p_txt, "r", encoding="utf-8") as f: letter_text = f.read()
+        with open(p_json, "r", encoding="utf-8") as f: json_text = f.read()
+        
+        # Защита от лимита Google Sheets (50 000 символов на ячейку)
+        if len(json_text) > 49000:
+            json_text = json_text[:49000] + "\n\n... [JSON ОБРЕЗАН ИЗ-ЗА ЛИМИТА GOOGLE СИМВОЛОВ]"
+
+        row_raw = [audit_id, audit["title"], letter_text, json_text]
+
+        # 5. Отправка данных на 3 разных листа
+        sheets.spreadsheets().values().append(
+            spreadsheetId=sheet_id, range="Main!A:K", valueInputOption="USER_ENTERED", body={"values": [row_main]}
+        ).execute()
+        
+        sheets.spreadsheets().values().append(
+            spreadsheetId=sheet_id, range="Scores!A:AQ", valueInputOption="USER_ENTERED", body={"values": [row_scores]}
+        ).execute()
+        
+        sheets.spreadsheets().values().append(
+            spreadsheetId=sheet_id, range="RawData!A:D", valueInputOption="USER_ENTERED", body={"values": [row_raw]}
+        ).execute()
+        
+        logger.log("Данные успешно распределены по 3 листам Google Таблицы (Main, Scores, RawData)!", "SUCCESS")
+        return True
+    except Exception as e:
+        logger.log(f"Ошибка записи в таблицу: {e}", "ERROR")
+        return False
 
 def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict):
     try:
@@ -580,11 +601,13 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             for k, v in mapping.items(): content = content.replace(k, str(v))
             if compile_pdf(content, p_pdf, out_dir, logger):
                 st.session_state.pdf_path = str(p_pdf)
-                logger.log("PDF успешно скомпилирован.", "SUCCESS")
+                logger.log("PDF успешно скомпилирован (доступен для скачивания).", "SUCCESS")
         else: logger.log("Шаблон report_template.typ не найден!", "ERROR")
 
-        logger.log("Выгрузка результатов на Google Диск...", "STEP")
-        st.session_state.drive_links = sync_to_google(audit, mapping, p_pdf, p_txt, p_json, logger)
+        logger.log("Сохранение аналитики в базу Google Таблиц...", "STEP")
+        db_saved = sync_to_google(audit, mapping, p_txt, p_json, logger)
+        if db_saved: st.session_state.db_saved = True
+            
         logger.log("КОНВЕЙЕР УСПЕШНО ЗАВЕРШЕН!", "SUCCESS")
 
     except Exception as ex:
@@ -660,10 +683,8 @@ def app():
                 with open(st.session_state.pdf_path, "rb") as f:
                     st.download_button("📥 Скачать PDF", f, Path(st.session_state.pdf_path).name, "application/pdf", type="primary", use_container_width=True)
             
-            dl = st.session_state.get("drive_links")
-            if dl:
-                st.success("✅ Сохранено на Google Drive!")
-                st.markdown(f"[📄 PDF]({dl.get('pdf')}) | [✉️ Письмо]({dl.get('txt')}) | [⚙️ JSON]({dl.get('json')})")
+            if st.session_state.get("db_saved"):
+                st.success("✅ Все данные успешно сохранены в вашу базу (Google Таблицы)!")
 
 if __name__ == "__main__":
     app()
