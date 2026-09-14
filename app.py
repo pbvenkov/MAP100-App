@@ -40,7 +40,6 @@ st.set_page_config(page_title="PIN100 Analytics", page_icon="📍", layout="wide
 # 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКИ
 # ==========================================================
 
-# Доступ только к таблицам, Диск больше не используется
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
@@ -86,7 +85,7 @@ FALLBACK_CRITERIA_REGISTRY = {
 }
 
 # ==========================================================
-# 2. УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE (СЕКРЕТЫ + ФАЙЛ)
+# 2. УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE
 # ==========================================================
 
 def get_google_credentials() -> Tuple[Any, str]:
@@ -205,7 +204,7 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
     return "обращений"
 
 # ==========================================================
-# 5. ХАРДКОРНЫЙ ПАРСИНГ (ВСЕЯДНЫЙ, С УЧЕТОМ ПРАЙСОВ)
+# 5. ХАРДКОРНЫЙ ПАРСИНГ (ВСЕЯДНЫЙ)
 # ==========================================================
 
 def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_registry: Dict) -> Tuple[float, List[Dict[str, Any]], Dict[str, float]]:
@@ -214,7 +213,10 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     
     reviews = data.get("reviews", [])
     working_hours = data.get("workingHours") or data.get("schedule") or []
-    photos_count = int(data.get("photosCount", 0)) or len(data.get("photos", []))
+    
+    # Исправленный счетчик фото
+    photos_count = int(data.get("photoCount") or data.get("photosCount") or len(data.get("photos", [])) or 0)
+    
     rating = float(data.get("rating") or data.get("reviewsRating") or 5.0)
     rev_count = int(data.get("reviewsCount") or data.get("ratingCount") or len(reviews))
     categories = data.get("categories", [])
@@ -227,14 +229,13 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     promo_desc = str(data.get("promo", {}).get("description", "")) if isinstance(data.get("promo"), dict) else ""
     full_description = (base_desc + " " + promo_desc).lower()
 
-    # Сбор услуг: отдаем жесткий приоритет полноценному прайс-листу (menu)
+    # Сбор услуг: жесткий приоритет полноценному прайс-листу (menu)
     items = []
     if isinstance(data.get("menu"), dict) and isinstance(data.get("menu").get("items"), list) and data["menu"]["items"]:
         items = data["menu"]["items"]
     elif data.get("priceList") and isinstance(data.get("priceList"), list) and data["priceList"]:
         items = data["priceList"]
     else:
-        # Если официального прайса нет, собираем что есть из витрин
         for key in ["items", "services", "goods", "productCatalog"]:
             if isinstance(data.get(key), list) and data.get(key):
                 items.extend(data[key])
