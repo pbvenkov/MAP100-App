@@ -40,7 +40,7 @@ st.set_page_config(page_title="PIN100 Analytics", page_icon="📍", layout="wide
 # 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКИ
 # ==========================================================
 
-# Оставляем только доступ к таблицам, Диск больше не используется
+# Доступ только к таблицам, Диск больше не используется
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
@@ -205,7 +205,7 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
     return "обращений"
 
 # ==========================================================
-# 5. ХАРДКОРНЫЙ ПАРСИНГ (ВСЕЯДНЫЙ)
+# 5. ХАРДКОРНЫЙ ПАРСИНГ (ВСЕЯДНЫЙ, С УЧЕТОМ ПРАЙСОВ)
 # ==========================================================
 
 def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_registry: Dict) -> Tuple[float, List[Dict[str, Any]], Dict[str, float]]:
@@ -227,10 +227,17 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     promo_desc = str(data.get("promo", {}).get("description", "")) if isinstance(data.get("promo"), dict) else ""
     full_description = (base_desc + " " + promo_desc).lower()
 
-    # Сбор услуг
-    items = data.get("items") or data.get("priceList") or data.get("services") or data.get("goods") or data.get("productCatalog") or []
-    if not items and data.get("menu") and isinstance(data.get("menu"), dict):
-        items = data.get("menu").get("items", [])
+    # Сбор услуг: отдаем жесткий приоритет полноценному прайс-листу (menu)
+    items = []
+    if isinstance(data.get("menu"), dict) and isinstance(data.get("menu").get("items"), list) and data["menu"]["items"]:
+        items = data["menu"]["items"]
+    elif data.get("priceList") and isinstance(data.get("priceList"), list) and data["priceList"]:
+        items = data["priceList"]
+    else:
+        # Если официального прайса нет, собираем что есть из витрин
+        for key in ["items", "services", "goods", "productCatalog"]:
+            if isinstance(data.get(key), list) and data.get(key):
+                items.extend(data[key])
 
     data_no_reviews = {k: v for k, v in data.items() if k not in ["reviews", "reviewsCount", "ratingCount"]}
     struct_str = json.dumps(data_no_reviews, ensure_ascii=False).lower()
@@ -275,7 +282,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "PROF-15.1" in raw_scores and not has_legal:
         raw_scores["PROF-15.1"] = 0.0
 
-    # ПРАВИЛА 80%
+    # ПРАВИЛА 80% ДЛЯ УСЛУГ
     if isinstance(items, list) and len(items) > 0:
         if "PROF-11.1" in raw_scores and len(items) < 10: raw_scores["PROF-11.1"] = 2.0 if len(items) >= 3 else 0.0
         has_photo = sum(1 for i in items if i.get("image") or i.get("imageUrl") or i.get("image_url") or i.get("photoUrl") or i.get("picture"))
