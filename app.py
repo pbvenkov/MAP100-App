@@ -217,31 +217,34 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     logger.log(f"Запуск оценки по {len(criteria_registry)} правилам из Google Таблицы...", "STEP")
     raw_scores = {}
     
-    reviews = data.get("reviews", [])
+    # БЕЗОПАСНОЕ ИЗВЛЕЧЕНИЕ (ЗАЩИТА ОТ NULL)
+    reviews = data.get("reviews") or []
     working_hours = data.get("workingHours") or data.get("schedule") or []
-    
-    photos_count = int(data.get("photoCount") or data.get("photosCount") or len(data.get("photos", [])) or 0)
+    photos_count = int(data.get("photoCount") or data.get("photosCount") or len(data.get("photos") or []) or 0)
     
     rating = float(data.get("rating") or data.get("reviewsRating") or 5.0)
     rev_count = int(data.get("reviewsCount") or data.get("ratingCount") or len(reviews))
-    categories = data.get("categories", [])
+    categories = data.get("categories") or []
     title = str(data.get("title") or data.get("name") or "").lower()
     website = str(data.get("website") or data.get("url") or "").lower()
     features = data.get("features") or data.get("attributes") or []
 
     base_desc = str(data.get("description") or data.get("about") or "")
-    promo_desc = str(data.get("promo", {}).get("description", "")) if isinstance(data.get("promo"), dict) else ""
+    promo_data = data.get("promo")
+    promo_desc = str(promo_data.get("description", "")) if isinstance(promo_data, dict) else ""
     full_description = (base_desc + " " + promo_desc).lower()
 
     items = []
-    if isinstance(data.get("menu"), dict) and isinstance(data.get("menu").get("items"), list) and data["menu"]["items"]:
-        items = data["menu"]["items"]
-    elif data.get("priceList") and isinstance(data.get("priceList"), list) and data["priceList"]:
+    menu_data = data.get("menu")
+    if isinstance(menu_data, dict) and isinstance(menu_data.get("items"), list) and menu_data["items"]:
+        items = menu_data["items"]
+    elif isinstance(data.get("priceList"), list) and data["priceList"]:
         items = data["priceList"]
     else:
         for key in ["items", "services", "goods", "productCatalog"]:
-            if isinstance(data.get(key), list) and data.get(key):
-                items.extend(data[key])
+            val = data.get(key)
+            if isinstance(val, list) and val:
+                items.extend(val)
 
     data_no_reviews = {k: v for k, v in data.items() if k not in ["reviews", "reviewsCount", "ratingCount"]}
     struct_str = json.dumps(data_no_reviews, ensure_ascii=False).lower()
@@ -282,16 +285,19 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "PROF-10.3" in raw_scores and not any(kw in full_description for kw in ["лечение", "прием", "услуг", "диагностик", "терапи", "консультац"]):
         raw_scores["PROF-10.3"] = 0.0
 
-    has_legal = "инн" in struct_str or "огрн" in struct_str or "taxid" in struct_str or "реквизит" in struct_str or bool(data.get("legalInfo", {}).get("taxId"))
+    legal_info = data.get("legalInfo")
+    tax_id = legal_info.get("taxId") if isinstance(legal_info, dict) else None
+    has_legal = "инн" in struct_str or "огрн" in struct_str or "taxid" in struct_str or "реквизит" in struct_str or bool(tax_id)
+    
     if "PROF-15.1" in raw_scores and not has_legal:
         raw_scores["PROF-15.1"] = 0.0
 
     # ПРАВИЛА 80% ДЛЯ УСЛУГ
     if isinstance(items, list) and len(items) > 0:
         if "PROF-11.1" in raw_scores and len(items) < 10: raw_scores["PROF-11.1"] = 2.0 if len(items) >= 3 else 0.0
-        has_photo = sum(1 for i in items if i.get("image") or i.get("imageUrl") or i.get("image_url") or i.get("photoUrl") or i.get("picture"))
-        has_price = sum(1 for i in items if i.get("price") or i.get("cost") or i.get("priceValue"))
-        has_desc = sum(1 for i in items if i.get("description") and len(str(i.get("description"))) > 50)
+        has_photo = sum(1 for i in items if isinstance(i, dict) and (i.get("image") or i.get("imageUrl") or i.get("image_url") or i.get("photoUrl") or i.get("picture")))
+        has_price = sum(1 for i in items if isinstance(i, dict) and (i.get("price") or i.get("cost") or i.get("priceValue")))
+        has_desc = sum(1 for i in items if isinstance(i, dict) and i.get("description") and len(str(i.get("description"))) > 50)
         total_items = len(items)
         if "PROF-11.2" in raw_scores and (has_photo / total_items) < 0.8: raw_scores["PROF-11.2"] = 0.0
         if "PROF-11.3" in raw_scores and (has_price / total_items) < 0.8: raw_scores["PROF-11.3"] = 0.0
@@ -355,8 +361,8 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
             else: raw_scores["REP-29.1"] = 0.0
 
         last_20 = reviews[:20]
-        znatoki_count = sum(1 for r in last_20 if "знаток" in str(r.get("authorLevel") or r.get("author", "")).lower() or "уровень" in str(r.get("authorLevel") or r.get("author", "")).lower())
-        photo_rev_count = sum(1 for r in last_20 if r.get("photos") or r.get("photoCount", 0) > 0)
+        znatoki_count = sum(1 for r in last_20 if isinstance(r, dict) and ("знаток" in str(r.get("authorLevel") or r.get("author", "")).lower() or "уровень" in str(r.get("authorLevel") or r.get("author", "")).lower()))
+        photo_rev_count = sum(1 for r in last_20 if isinstance(r, dict) and (r.get("photos") or r.get("photoCount", 0) > 0))
 
         if "REP-34.1" in raw_scores and (znatoki_count / len(last_20)) < 0.25: raw_scores["REP-34.1"] = 0.0
         if "REP-35.1" in raw_scores and (photo_rev_count / len(last_20)) < 0.10: raw_scores["REP-35.1"] = 0.0
@@ -396,17 +402,14 @@ def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
 
     if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID (добавьте их в Secrets).")
 
-    # УВЕЛИЧЕН ТАЙМ-АУТ ДО 300 секунд
+    # УВЕЛИЧЕН ТАЙМ-АУТ ДО 300 секунд, УБРАНЫ ОГРАНИЧЕНИЯ ДЛЯ ПАРСЕРА
     run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
     logger.log(f"Отправка URL в Apify Actor...", "STEP")
     
-    # ДОБАВЛЕНЫ ЛИМИТЫ (maxReviews и maxImages), чтобы избежать тайм-аута
     payload = {
         "startUrls": [{"url": target_url.strip()}], 
         "maxItems": 1, 
-        "includeReviews": True,
-        "maxReviews": 20,
-        "maxImages": 10
+        "includeReviews": True
     }
     
     resp = requests.post(run_url, json=payload, timeout=310)
@@ -436,8 +439,8 @@ def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[st
             "title": data.get("title", ""),
             "rating": data.get("rating", ""),
             "reviews_count": data.get("reviewsCount", ""),
-            "features": data.get("features", []),
-            "recent_reviews": [r.get("text", "") for r in data.get("reviews", [])[:5] if isinstance(r, dict)]
+            "features": data.get("features") or [],
+            "recent_reviews": [r.get("text", "") for r in (data.get("reviews") or [])[:5] if isinstance(r, dict)]
         }
         
         prompt = f"""
