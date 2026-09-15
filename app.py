@@ -433,7 +433,8 @@ def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[st
     logger.log("🧠 Запрос к ИИ Gemini для поиска главной боли...", "STEP")
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # ЗАМЕНЕНО НА ЗАПРАШИВАЕМУЮ МОДЕЛЬ
+        model = genai.GenerativeModel('gemini-3.5-flash')
         
         safe_data = {
             "title": data.get("title", ""),
