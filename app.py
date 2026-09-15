@@ -402,7 +402,6 @@ def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
 
     if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID (добавьте их в Secrets).")
 
-    # УВЕЛИЧЕН ТАЙМ-АУТ ДО 300 секунд, УБРАНЫ ОГРАНИЧЕНИЯ ДЛЯ ПАРСЕРА
     run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
     logger.log(f"Отправка URL в Apify Actor...", "STEP")
     
@@ -433,7 +432,6 @@ def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[st
     logger.log("🧠 Запрос к ИИ Gemini для поиска главной боли...", "STEP")
     try:
         genai.configure(api_key=api_key)
-        # ЗАМЕНЕНО НА ЗАПРАШИВАЕМУЮ МОДЕЛЬ
         model = genai.GenerativeModel('gemini-3.5-flash')
         
         safe_data = {
@@ -588,12 +586,25 @@ def sync_to_google(audit: Dict, mapping: Dict, p_txt: Path, p_json: Path, logger
         # 1. Генерируем уникальный ID аудита для связи листов
         audit_id = f"{audit['org_id']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-        # 2. Подготовка данных для листа "Main" (Добавлены столбцы ИИ-Анализа L и M)
+        # 2. Подготовка данных для листа "Main" (Исправлено смещение колонок)
         row_main = [
-            audit_id, mapping["[[DATE]]"], datetime.datetime.now().strftime("%H:%M:%S"), 
-            audit["title"], audit["org_id"], audit["canonical_url"], audit["niche"], 
-            audit["rating"], mapping["[[SCORE]]"], mapping["[[LOST_LEADS]]"], mapping["[[REV_LOSS_FMT]]"],
-            audit.get("ai_score", ""), audit.get("ai_pain_point", "")
+            audit_id,                       # A: Audit_ID
+            mapping["[[DATE]]"],            # B: Дата
+            datetime.datetime.now().strftime("%H:%M:%S"), # C: Время
+            audit["title"],                 # D: Название
+            audit["org_id"],                # E: ID Компании
+            audit["canonical_url"],         # F: Ссылка
+            audit["niche"],                 # G: Ниша
+            audit["rating"],                # H: Рейтинг
+            mapping["[[SCORE]]"],           # I: Балл
+            mapping["[[LOST_LEADS]]"],      # J: Потеря Лидов
+            mapping["[[REV_LOSS_FMT]]"],    # K: Потеря Выручки
+            "",                             # L: Статус воронки (оставляем пустым)
+            "",                             # M: ЛПР и Контакт (оставляем пустым)
+            "",                             # N: Дата фоллоу-апа (оставляем пустым)
+            "",                             # O: Следующий шаг (оставляем пустым)
+            audit.get("ai_score", ""),      # P: AI-Прогноз (%)
+            audit.get("ai_pain_point", "")  # Q: Главная боль (Триггер)
         ]
 
         # 3. Подготовка данных для листа "Scores"
@@ -610,9 +621,9 @@ def sync_to_google(audit: Dict, mapping: Dict, p_txt: Path, p_json: Path, logger
 
         row_raw = [audit_id, audit["title"], letter_text, json_text]
 
-        # 5. Отправка данных на 3 разных листа (Заменено Main!A:K на Main!A:M)
+        # 5. Отправка данных на 3 разных листа (Изменен диапазон Main на A:Q)
         sheets.spreadsheets().values().append(
-            spreadsheetId=sheet_id, range="Main!A:M", valueInputOption="USER_ENTERED", body={"values": [row_main]}
+            spreadsheetId=sheet_id, range="Main!A:Q", valueInputOption="USER_ENTERED", body={"values": [row_main]}
         ).execute()
         
         sheets.spreadsheets().values().append(
