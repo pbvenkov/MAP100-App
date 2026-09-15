@@ -34,6 +34,12 @@ try:
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
 
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+
 st.set_page_config(page_title="PIN100 Analytics", page_icon="📍", layout="wide")
 
 # ==========================================================
@@ -214,7 +220,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     reviews = data.get("reviews", [])
     working_hours = data.get("workingHours") or data.get("schedule") or []
     
-    # Исправленный счетчик фото
     photos_count = int(data.get("photoCount") or data.get("photosCount") or len(data.get("photos", [])) or 0)
     
     rating = float(data.get("rating") or data.get("reviewsRating") or 5.0)
@@ -224,12 +229,10 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     website = str(data.get("website") or data.get("url") or "").lower()
     features = data.get("features") or data.get("attributes") or []
 
-    # Сбор описания
     base_desc = str(data.get("description") or data.get("about") or "")
     promo_desc = str(data.get("promo", {}).get("description", "")) if isinstance(data.get("promo"), dict) else ""
     full_description = (base_desc + " " + promo_desc).lower()
 
-    # Сбор услуг: жесткий приоритет полноценному прайс-листу (menu)
     items = []
     if isinstance(data.get("menu"), dict) and isinstance(data.get("menu").get("items"), list) and data["menu"]["items"]:
         items = data["menu"]["items"]
@@ -383,6 +386,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
 
     return round(total_score, 1), top_3, raw_scores
 
+
 def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
     token = os.getenv("APIFY_API_TOKEN", "").strip()
     actor = os.getenv("APIFY_ACTOR_ID", "").strip()
@@ -392,16 +396,69 @@ def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
 
     if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID (добавьте их в Secrets).")
 
-    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=70"
+    # УВЕЛИЧЕН ТАЙМ-АУТ ДО 300 секунд
+    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
     logger.log(f"Отправка URL в Apify Actor...", "STEP")
     
-    resp = requests.post(run_url, json={"startUrls": [{"url": target_url.strip()}], "maxItems": 1, "includeReviews": True}, timeout=80)
+    # ДОБАВЛЕНЫ ЛИМИТЫ (maxReviews и maxImages), чтобы избежать тайм-аута
+    payload = {
+        "startUrls": [{"url": target_url.strip()}], 
+        "maxItems": 1, 
+        "includeReviews": True,
+        "maxReviews": 20,
+        "maxImages": 10
+    }
+    
+    resp = requests.post(run_url, json=payload, timeout=310)
     if resp.status_code not in [200, 201]: raise RuntimeError(f"Сбой Apify: {resp.text[:200]}")
     
     items = resp.json()
     if not items: raise ValueError("Apify вернул пустой массив данных.")
     logger.log("Сырые данные успешно загружены из Apify.", "SUCCESS")
     return items[0]
+
+
+def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[str, Any]:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if "GEMINI_API_KEY" in st.secrets:
+        api_key = st.secrets["GEMINI_API_KEY"]
+        
+    if not api_key or not GEMINI_AVAILABLE:
+        logger.log("Gemini API отключен (нет ключа или библиотеки).", "WARN")
+        return {"score": 0, "pain_point": ""}
+        
+    logger.log("🧠 Запрос к ИИ Gemini для поиска главной боли...", "STEP")
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        safe_data = {
+            "title": data.get("title", ""),
+            "rating": data.get("rating", ""),
+            "reviews_count": data.get("reviewsCount", ""),
+            "features": data.get("features", []),
+            "recent_reviews": [r.get("text", "") for r in data.get("reviews", [])[:5] if isinstance(r, dict)]
+        }
+        
+        prompt = f"""
+        Ты маркетолог-эксперт по Яндекс Картам. Анализируем стоматологию/клинику:
+        {json.dumps(safe_data, ensure_ascii=False)}
+        
+        Наш продукт: аудит карточки и услуги по ее ведению.
+        Выдай ответ СТРОГО в формате JSON с ключами:
+        1. "score" (число 0-100): Оценка вероятности продажи.
+        2. "pain_point" (текст): Одно предложение с самой грубой ошибкой профиля.
+        """
+        
+        resp = model.generate_content(prompt)
+        result_text = resp.text.replace('```json', '').replace('```', '').strip()
+        ai_data = json.loads(result_text)
+        logger.log(f"Gemini: Скоринг {ai_data.get('score')}%, Боль: {ai_data.get('pain_point')}", "SUCCESS")
+        return ai_data
+    except Exception as e:
+        logger.log(f"Ошибка Gemini: {e}", "ERROR")
+        return {"score": 0, "pain_point": ""}
+
 
 def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_registry: Dict) -> Dict[str, Any]:
     data = raw_input[0] if isinstance(raw_input, list) and raw_input else raw_input
@@ -434,7 +491,8 @@ def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_regist
         "benchmark_leads": n_def["benchmark_leads"], "base_check": n_def["base_check"], 
         "ltv_months": n_def["ltv_months"], "benchmark_source": n_def["benchmark_source"],
         "top_failures": top_fails, "date": datetime.date.today().strftime("%d.%m.%Y"),
-        "criteria_scores": raw_scores
+        "criteria_scores": raw_scores,
+        "raw_data_ref": data # Сохраняем ссылку на сырые данные для ИИ
     }
 
 def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, str]:
@@ -526,31 +584,31 @@ def sync_to_google(audit: Dict, mapping: Dict, p_txt: Path, p_json: Path, logger
         # 1. Генерируем уникальный ID аудита для связи листов
         audit_id = f"{audit['org_id']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-        # 2. Подготовка данных для листа "Main"
+        # 2. Подготовка данных для листа "Main" (Добавлены столбцы ИИ-Анализа L и M)
         row_main = [
             audit_id, mapping["[[DATE]]"], datetime.datetime.now().strftime("%H:%M:%S"), 
             audit["title"], audit["org_id"], audit["canonical_url"], audit["niche"], 
-            audit["rating"], mapping["[[SCORE]]"], mapping["[[LOST_LEADS]]"], mapping["[[REV_LOSS_FMT]]"]
+            audit["rating"], mapping["[[SCORE]]"], mapping["[[LOST_LEADS]]"], mapping["[[REV_LOSS_FMT]]"],
+            audit.get("ai_score", ""), audit.get("ai_pain_point", "")
         ]
 
-        # 3. Подготовка данных для листа "Scores" (Сортируем ключи по алфавиту для порядка)
+        # 3. Подготовка данных для листа "Scores"
         scores_dict = audit.get("criteria_scores", {})
         sorted_codes = sorted(scores_dict.keys())
         row_scores = [audit_id, audit["title"]] + [str(scores_dict[code]) for code in sorted_codes]
 
-        # 4. Подготовка данных для листа "RawData" (Письмо и безопасный JSON)
+        # 4. Подготовка данных для листа "RawData"
         with open(p_txt, "r", encoding="utf-8") as f: letter_text = f.read()
         with open(p_json, "r", encoding="utf-8") as f: json_text = f.read()
         
-        # Защита от лимита Google Sheets (50 000 символов на ячейку)
         if len(json_text) > 49000:
             json_text = json_text[:49000] + "\n\n... [JSON ОБРЕЗАН ИЗ-ЗА ЛИМИТА GOOGLE СИМВОЛОВ]"
 
         row_raw = [audit_id, audit["title"], letter_text, json_text]
 
-        # 5. Отправка данных на 3 разных листа
+        # 5. Отправка данных на 3 разных листа (Заменено Main!A:K на Main!A:M)
         sheets.spreadsheets().values().append(
-            spreadsheetId=sheet_id, range="Main!A:K", valueInputOption="USER_ENTERED", body={"values": [row_main]}
+            spreadsheetId=sheet_id, range="Main!A:M", valueInputOption="USER_ENTERED", body={"values": [row_main]}
         ).execute()
         
         sheets.spreadsheets().values().append(
@@ -573,22 +631,31 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         st.session_state.current_audit = audit
         mapping = build_metrics(audit, criteria_registry)
         st.session_state.current_mapping = mapping
+        
+        # ЗАПРОС К GEMINI
+        ai_insights = get_gemini_insights(audit["raw_data_ref"], logger)
+        audit["ai_score"] = ai_insights.get("score", "")
+        audit["ai_pain_point"] = ai_insights.get("pain_point", "")
 
         logger.log("Генерация письма Icebreaker...", "STEP")
         c_str = f"«{audit['competitors'][0]}» и «{audit['competitors'][1]}»" if "сосед" not in audit['competitors'][0].lower() else "соседние клиники локации"
         ll = int(mapping["[[LOST_LEADS]]"])
-
-        top_fail_title = audit["top_failures"][0]["title"].lower()
-        if "запись" in top_fail_title or "мис" in top_fail_title:
-            ib_fail_text = "На поверхности лежит отсутствие быстрой онлайн-записи (пациенты вечером не хотят звонить и уходят к соседям)"
-        elif "врач" in top_fail_title or "специалист" in top_fail_title:
-            ib_fail_text = "На поверхности лежит отсутствие витрины врачей (пациенты выбирают клиники с открытой командой)"
-        elif "услуг" in top_fail_title or "прайс" in top_fail_title or "цены" in top_fail_title:
-            ib_fail_text = "На поверхности лежит отсутствие понятного каталога услуг (пациенты боятся скрытых накруток и уходят к соседям)"
-        elif "отзыв" in top_fail_title or "рейтинг" in top_fail_title:
-            ib_fail_text = "На поверхности лежат репутационные недочеты (алгоритмы Яндекса пессимизируют профиль за просадку в отзывах)"
+        
+        # Формирование боли: ИИ-приоритет или жесткая логика из кода
+        if audit["ai_pain_point"]:
+            ib_fail_text = f"На поверхности лежат недочеты: {audit['ai_pain_point'].lower().strip(' .')}"
         else:
-            ib_fail_text = f"На поверхности лежат пара недочетов (например, алгоритмы Яндекса пессимизируют профиль за пункт «{audit['top_failures'][0]['title']}»)"
+            top_fail_title = audit["top_failures"][0]["title"].lower()
+            if "запись" in top_fail_title or "мис" in top_fail_title:
+                ib_fail_text = "На поверхности лежит отсутствие быстрой онлайн-записи (пациенты вечером не хотят звонить и уходят к соседям)"
+            elif "врач" in top_fail_title or "специалист" in top_fail_title:
+                ib_fail_text = "На поверхности лежит отсутствие витрины врачей (пациенты выбирают клиники с открытой командой)"
+            elif "услуг" in top_fail_title or "прайс" in top_fail_title or "цены" in top_fail_title:
+                ib_fail_text = "На поверхности лежит отсутствие понятного каталога услуг (пациенты боятся скрытых накруток и уходят к соседям)"
+            elif "отзыв" in top_fail_title or "рейтинг" in top_fail_title:
+                ib_fail_text = "На поверхности лежат репутационные недочеты (алгоритмы Яндекса пессимизируют профиль за просадку в отзывах)"
+            else:
+                ib_fail_text = f"На поверхности лежат пара недочетов (например, алгоритмы Яндекса пессимизируют профиль за пункт «{audit['top_failures'][0]['title']}»)"
 
         ib_txt = (f"Добрый день!\n\nАнализировали выдачу в вашем районе и обратили внимание на карточку «{audit['title']}». При сильной репутации ({audit['rating']:.1f}) первичный поток перехватывают {c_str}.\n\n"
                   f"{ib_fail_text}. По емкости района это отток около {max(1, ll-2)}–{ll+3} пациентов в месяц.\n\n"
@@ -601,7 +668,10 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         p_pdf, p_txt, p_json = out_dir / f"{prefix}.pdf", out_dir / f"{prefix}.txt", out_dir / f"{prefix}.json"
         
         with open(p_txt, "w", encoding="utf-8") as f: f.write(ib_txt)
-        with open(p_json, "w", encoding="utf-8") as f: json.dump(audit, f, ensure_ascii=False)
+        
+        # Удаляем тяжелый raw_data_ref перед сохранением JSON
+        safe_audit_for_json = {k: v for k, v in audit.items() if k != "raw_data_ref"}
+        with open(p_json, "w", encoding="utf-8") as f: json.dump(safe_audit_for_json, f, ensure_ascii=False)
         
         tpl = Path("report_template.typ")
         if tpl.exists():
@@ -672,6 +742,10 @@ def app():
         with c1:
             st.subheader("✉️ Первое сообщение (Icebreaker)")
             st.text_area("Текст:", value=st.session_state.current_icebreaker, height=200)
+            
+            if aud.get("ai_pain_point"):
+                st.info(f"🧠 ИИ-вывод (пошло в письмо): {aud['ai_pain_point']}")
+            
             st.markdown("**Топ-3 уязвимости:**")
             for i, f in enumerate(aud["top_failures"], 1):
                 st.markdown(f"**{i}. {f['title']}**\n<small>{f['desc']}</small>", unsafe_allow_html=True)
@@ -683,7 +757,11 @@ def app():
             m2.metric("Потери", f"~{map_d['[[LOST_LEADS]]']} чел/мес")
             m3, m4 = st.columns(2)
             m3.metric("Упущенная выручка", f"{map_d['[[REV_LOSS_FMT]]']} ₽/мес")
-            m4.metric("Потери за неделю", f"~{map_d['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
+            
+            if aud.get("ai_score"):
+                 m4.metric("🧠 ИИ-Скоринг (Вероятность)", f"{aud['ai_score']}%")
+            else:
+                 m4.metric("Потери за неделю", f"~{map_d['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
             
             st.divider()
             st.subheader("📄 PDF-отчет")
