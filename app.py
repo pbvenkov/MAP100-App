@@ -260,10 +260,11 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "CONV-46.1" in raw_scores and photos_count < 5: raw_scores["CONV-46.1"] = 0.0 
     if "CONV-49.1" in raw_scores and (not any(char.isdigit() for char in full_description) or "мы лучшие" in full_description or "индивидуальный подход" in full_description):
         raw_scores["CONV-49.1"] = 0.0
-    if "CONV-50.1" in raw_scores and not any(w in struct_str for w in ["чат", "chat", "ischatenabled"]): raw_scores["CONV-50.1"] = 0.0
     if "CONV-52.1" in raw_scores and not any(w in struct_str for w in ["faq", "вопрос", "ответы"]): raw_scores["CONV-52.1"] = 0.0
     if "CONV-53.1" in raw_scores and ("акция" not in struct_str and "скидк" not in struct_str and "старая цена" not in struct_str and "promo" not in struct_str): 
         raw_scores["CONV-53.1"] = 0.0
+    if "CONV-54.1" in raw_scores and not promo_data: 
+        raw_scores["CONV-54.1"] = 0.0
 
     # 2. БАЗОВОЕ ЗАПОЛНЕНИЕ
     is_verified = bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge") or data.get("isVerifiedOwner"))
@@ -281,7 +282,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "PROF-05.1" in raw_scores and not data.get("phones"): raw_scores["PROF-05.1"] = 0.0
     if "PROF-07.1" in raw_scores and len(working_hours) < 7: raw_scores["PROF-07.1"] = 1.0 if len(working_hours) > 0 else 0.0
     if "PROF-13.1" in raw_scores and not any(w in struct_str for w in ["wa.me", "t.me", "whatsapp"]): raw_scores["PROF-13.1"] = 0.0
-    if "PROF-09.1" in raw_scores and len(full_description) < 1200: raw_scores["PROF-09.1"] = 0.0
     if "PROF-10.3" in raw_scores and not any(kw in full_description for kw in ["лечение", "прием", "услуг", "диагностик", "терапи", "консультац"]):
         raw_scores["PROF-10.3"] = 0.0
 
@@ -298,12 +298,15 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
         has_photo = sum(1 for i in items if isinstance(i, dict) and (i.get("image") or i.get("imageUrl") or i.get("image_url") or i.get("photoUrl") or i.get("picture")))
         has_price = sum(1 for i in items if isinstance(i, dict) and (i.get("price") or i.get("cost") or i.get("priceValue")))
         has_desc = sum(1 for i in items if isinstance(i, dict) and i.get("description") and len(str(i.get("description"))) > 50)
+        has_cta = sum(1 for i in items if isinstance(i, dict) and (i.get("url") or i.get("action") or i.get("bookingUrl")))
         total_items = len(items)
+        
         if "PROF-11.2" in raw_scores and (has_photo / total_items) < 0.8: raw_scores["PROF-11.2"] = 0.0
         if "PROF-11.3" in raw_scores and (has_price / total_items) < 0.8: raw_scores["PROF-11.3"] = 0.0
         if "PROF-11.4" in raw_scores and (has_desc / total_items) < 0.8:  raw_scores["PROF-11.4"] = 0.0
+        if "PROF-11.5" in raw_scores and (has_cta / total_items) < 0.1:  raw_scores["PROF-11.5"] = 0.0
     else:
-        for k in ["PROF-11.1", "PROF-11.2", "PROF-11.3", "PROF-11.4"]:
+        for k in ["PROF-11.1", "PROF-11.2", "PROF-11.3", "PROF-11.4", "PROF-11.5"]:
             if k in raw_scores: raw_scores[k] = 0.0
 
     # 3. SEO И ТРАФИК 
@@ -318,6 +321,9 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "CONT-38.1" in raw_scores and photos_count < 10: raw_scores["CONT-38.1"] = 0.5 if photos_count >= 5 else 0.0
     if "CONT-42.1" in raw_scores and not any(kw in struct_str for kw in ["видео", "video", "youtube", "тур", "панорам", "videos"]):
         raw_scores["CONT-42.1"] = 0.0
+        
+    has_news = bool(data.get("posts") or data.get("news") or data.get("updates") or "story" in struct_str or "новост" in struct_str)
+    if "CONT-43.1" in raw_scores and not has_news: raw_scores["CONT-43.1"] = 0.0
 
     # 4. РЕПУТАЦИЯ И ОТЗЫВЫ
     if "REP-27.2" in raw_scores and rating < 4.8: raw_scores["REP-27.2"] = 0.0
@@ -326,7 +332,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
 
     if reviews and isinstance(reviews, list):
         replied_count = 0
-        reply_lengths = []
         seo_in_reviews = False
         most_recent_date = None
 
@@ -335,7 +340,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
                 reply = r.get("reply") or r.get("comments") or r.get("businessComment")
                 if reply:
                     replied_count += 1
-                    reply_lengths.append(len(str(reply)))
                     
                 rev_text = str(r.get("text", "")).lower()
                 if any(kw in rev_text for kw in ["врач", "процедур", "пломб", "кариес", "анализ", "зуб"]):
@@ -350,8 +354,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
                     except Exception: pass
 
         if "REP-30.1" in raw_scores and (replied_count / len(reviews)) < 0.9: raw_scores["REP-30.1"] = 1.5 if (replied_count / len(reviews)) >= 0.5 else 0.0
-        avg_reply = sum(reply_lengths) / len(reply_lengths) if reply_lengths else 0
-        if "REP-30.4" in raw_scores and avg_reply < 80: raw_scores["REP-30.4"] = 0.0
         if "SEO-19.2" in raw_scores and not seo_in_reviews: raw_scores["SEO-19.2"] = 0.0
 
         if "REP-29.1" in raw_scores:
@@ -368,7 +370,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
         if "REP-35.1" in raw_scores and (photo_rev_count / len(last_20)) < 0.10: raw_scores["REP-35.1"] = 0.0
 
     else:
-        for k in ["REP-30.1", "REP-30.4", "REP-35.1", "REP-34.1", "SEO-19.2", "REP-29.1", "REP-32.2"]:
+        for k in ["REP-30.1", "REP-35.1", "REP-34.1", "SEO-19.2", "REP-29.1", "REP-32.2"]:
             if k in raw_scores: raw_scores[k] = 0.0 
 
     total_score = 0.0
@@ -447,9 +449,15 @@ def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[st
         {json.dumps(safe_data, ensure_ascii=False)}
         
         Наш продукт: аудит карточки и услуги по ее ведению.
+        
+        🛑 АНТИ-СПАМ ПРАВИЛА ЯНДЕКСА (СТРОГО СОБЛЮДАТЬ ПРИ АНАЛИЗЕ):
+        1. Название компании: Запрещены ключевые слова (например, "стоматология", "недорого"), если их нет на реальной вывеске. НИКОГДА не рекомендуй добавлять ключевые слова в название карточки.
+        2. Описание: Запрещен SEO-спам (бессмысленное перечисление станций метро, районов или списки услуг через запятую).
+        3. Отзывы: Запрещена прямая покупка отзывов за скидки.
+        
         Выдай ответ СТРОГО в формате JSON с ключами:
         1. "score" (число 0-100): Оценка вероятности продажи.
-        2. "pain_point" (текст): Одно предложение с самой грубой ошибкой профиля.
+        2. "pain_point" (текст): Одно предложение с самой грубой ошибкой профиля. Фокусируйся ТОЛЬКО на легальных механиках: незаполненный прайс-лист, нет фото врачей, нет онлайн-записи, неотвеченные негативные отзывы, шаблонное описание "мы лучшие" вместо конкретики.
         """
         
         resp = model.generate_content(prompt)
@@ -520,11 +528,11 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     worst_group = max(group_losses, key=group_losses.get) if group_losses else ""
 
     reason_phrases = {
-        "Конверсия": "из-за отсутствия прямого конверсионного инструментария (онлайн-записи, витрины врачей или чата)",
+        "Конверсия": "из-за отсутствия прямого конверсионного инструментария (онлайн-записи, витрины врачей или промоакций)",
         "Базовое заполнение": "из-за критических пробелов в заполнении карточки (отсутствие цен, структуры услуг или реквизитов)",
         "Репутация": "из-за просадки в репутационных факторах (паузы в отзывах, рейтинг или игнорирование обратной связи)",
         "SEO и Трафик": "из-за слабой гео-оптимизации профиля (нехватка нишевых атрибутов, топонимов или смежных рубрик)",
-        "Контент": "из-за недостатка визуального доверия (мало качественных фотографий интерьера или отсутствие видео)"
+        "Контент": "из-за недостатка визуального доверия (отсутствие новостей, фото интерьера или видео)"
     }
     
     reason_text = reason_phrases.get(worst_group, "из-за технических недочетов в оформлении и настройках профиля")
@@ -656,25 +664,27 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         c_str = f"«{audit['competitors'][0]}» и «{audit['competitors'][1]}»" if "сосед" not in audit['competitors'][0].lower() else "соседние клиники локации"
         ll = int(mapping["[[LOST_LEADS]]"])
         
-        # Формирование боли: ИИ-приоритет или жесткая логика из кода
+        # Формирование персональной боли от ИИ или запасной вариант
         if audit["ai_pain_point"]:
-            ib_fail_text = f"На поверхности лежат недочеты: {audit['ai_pain_point'].lower().strip(' .')}"
+            ai_pain = audit['ai_pain_point'].lower().strip(' .')
         else:
-            top_fail_title = audit["top_failures"][0]["title"].lower()
-            if "запись" in top_fail_title or "мис" in top_fail_title:
-                ib_fail_text = "На поверхности лежит отсутствие быстрой онлайн-записи (пациенты вечером не хотят звонить и уходят к соседям)"
-            elif "врач" in top_fail_title or "специалист" in top_fail_title:
-                ib_fail_text = "На поверхности лежит отсутствие витрины врачей (пациенты выбирают клиники с открытой командой)"
-            elif "услуг" in top_fail_title or "прайс" in top_fail_title or "цены" in top_fail_title:
-                ib_fail_text = "На поверхности лежит отсутствие понятного каталога услуг (пациенты боятся скрытых накруток и уходят к соседям)"
-            elif "отзыв" in top_fail_title or "рейтинг" in top_fail_title:
-                ib_fail_text = "На поверхности лежат репутационные недочеты (алгоритмы Яндекса пессимизируют профиль за просадку в отзывах)"
-            else:
-                ib_fail_text = f"На поверхности лежат пара недочетов (например, алгоритмы Яндекса пессимизируют профиль за пункт «{audit['top_failures'][0]['title']}»)"
+            ai_pain = f"найдена критическая уязвимость по метрике «{audit['top_failures'][0]['title'].lower()}»"
 
-        ib_txt = (f"Добрый день!\n\nАнализировали выдачу в вашем районе и обратили внимание на карточку «{audit['title']}». При сильной репутации ({audit['rating']:.1f}) первичный поток перехватывают {c_str}.\n\n"
-                  f"{ib_fail_text}. По емкости района это отток около {max(1, ll-2)}–{ll+3} пациентов в месяц.\n\n"
-                  f"Собрали наглядный разбор карточки и расчет потерь в PDF на 4 страницы. Скинуть файл для ознакомления?")
+        # Новый B2B-шаблон письма
+        ib_txt = (
+            f"Тема: Аналитика гео-выдачи: системный сбой в цифровом профиле «{audit['title']}»\n\n"
+            f"[ИМЯ_ЛПР], добрый день.\n\n"
+            f"В 2026 году цифровой профиль медицинской клиники перестал быть просто «точкой на карте». Сегодня это сложный алгоритмический актив, который либо генерирует постоянный поток пациентов, либо выступает физическим барьером.\n\n"
+            f"Меня зовут [Ваше Имя], я основатель аналитического центра PIN100. Мы провели независимую диагностику вашей карточки в Яндекс Картах по методологии из 41 параметра ранжирования.\n\n"
+            f"Главный вывод: Клиника «{audit['title']}» обладает сильной врачебной экспертизой (рейтинг {audit['rating']:.1f}). Однако из-за системных технических сбоев алгоритмы Яндекса пессимизируют профиль в выдаче. В частности, {ai_pain}.\n\n"
+            f"Мы имеем дело с невидимым барьером, который ежедневно перенаправляет платежеспособный спрос к вашим соседям ({c_str}).\n\n"
+            f"Масштаб невидимых потерь:\n"
+            f"— Отток: около {ll} первичных пациентов ежемесячно.\n"
+            f"— Упущенная выручка: порядка {mapping['[[REV_LOSS_FMT]]']} ₽ прямого приема.\n\n"
+            f"Руководителю важно опираться на сухие данные. Я структурировал все найденные алгоритмические уязвимости в независимый PDF-отчет. Он работает как рентгеновский снимок: без IT-жаргона показывает, где именно блокируется трафик. Вы сможете использовать его как готовое ТЗ для проверки вашего текущего маркетинга.\n\n"
+            f"Направьте ответное подтверждение (можно просто написать «Да»), и я пришлю PDF-файл для ознакомления."
+        )
+        
         st.session_state.current_icebreaker = ib_txt
 
         logger.log("Компиляция PDF-отчета...", "STEP")
@@ -756,7 +766,7 @@ def app():
 
         with c1:
             st.subheader("✉️ Первое сообщение (Icebreaker)")
-            st.text_area("Текст:", value=st.session_state.current_icebreaker, height=200)
+            st.text_area("Текст:", value=st.session_state.current_icebreaker, height=350)
             
             if aud.get("ai_pain_point"):
                 st.info(f"🧠 ИИ-вывод (пошло в письмо): {aud['ai_pain_point']}")
