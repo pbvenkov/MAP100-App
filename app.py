@@ -50,6 +50,7 @@ GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
 
+# РАСШИРЕННЫЙ СЛОВАРЬ НИШ (С ПРИВЯЗКОЙ К СТОЛБЦАМ ТАБЛИЦЫ)
 NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
     "DENTISTRY": {
         "niche_name": "Стоматологическая клиника",
@@ -59,7 +60,8 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "benchmark_leads": 70,
         "base_check": 5500,
         "ltv_months": 12,
-        "benchmark_source": "BusinesStat («Анализ рынка стоматологии РФ») и РБК",
+        "benchmark_source": "BusinesStat («Анализ рынка стоматологии РФ»)",
+        "sheet_column": "DENTISTRY"
     },
     "COSMETOLOGY": {
         "niche_name": "Косметологическая клиника",
@@ -69,10 +71,11 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "benchmark_leads": 90,
         "base_check": 4800,
         "ltv_months": 10,
-        "benchmark_source": "РБК («Российский рынок эстетической медицины»)",
+        "benchmark_source": "РБК («Рынок эстетической медицины»)",
+        "sheet_column": "BEAUTY_MEDICAL"
     },
     "GENERAL_MEDICINE": {
-        "niche_name": "Многопрофильный медицинский центр",
+        "niche_name": "Медицинский центр",
         "niche_genitive": "медицинских центров",
         "client_word": "пациент",
         "quality_phrase": "лечебной работы и опыта специалистов",
@@ -80,14 +83,46 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "base_check": 3900,
         "ltv_months": 12,
         "benchmark_source": "BusinesStat и НАФИ",
+        "sheet_column": "DENTISTRY"
+    },
+    "BEAUTY_SALON": {
+        "niche_name": "Салон красоты / Барбершоп",
+        "niche_genitive": "салонов красоты",
+        "client_word": "клиент",
+        "quality_phrase": "мастерства стилистов и сервиса",
+        "benchmark_leads": 150,
+        "base_check": 2500,
+        "ltv_months": 6,
+        "benchmark_source": "РБК («Российский рынок салонов красоты»)",
+        "sheet_column": "BEAUTY_MEDICAL"
+    },
+    "AUTOSERVICES": {
+        "niche_name": "Автосервис / СТО",
+        "niche_genitive": "автосервисов",
+        "client_word": "клиент",
+        "quality_phrase": "качества ремонта и квалификации механиков",
+        "benchmark_leads": 100,
+        "base_check": 8000,
+        "ltv_months": 12,
+        "benchmark_source": "Автостат",
+        "sheet_column": "AUTOSERVICES"
+    },
+    "OTHER": {
+        "niche_name": "Локальная компания",
+        "niche_genitive": "локального бизнеса",
+        "client_word": "клиент",
+        "quality_phrase": "качества услуг и клиентского сервиса",
+        "benchmark_leads": 60,
+        "base_check": 3000,
+        "ltv_months": 6,
+        "benchmark_source": "Усредненные бенчмарки локального поиска",
+        "sheet_column": "OTHER"
     }
 }
 
 FALLBACK_CRITERIA_REGISTRY = {
-    "CONV-48.1": {"title": "Онлайн-запись на приём", "group": "Конверсия", "complexity": 2, "weight": 6.0, "desc": "Отсутствие прямой онлайн-записи отсекает до 60% вечернего спроса."},
-    "PROF-10.3": {"title": "Структура услуг в описании", "group": "Базовое заполнение", "complexity": 1, "weight": 4.0, "desc": "В описании клиники нет четкой структуры процедур."},
-    "REP-27.1": {"title": "Базовый порог рейтинга (4.5+)", "group": "Репутация", "complexity": 4, "weight": 2.5, "desc": "Рейтинг ниже 4.5 приводит к отсечению фильтрами Яндекса."},
-    "PROF-11.3": {"title": "Цены у товаров и услуг", "group": "Базовое заполнение", "complexity": 1, "weight": 3.5, "desc": "Слепой прайс отпугивает пациентов страхом скрытых накруток."}
+    "CONV-48.1": {"title": "Онлайн-запись на приём", "group": "Конверсия", "complexity": 2, "weight": 6.0, "desc": "Отсутствие прямой онлайн-записи отсекает вечерний спрос.", "active_for": {"OTHER": 1}},
+    "PROF-10.3": {"title": "Структура услуг в описании", "group": "Базовое заполнение", "complexity": 1, "weight": 4.0, "desc": "Нет четкой структуры.", "active_for": {"OTHER": 1}}
 }
 
 # ==========================================================
@@ -95,60 +130,35 @@ FALLBACK_CRITERIA_REGISTRY = {
 # ==========================================================
 
 def get_google_credentials() -> Tuple[Any, str]:
-    if not GOOGLE_LIBS_AVAILABLE:
-        return None, "Библиотеки Google API не установлены."
-    
-    creds_data = None
-    if "GCP_CREDENTIALS" in st.secrets:
-        creds_data = st.secrets["GCP_CREDENTIALS"]
-    elif "GOOGLE_CREDENTIALS" in st.secrets:
-        creds_data = st.secrets["GOOGLE_CREDENTIALS"]
-
+    if not GOOGLE_LIBS_AVAILABLE: return None, "Библиотеки Google API не установлены."
+    creds_data = st.secrets.get("GCP_CREDENTIALS") or st.secrets.get("GOOGLE_CREDENTIALS")
     if creds_data:
         try:
-            if isinstance(creds_data, str):
-                creds_dict = json.loads(creds_data)
-            else:
-                creds_dict = dict(creds_data)
-            creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=GDRIVE_SCOPES)
-            return creds, "OK"
-        except Exception as e:
-            return None, f"Ошибка парсинга Streamlit Secrets: {e}"
-            
+            creds_dict = json.loads(creds_data) if isinstance(creds_data, str) else dict(creds_data)
+            return service_account.Credentials.from_service_account_info(creds_dict, scopes=GDRIVE_SCOPES), "OK"
+        except Exception as e: return None, f"Ошибка парсинга Secrets: {e}"
     creds_file = Path("credentials.json")
     if creds_file.exists():
-        try:
-            creds = service_account.Credentials.from_service_account_file(str(creds_file), scopes=GDRIVE_SCOPES)
-            return creds, "OK"
-        except Exception as e:
-            return None, f"Ошибка чтения локального файла: {e}"
-            
-    return None, "Ключи доступа не найдены ни в Secrets, ни в файле."
+        try: return service_account.Credentials.from_service_account_file(str(creds_file), scopes=GDRIVE_SCOPES), "OK"
+        except Exception as e: return None, f"Ошибка файла: {e}"
+    return None, "Ключи доступа не найдены."
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
     creds, status = get_google_credentials()
-    if not creds:
-        return FALLBACK_CRITERIA_REGISTRY, status
-
+    if not creds: return FALLBACK_CRITERIA_REGISTRY, status
     try:
         sheets = build("sheets", "v4", credentials=creds)
         result = sheets.spreadsheets().values().get(spreadsheetId=CRITERIA_SHEET_ID, range=CRITERIA_RANGE).execute()
         rows = result.get('values', [])
-
-        if not rows or len(rows) < 2:
-            return FALLBACK_CRITERIA_REGISTRY, "Таблица пуста или не найден лист Rules."
+        if len(rows) < 2: return FALLBACK_CRITERIA_REGISTRY, "Таблица пуста."
 
         headers = [str(h).strip() for h in rows[0]]
-
-        try:
-            idx_code = headers.index("Код")
-            idx_title = headers.index("Критерий")
-            idx_group = headers.index("Группа метрик")
-            idx_weight = headers.index("Балл")
-            idx_desc = headers.index("Обоснование_ОШИБКИ")
-        except ValueError as e:
-            return FALLBACK_CRITERIA_REGISTRY, f"В таблице не найден столбец: {e}"
+        idx_code, idx_title, idx_group, idx_weight, idx_desc = headers.index("Код"), headers.index("Критерий"), headers.index("Группа метрик"), headers.index("Балл"), headers.index("Обоснование_ОШИБКИ")
+        
+        # Индексы столбцов с флагами применимости
+        cols_to_check = ["DENTISTRY", "BEAUTY_MEDICAL", "AUTOSERVICES", "OTHER"]
+        idx_map = {col: (headers.index(col) if col in headers else -1) for col in cols_to_check}
 
         registry = {}
         for row in rows[1:]:
@@ -158,16 +168,25 @@ def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
 
                 try: weight = float(str(row[idx_weight]).replace(',', '.'))
                 except ValueError: weight = 0.0
+                
+                # Парсим единички и нули для разных ниш
+                active_for = {}
+                for col, idx in idx_map.items():
+                    if idx != -1 and len(row) > idx:
+                        val = str(row[idx]).strip()
+                        if val.replace(',', '.', 1).replace('.', '', 1).isdigit(): active_for[col] = float(val.replace(',', '.'))
+                        else: active_for[col] = 1.0
+                    else: active_for[col] = 1.0
 
                 registry[code] = {
                     "title": str(row[idx_title]).strip() if len(row) > idx_title else code,
                     "group": str(row[idx_group]).strip() if len(row) > idx_group else "Анализ",
                     "complexity": 2, "weight": weight,
-                    "desc": str(row[idx_desc]).strip() if len(row) > idx_desc else ""
+                    "desc": str(row[idx_desc]).strip() if len(row) > idx_desc else "",
+                    "active_for": active_for
                 }
         return registry, "OK"
-    except Exception as e:
-        return FALLBACK_CRITERIA_REGISTRY, f"Ошибка API: {str(e)}"
+    except Exception as e: return FALLBACK_CRITERIA_REGISTRY, f"Ошибка API: {str(e)}"
 
 # ==========================================================
 # 3. ТЕРМИНАЛ И УВЕДОМЛЕНИЯ
@@ -177,31 +196,20 @@ class TerminalLogger:
     def __init__(self, placeholder):
         self.placeholder = placeholder
         self.logs: List[str] = []
-
     def log(self, msg: str, level: str = "INFO"):
         ts = datetime.datetime.now().strftime("%H:%M:%S")
-        prefix = {
-            "INFO": "🔵 [INFO]", "SUCCESS": "🟢 [SUCCESS]", 
-            "WARN": "🟠 [WARN]", "ERROR": "🔴 [ERROR]", "STEP": "⚙️ [STEP]"
-        }.get(level, "🔵 [INFO]")
-        
+        prefix = {"INFO": "🔵 [INFO]", "SUCCESS": "🟢 [SUCCESS]", "WARN": "🟠 [WARN]", "ERROR": "🔴 [ERROR]", "STEP": "⚙️ [STEP]"}.get(level, "🔵 [INFO]")
         self.logs.append(f"{ts} {prefix} {msg}")
         self.placeholder.code("\n".join(self.logs), language="bash")
 
 def send_telegram_error(error_message: str, context: str = "") -> bool:
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    bot_token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN", "").strip(), os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not bot_token or not chat_id: return False
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    text = f"🚨 <b>PIN100 Ошибка</b>\n<b>Контекст:</b> {context}\n<code>{error_message}</code>"
-    try:
-        requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=3)
-        return True
-    except: return False
+    requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json={"chat_id": chat_id, "text": f"🚨 <b>Ошибка</b>\n<code>{error_message}</code>", "parse_mode": "HTML"}, timeout=3)
+    return True
 
-def get_declension(number: int, word_type: str = "пациент") -> str:
-    n = abs(int(number)) % 100
-    n1 = n % 10
+def get_declension(number: int, word_type: str = "клиент") -> str:
+    n, n1 = abs(int(number)) % 100, abs(int(number)) % 10
     if word_type in ["пациент", "клиент"]:
         if 11 <= n <= 19: return f"{word_type}ов"
         if n1 == 1: return word_type
@@ -210,118 +218,90 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
     return "обращений"
 
 # ==========================================================
-# 5. ХАРДКОРНЫЙ ПАРСИНГ (ВСЕЯДНЫЙ)
+# 5. ХАРДКОРНЫЙ ПАРСИНГ (ДИНАМИЧЕСКИЙ)
 # ==========================================================
 
-def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_registry: Dict) -> Tuple[float, List[Dict[str, Any]], Dict[str, float]]:
-    logger.log(f"Запуск оценки по {len(criteria_registry)} правилам из Google Таблицы...", "STEP")
+def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_registry: Dict, current_niche: str) -> Tuple[float, List[Dict[str, Any]], Dict[str, float]]:
+    logger.log(f"Запуск оценки для ниши {current_niche}...", "STEP")
+    
+    niche_col = NICHE_CONFIG.get(current_niche, NICHE_CONFIG["OTHER"]).get("sheet_column", "OTHER")
+    active_registry = {}
     raw_scores = {}
     
-    # БЕЗОПАСНОЕ ИЗВЛЕЧЕНИЕ (ЗАЩИТА ОТ NULL)
+    # ФИЛЬТРУЕМ ПРАВИЛА, АКТИВНЫЕ ТОЛЬКО ДЛЯ ЭТОЙ НИШИ
+    for code, meta in criteria_registry.items():
+        if meta.get("active_for", {}).get(niche_col, 1.0) > 0:
+            active_registry[code] = meta
+            raw_scores[code] = float(meta["weight"])
+            
+    logger.log(f"Отобрано {len(active_registry)} релевантных правил из базы.", "INFO")
+
     reviews = data.get("reviews") or []
     working_hours = data.get("workingHours") or data.get("schedule") or []
     photos_count = int(data.get("photoCount") or data.get("photosCount") or len(data.get("photos") or []) or 0)
-    
     rating = float(data.get("rating") or data.get("reviewsRating") or 5.0)
     rev_count = int(data.get("reviewsCount") or data.get("ratingCount") or len(reviews))
-    categories = data.get("categories") or []
-    title = str(data.get("title") or data.get("name") or "").lower()
-    website = str(data.get("website") or data.get("url") or "").lower()
+    categories, title, website = data.get("categories") or [], str(data.get("title") or "").lower(), str(data.get("website") or "").lower()
     features = data.get("features") or data.get("attributes") or []
-
     base_desc = str(data.get("description") or data.get("about") or "")
     promo_data = data.get("promo")
     promo_desc = str(promo_data.get("description", "")) if isinstance(promo_data, dict) else ""
     full_description = (base_desc + " " + promo_desc).lower()
 
     items = []
-    menu_data = data.get("menu")
-    if isinstance(menu_data, dict) and isinstance(menu_data.get("items"), list) and menu_data["items"]:
-        items = menu_data["items"]
-    elif isinstance(data.get("priceList"), list) and data["priceList"]:
-        items = data["priceList"]
+    if isinstance(data.get("menu"), dict) and data["menu"].get("items"): items = data["menu"]["items"]
+    elif isinstance(data.get("priceList"), list): items = data["priceList"]
     else:
-        for key in ["items", "services", "goods", "productCatalog"]:
-            val = data.get(key)
-            if isinstance(val, list) and val:
-                items.extend(val)
+        for k in ["items", "services", "goods", "productCatalog"]:
+            if isinstance(data.get(k), list): items.extend(data[k])
 
-    data_no_reviews = {k: v for k, v in data.items() if k not in ["reviews", "reviewsCount", "ratingCount"]}
-    struct_str = json.dumps(data_no_reviews, ensure_ascii=False).lower()
-
-    for c_code, c_meta in criteria_registry.items():
-        raw_scores[c_code] = float(c_meta["weight"])
+    struct_str = json.dumps({k: v for k, v in data.items() if k not in ["reviews"]}, ensure_ascii=False).lower()
 
     # 1. КОНВЕРСИЯ
-    if "CONV-48.1" in raw_scores and not any(w in struct_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "dikidi", "записаться", "онлайн-запис", "bookingurl", "actionbuttons"]):
-        raw_scores["CONV-48.1"] = 0.0
-    if "CONV-48.2" in raw_scores and not any(w in struct_str for w in ["specialist", "doctor", "staff", "стаж", "опыт работы", "врач ", "специалист "]):
-        raw_scores["CONV-48.2"] = 0.0
+    if "CONV-48.1" in raw_scores and not any(w in struct_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "dikidi", "записаться", "онлайн-запис", "bookingurl"]): raw_scores["CONV-48.1"] = 0.0
+    if "CONV-48.2" in raw_scores and not any(w in struct_str for w in ["specialist", "doctor", "staff", "стаж", "опыт работы", "врач ", "специалист ", "мастер", "стилист"]): raw_scores["CONV-48.2"] = 0.0
     if "CONV-46.1" in raw_scores and photos_count < 5: raw_scores["CONV-46.1"] = 0.0 
-    if "CONV-49.1" in raw_scores and (not any(char.isdigit() for char in full_description) or "мы лучшие" in full_description or "индивидуальный подход" in full_description):
-        raw_scores["CONV-49.1"] = 0.0
+    if "CONV-49.1" in raw_scores and (not any(char.isdigit() for char in full_description) or "мы лучшие" in full_description): raw_scores["CONV-49.1"] = 0.0
     if "CONV-52.1" in raw_scores and not any(w in struct_str for w in ["faq", "вопрос", "ответы"]): raw_scores["CONV-52.1"] = 0.0
-    if "CONV-53.1" in raw_scores and ("акция" not in struct_str and "скидк" not in struct_str and "старая цена" not in struct_str and "promo" not in struct_str): 
-        raw_scores["CONV-53.1"] = 0.0
-    if "CONV-54.1" in raw_scores and not promo_data: 
-        raw_scores["CONV-54.1"] = 0.0
+    if "CONV-53.1" in raw_scores and ("акция" not in struct_str and "скидк" not in struct_str and "старая цена" not in struct_str and "promo" not in struct_str): raw_scores["CONV-53.1"] = 0.0
+    if "CONV-54.1" in raw_scores and not promo_data: raw_scores["CONV-54.1"] = 0.0
 
     # 2. БАЗОВОЕ ЗАПОЛНЕНИЕ
-    is_verified = bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge") or data.get("isVerifiedOwner"))
+    is_verified = bool(data.get("isVerified") or data.get("verified") or data.get("hasBlueBadge"))
     if "PROF-01.1" in raw_scores and not (is_verified or len(title) > 2): raw_scores["PROF-01.1"] = 0.0
     if "PROF-12.1" in raw_scores and not is_verified: raw_scores["PROF-12.1"] = 0.0
     if "PROF-03.1" in raw_scores and not categories: raw_scores["PROF-03.1"] = 0.0
     if "PROF-03.2" in raw_scores and len(categories) < 3: raw_scores["PROF-03.2"] = 0.75 if len(categories) == 2 else 0.0
-
-    if not website: 
-        if "PROF-04.1" in raw_scores: raw_scores["PROF-04.1"] = 0.0
-        if "PROF-04.2" in raw_scores: raw_scores["PROF-04.2"] = 0.0
-    elif "PROF-04.2" in raw_scores and "utm_" not in website:
-        raw_scores["PROF-04.2"] = 0.0
-
+    if "PROF-04.1" in raw_scores and not website: raw_scores["PROF-04.1"] = 0.0
+    if "PROF-04.2" in raw_scores and ("utm_" not in website if website else True): raw_scores["PROF-04.2"] = 0.0
     if "PROF-05.1" in raw_scores and not data.get("phones"): raw_scores["PROF-05.1"] = 0.0
     if "PROF-07.1" in raw_scores and len(working_hours) < 7: raw_scores["PROF-07.1"] = 1.0 if len(working_hours) > 0 else 0.0
     if "PROF-13.1" in raw_scores and not any(w in struct_str for w in ["wa.me", "t.me", "whatsapp"]): raw_scores["PROF-13.1"] = 0.0
-    if "PROF-10.3" in raw_scores and not any(kw in full_description for kw in ["лечение", "прием", "услуг", "диагностик", "терапи", "консультац"]):
-        raw_scores["PROF-10.3"] = 0.0
+    if "PROF-10.3" in raw_scores and not any(kw in full_description for kw in ["лечение", "услуг", "ремонт", "стрижк", "маникюр", "консультац"]): raw_scores["PROF-10.3"] = 0.0
+    has_legal = any(w in struct_str for w in ["инн", "огрн", "taxid", "реквизит"]) or (isinstance(data.get("legalInfo"), dict) and data["legalInfo"].get("taxId"))
+    if "PROF-15.1" in raw_scores and not has_legal: raw_scores["PROF-15.1"] = 0.0
 
-    legal_info = data.get("legalInfo")
-    tax_id = legal_info.get("taxId") if isinstance(legal_info, dict) else None
-    has_legal = "инн" in struct_str or "огрн" in struct_str or "taxid" in struct_str or "реквизит" in struct_str or bool(tax_id)
-    
-    if "PROF-15.1" in raw_scores and not has_legal:
-        raw_scores["PROF-15.1"] = 0.0
-
-    # ПРАВИЛА 80% ДЛЯ УСЛУГ
-    if isinstance(items, list) and len(items) > 0:
+    if items:
         if "PROF-11.1" in raw_scores and len(items) < 10: raw_scores["PROF-11.1"] = 2.0 if len(items) >= 3 else 0.0
-        has_photo = sum(1 for i in items if isinstance(i, dict) and (i.get("image") or i.get("imageUrl") or i.get("image_url") or i.get("photoUrl") or i.get("picture")))
-        has_price = sum(1 for i in items if isinstance(i, dict) and (i.get("price") or i.get("cost") or i.get("priceValue")))
-        has_desc = sum(1 for i in items if isinstance(i, dict) and i.get("description") and len(str(i.get("description"))) > 50)
-        has_cta = sum(1 for i in items if isinstance(i, dict) and (i.get("url") or i.get("action") or i.get("bookingUrl")))
-        total_items = len(items)
-        
-        if "PROF-11.2" in raw_scores and (has_photo / total_items) < 0.8: raw_scores["PROF-11.2"] = 0.0
-        if "PROF-11.3" in raw_scores and (has_price / total_items) < 0.8: raw_scores["PROF-11.3"] = 0.0
-        if "PROF-11.4" in raw_scores and (has_desc / total_items) < 0.8:  raw_scores["PROF-11.4"] = 0.0
-        if "PROF-11.5" in raw_scores and (has_cta / total_items) < 0.1:  raw_scores["PROF-11.5"] = 0.0
+        has_photo = sum(1 for i in items if isinstance(i, dict) and any(k in i for k in ["image", "imageUrl", "photoUrl", "picture"]))
+        has_price = sum(1 for i in items if isinstance(i, dict) and any(k in i for k in ["price", "cost", "priceValue"]))
+        has_desc = sum(1 for i in items if isinstance(i, dict) and len(str(i.get("description", ""))) > 50)
+        has_cta = sum(1 for i in items if isinstance(i, dict) and any(k in i for k in ["url", "action", "bookingUrl"]))
+        t_it = len(items)
+        if "PROF-11.2" in raw_scores and (has_photo / t_it) < 0.8: raw_scores["PROF-11.2"] = 0.0
+        if "PROF-11.3" in raw_scores and (has_price / t_it) < 0.8: raw_scores["PROF-11.3"] = 0.0
+        if "PROF-11.4" in raw_scores and (has_desc / t_it) < 0.8:  raw_scores["PROF-11.4"] = 0.0
+        if "PROF-11.5" in raw_scores and (has_cta / t_it) < 0.1:  raw_scores["PROF-11.5"] = 0.0
     else:
         for k in ["PROF-11.1", "PROF-11.2", "PROF-11.3", "PROF-11.4", "PROF-11.5"]:
             if k in raw_scores: raw_scores[k] = 0.0
 
-    # 3. SEO И ТРАФИК 
-    if "SEO-18.3" in raw_scores and not any(kw in full_description for kw in ["метро", "район", "улиц", "шоссе", "проспект"]):
-        raw_scores["SEO-18.3"] = 0.0
-    if "PROF-01.2" in raw_scores and (len(title) > 60 or "недорого" in title or "скидк" in title):
-        raw_scores["PROF-01.2"] = 0.0 
+    # 3. SEO И ТРАФИК
+    if "SEO-18.3" in raw_scores and not any(kw in full_description for kw in ["метро", "район", "улиц", "шоссе", "проспект"]): raw_scores["SEO-18.3"] = 0.0
+    if "PROF-01.2" in raw_scores and (len(title) > 60 or "недорого" in title or "скидк" in title): raw_scores["PROF-01.2"] = 0.0 
     if "PROF-08.1" in raw_scores and not features: raw_scores["PROF-08.1"] = 0.0
-
-    features_str = str(features).lower()
-    if "PROF-08.2" in raw_scores and "дмс" not in features_str and "рассрочка" not in features_str: raw_scores["PROF-08.2"] = 0.0
     if "CONT-38.1" in raw_scores and photos_count < 10: raw_scores["CONT-38.1"] = 0.5 if photos_count >= 5 else 0.0
-    if "CONT-42.1" in raw_scores and not any(kw in struct_str for kw in ["видео", "video", "youtube", "тур", "панорам", "videos"]):
-        raw_scores["CONT-42.1"] = 0.0
-        
+    if "CONT-42.1" in raw_scores and not any(kw in struct_str for kw in ["видео", "video", "youtube", "тур", "панорам", "videos"]): raw_scores["CONT-42.1"] = 0.0
     has_news = bool(data.get("posts") or data.get("news") or data.get("updates") or "story" in struct_str or "новост" in struct_str)
     if "CONT-43.1" in raw_scores and not has_news: raw_scores["CONT-43.1"] = 0.0
 
@@ -330,472 +310,88 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "REP-27.1" in raw_scores and rating < 4.5: raw_scores["REP-27.1"] = 0.0
     if "REP-28.1" in raw_scores and rev_count < 50: raw_scores["REP-28.1"] = 1.0 if rev_count >= 15 else 0.0
 
-    if reviews and isinstance(reviews, list):
-        replied_count = 0
-        seo_in_reviews = False
-        most_recent_date = None
-
-        for r in reviews:
-            if isinstance(r, dict):
-                reply = r.get("reply") or r.get("comments") or r.get("businessComment")
-                if reply:
-                    replied_count += 1
-                    
-                rev_text = str(r.get("text", "")).lower()
-                if any(kw in rev_text for kw in ["врач", "процедур", "пломб", "кариес", "анализ", "зуб"]):
-                    seo_in_reviews = True
-
-                date_str = r.get("publishedAtDate") or r.get("updatedAt") or r.get("date")
-                if date_str:
-                    try:
-                        clean_date = str(date_str).split('.')[0].replace('Z', '')
-                        r_date = datetime.datetime.fromisoformat(clean_date)
-                        if not most_recent_date or r_date > most_recent_date: most_recent_date = r_date
-                    except Exception: pass
-
+    if reviews:
+        replied_count = sum(1 for r in reviews if isinstance(r, dict) and any(k in r for k in ["reply", "comments", "businessComment"]))
         if "REP-30.1" in raw_scores and (replied_count / len(reviews)) < 0.9: raw_scores["REP-30.1"] = 1.5 if (replied_count / len(reviews)) >= 0.5 else 0.0
-        if "SEO-19.2" in raw_scores and not seo_in_reviews: raw_scores["SEO-19.2"] = 0.0
-
+        
+        most_recent_date = None
+        for r in reviews:
+            d = r.get("publishedAtDate") or r.get("updatedAt") or r.get("date")
+            if d:
+                try: 
+                    rd = datetime.datetime.fromisoformat(str(d).split('.')[0].replace('Z', ''))
+                    if not most_recent_date or rd > most_recent_date: most_recent_date = rd
+                except: pass
         if "REP-29.1" in raw_scores:
-            if most_recent_date:
-                days_diff = (datetime.datetime.now() - most_recent_date).days
-                if days_diff > 14: raw_scores["REP-29.1"] = 0.0
-            else: raw_scores["REP-29.1"] = 0.0
-
+            if most_recent_date and (datetime.datetime.now() - most_recent_date).days > 14: raw_scores["REP-29.1"] = 0.0
+            elif not most_recent_date: raw_scores["REP-29.1"] = 0.0
+            
         last_20 = reviews[:20]
-        znatoki_count = sum(1 for r in last_20 if isinstance(r, dict) and ("знаток" in str(r.get("authorLevel") or r.get("author", "")).lower() or "уровень" in str(r.get("authorLevel") or r.get("author", "")).lower()))
-        photo_rev_count = sum(1 for r in last_20 if isinstance(r, dict) and (r.get("photos") or r.get("photoCount", 0) > 0))
-
-        if "REP-34.1" in raw_scores and (znatoki_count / len(last_20)) < 0.25: raw_scores["REP-34.1"] = 0.0
-        if "REP-35.1" in raw_scores and (photo_rev_count / len(last_20)) < 0.10: raw_scores["REP-35.1"] = 0.0
-
+        if "REP-34.1" in raw_scores and sum(1 for r in last_20 if "знаток" in str(r).lower() or "уровень" in str(r).lower()) / len(last_20) < 0.25: raw_scores["REP-34.1"] = 0.0
+        if "REP-35.1" in raw_scores and sum(1 for r in last_20 if isinstance(r, dict) and r.get("photoCount", 0) > 0) / len(last_20) < 0.10: raw_scores["REP-35.1"] = 0.0
     else:
         for k in ["REP-30.1", "REP-35.1", "REP-34.1", "SEO-19.2", "REP-29.1", "REP-32.2"]:
             if k in raw_scores: raw_scores[k] = 0.0 
 
+    # ПЕРЕСЧЕТ В ИДЕАЛЬНУЮ ШКАЛУ 100 БАЛЛОВ (ДИНАМИЧЕСКИ)
+    max_possible = sum(meta["weight"] for meta in active_registry.values())
     total_score = 0.0
     gap_list = []
     
-    for code, meta in criteria_registry.items():
+    for code, meta in active_registry.items():
         max_w = meta["weight"]
         cur_w = raw_scores.get(code, max_w)
         total_score += cur_w
         lost = max_w - cur_w
         
         if lost > 0.1:
-            impact = lost * (6.0 - meta["complexity"])
+            impact = (lost / max_possible * 100) * (6.0 - meta["complexity"]) if max_possible > 0 else 0
             gap_list.append({"code": code, "title": meta["title"], "desc": meta["desc"], "impact": impact})
             logger.log(f"[{code}] {meta['title']} -> Снят балл: -{lost:.1f}", "WARN")
 
     gap_list.sort(key=lambda x: x["impact"], reverse=True)
     top_3 = gap_list[:3]
-    while len(top_3) < 3:
-        top_3.append({"title": "Техническая оптимизация", "desc": "Поддерживайте актуальность данных."})
+    while len(top_3) < 3: top_3.append({"title": "Техническая оптимизация", "desc": "Поддерживайте актуальность данных."})
 
-    return round(total_score, 1), top_3, raw_scores
+    normalized_score = round((total_score / max_possible) * 100, 1) if max_possible > 0 else 0.0
+    return normalized_score, top_3, raw_scores
 
 
 def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
-    token = os.getenv("APIFY_API_TOKEN", "").strip()
-    actor = os.getenv("APIFY_ACTOR_ID", "").strip()
-    
-    if "APIFY_API_TOKEN" in st.secrets: token = st.secrets["APIFY_API_TOKEN"]
-    if "APIFY_ACTOR_ID" in st.secrets: actor = st.secrets["APIFY_ACTOR_ID"]
-
-    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID (добавьте их в Secrets).")
+    token = os.getenv("APIFY_API_TOKEN", "") or st.secrets.get("APIFY_API_TOKEN", "")
+    actor = os.getenv("APIFY_ACTOR_ID", "") or st.secrets.get("APIFY_ACTOR_ID", "")
+    if not token or not actor: raise ValueError("Ключи Apify не найдены.")
 
     run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
-    logger.log(f"Отправка URL в Apify Actor...", "STEP")
-    
-    payload = {
-        "startUrls": [{"url": target_url.strip()}], 
-        "maxItems": 1, 
-        "includeReviews": True
-    }
-    
-    resp = requests.post(run_url, json=payload, timeout=310)
+    logger.log("Отправка URL в Apify Actor...", "STEP")
+    resp = requests.post(run_url, json={"startUrls": [{"url": target_url.strip()}], "maxItems": 1, "includeReviews": True}, timeout=310)
     if resp.status_code not in [200, 201]: raise RuntimeError(f"Сбой Apify: {resp.text[:200]}")
     
     items = resp.json()
-    if not items: raise ValueError("Apify вернул пустой массив данных.")
-    logger.log("Сырые данные успешно загружены из Apify.", "SUCCESS")
+    if not items: raise ValueError("Apify вернул пустой массив.")
+    logger.log("Данные загружены из Apify.", "SUCCESS")
     return items[0]
 
-
-def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[str, Any]:
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if "GEMINI_API_KEY" in st.secrets:
-        api_key = st.secrets["GEMINI_API_KEY"]
-        
+def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger, niche_name: str) -> Dict[str, Any]:
+    api_key = os.getenv("GEMINI_API_KEY", "") or st.secrets.get("GEMINI_API_KEY", "")
     if not api_key or not GEMINI_AVAILABLE:
-        logger.log("Gemini API отключен (нет ключа или библиотеки).", "WARN")
+        logger.log("Gemini API отключен.", "WARN")
         return {"score": 0, "pain_point": ""}
         
-    logger.log("🧠 Запрос к ИИ Gemini для поиска главной боли...", "STEP")
+    logger.log("🧠 Запрос к ИИ Gemini...", "STEP")
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-3.5-flash')
-        
-        safe_data = {
-            "title": data.get("title", ""),
-            "rating": data.get("rating", ""),
-            "reviews_count": data.get("reviewsCount", ""),
-            "features": data.get("features") or [],
-            "recent_reviews": [r.get("text", "") for r in (data.get("reviews") or [])[:5] if isinstance(r, dict)]
-        }
+        safe_data = {"title": data.get("title", ""), "rating": data.get("rating", ""), "recent_reviews": [r.get("text", "") for r in (data.get("reviews") or [])[:5] if isinstance(r, dict)]}
         
         prompt = f"""
-        Ты маркетолог-эксперт по Яндекс Картам. Анализируем стоматологию/клинику:
+        Ты эксперт по Яндекс Картам. Анализируем {niche_name.lower()}:
         {json.dumps(safe_data, ensure_ascii=False)}
         
-        Наш продукт: аудит карточки и услуги по ее ведению.
-        
-        🛑 АНТИ-СПАМ ПРАВИЛА ЯНДЕКСА (СТРОГО СОБЛЮДАТЬ ПРИ АНАЛИЗЕ):
-        1. Название компании: Запрещены ключевые слова (например, "стоматология", "недорого"), если их нет на реальной вывеске. НИКОГДА не рекомендуй добавлять ключевые слова в название карточки.
-        2. Описание: Запрещен SEO-спам (бессмысленное перечисление станций метро, районов или списки услуг через запятую).
-        3. Отзывы: Запрещена прямая покупка отзывов за скидки.
-        
-        Выдай ответ СТРОГО в формате JSON с ключами:
-        1. "score" (число 0-100): Оценка вероятности продажи.
-        2. "pain_point" (текст): Одно предложение с самой грубой ошибкой профиля. Фокусируйся ТОЛЬКО на легальных механиках: незаполненный прайс-лист, нет фото врачей, нет онлайн-записи, неотвеченные негативные отзывы, шаблонное описание "мы лучшие" вместо конкретики.
+        🛑 АНТИ-СПАМ ПРАВИЛА ЯНДЕКСА: Запрещены SEO-ключи в названии, спам районами в описании и подкуп за отзывы.
+        Выдай ответ JSON:
+        1. "score" (0-100): Вероятность продажи.
+        2. "pain_point": Одно предложение с главной грубой ошибкой (пустой прайс, нет фото, шаблоны, нет онлайн-записи).
         """
-        
         resp = model.generate_content(prompt)
-        result_text = resp.text.replace('```json', '').replace('```', '').strip()
-        ai_data = json.loads(result_text)
-        logger.log(f"Gemini: Скоринг {ai_data.get('score')}%, Боль: {ai_data.get('pain_point')}", "SUCCESS")
-        return ai_data
-    except Exception as e:
-        logger.log(f"Ошибка Gemini: {e}", "ERROR")
-        return {"score": 0, "pain_point": ""}
-
-
-def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_registry: Dict) -> Dict[str, Any]:
-    data = raw_input[0] if isinstance(raw_input, list) and raw_input else raw_input
-    if isinstance(data, dict) and "items" in data and isinstance(data["items"], list): data = data["items"][0]
-
-    title = data.get("title") or data.get("name") or "Организация"
-    org_id = str(data.get("org_id") or data.get("id") or "0000000000")
-    rating = round(float(data.get("rating") or data.get("reviewsRating") or 5.0), 1)
-
-    logger.log(f"Найдена карточка: «{title}» (Рейтинг: {rating})", "INFO")
-
-    niche = "DENTISTRY"
-    low_txt = (str(title) + " " + str(data.get("categories", ""))).lower()
-    if any(k in low_txt for k in ["космет", "beauty"]): niche = "COSMETOLOGY"
-    elif any(k in low_txt for k in ["авто", "сервис"]): niche = "AUTOSERVICES"
-    elif any(k in low_txt for k in ["медцентр"]): niche = "GENERAL_MEDICINE"
-
-    score, top_fails, raw_scores = perform_deep_scoring(data, logger, criteria_registry)
-    logger.log(f"Итоговый честный балл готовности: {score:.1f} / 100", "INFO")
-
-    comps = data.get("competitors") or []
-    if not isinstance(comps, list) or len(comps) < 2:
-        comps = ["соседние клиники локации", "сетевые клиники района"]
-
-    n_def = NICHE_CONFIG.get(niche, NICHE_CONFIG["DENTISTRY"])
-
-    return {
-        "title": title, "org_id": org_id, "rating": rating, "score": score, "niche": niche,
-        "competitors": comps, "canonical_url": data.get("url", ""),
-        "benchmark_leads": n_def["benchmark_leads"], "base_check": n_def["base_check"], 
-        "ltv_months": n_def["ltv_months"], "benchmark_source": n_def["benchmark_source"],
-        "top_failures": top_fails, "date": datetime.date.today().strftime("%d.%m.%Y"),
-        "criteria_scores": raw_scores,
-        "raw_data_ref": data # Сохраняем ссылку на сырые данные для ИИ
-    }
-
-def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, str]:
-    n_info = NICHE_CONFIG[audit["niche"]]
-    score = audit["score"]
-    dev = max(0.0, round(100.0 - score, 1))
-    
-    lost_leads = int(round(audit["benchmark_leads"] * (dev / 100.0)))
-    rev_loss = lost_leads * audit["base_check"]
-    weekly_loss = int(round(rev_loss / 4.33))
-    ltv_loss = rev_loss * audit["ltv_months"]
-
-    table_declension = get_declension(lost_leads, n_info["client_word"])
-    failures = audit.get("top_failures", [])
-
-    group_losses = {}
-    for code, meta in criteria_registry.items():
-        max_w = meta["weight"]
-        cur_w = audit.get("criteria_scores", {}).get(code, max_w)
-        lost = max_w - cur_w
-        if lost > 0: group_losses[meta["group"]] = group_losses.get(meta["group"], 0.0) + lost
-
-    worst_group = max(group_losses, key=group_losses.get) if group_losses else ""
-
-    reason_phrases = {
-        "Конверсия": "из-за отсутствия прямого конверсионного инструментария (онлайн-записи, витрины врачей или промоакций)",
-        "Базовое заполнение": "из-за критических пробелов в заполнении карточки (отсутствие цен, структуры услуг или реквизитов)",
-        "Репутация": "из-за просадки в репутационных факторах (паузы в отзывах, рейтинг или игнорирование обратной связи)",
-        "SEO и Трафик": "из-за слабой гео-оптимизации профиля (нехватка нишевых атрибутов, топонимов или смежных рубрик)",
-        "Контент": "из-за недостатка визуального доверия (отсутствие новостей, фото интерьера или видео)"
-    }
-    
-    reason_text = reason_phrases.get(worst_group, "из-за технических недочетов в оформлении и настройках профиля")
-    executive_summary = (f"Профиль «{audit['title']}» обладает высокой клинической репутацией ({audit['rating']:.1f}), "
-                         f"однако {reason_text} алгоритм перенаправляет до {lost_leads} готовых обращений в месяц "
-                         f"прямым конкурентам локации.")
-    
-    return {
-        "[[TITLE]]": audit["title"], "[[NICHE]]": n_info["niche_name"], "[[DATE]]": audit["date"],
-        "[[SCORE]]": f"{score:.1f}", "[[SCORE_COLOR]]": "16a34a" if score >= 80 else ("d97706" if score >= 60 else "dc2626"),
-        "[[REV_LOSS_FMT]]": f"{int(rev_loss):,}".replace(",", " "), "[[CLIENT_LEADS]]": str(audit["benchmark_leads"]),
-        "[[DEV]]": f"{dev:.1f}", "[[LOST_LEADS]]": str(lost_leads), "[[TABLE_DECLENSION]]": table_declension,
-        "[[CLIENT_CHECK_FMT]]": f"{int(audit['base_check']):,}".replace(",", " "), "[[CLIENT_LTV]]": str(audit["ltv_months"]),
-        "[[LTV_LOSS_FMT]]": f"{int(ltv_loss):,}".replace(",", " "), "[[BENCHMARK_SOURCE]]": audit["benchmark_source"],
-        "[[QUALITY_PHRASE]]": n_info["quality_phrase"], "[[EXECUTIVE_SUMMARY]]": executive_summary,
-        "[[PAGE_3_HEADING]]": "Топ-3 фактора потери пациентов", "[[PAGE_3_SUBTITLE]]": "Технические барьеры карточки, снижающие конверсию в первичное обращение:",
-        "[[FAIL_1_TITLE]]": failures[0]["title"] if len(failures) > 0 else "Барьер конверсии",
-        "[[FAIL_1_DESC]]": failures[0]["desc"] if len(failures) > 0 else "Требуется оптимизация карточки.",
-        "[[FAIL_2_TITLE]]": failures[1]["title"] if len(failures) > 1 else "Барьер доверия",
-        "[[FAIL_2_DESC]]": failures[1]["desc"] if len(failures) > 1 else "Требуется заполнение команды.",
-        "[[FAIL_3_TITLE]]": failures[2]["title"] if len(failures) > 2 else "Барьер прейскуранта",
-        "[[FAIL_3_DESC]]": failures[2]["desc"] if len(failures) > 2 else "Требуется открытие цен.",
-        "[[WEEKLY_LOSS_FMT]]": f"{int(weekly_loss):,}".replace(",", " ")
-    }
-
-def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: TerminalLogger) -> bool:
-    temp_typ = work_dir / f"temp_{out_path.stem}.typ"
-    try:
-        with open(temp_typ, "w", encoding="utf-8") as f: f.write(typ_content)
-        if PY_TYPST_AVAILABLE:
-            typst.compile(str(temp_typ), output=str(out_path))
-            return True
-        subprocess.run(["typst", "compile", str(temp_typ), str(out_path)], check=True)
-        return True
-    except Exception as e:
-        logger.log(f"Ошибка компиляции Typst: {e}", "ERROR")
-        return False
-    finally:
-        if temp_typ.exists(): temp_typ.unlink()
-
-# ==========================================================
-# 6. ВЫГРУЗКА В GOOGLE ТАБЛИЦУ (НА 3 ЛИСТА)
-# ==========================================================
-def sync_to_google(audit: Dict, mapping: Dict, p_txt: Path, p_json: Path, logger: TerminalLogger) -> bool:
-    creds, status = get_google_credentials()
-    if not creds:
-        logger.log(f"Пропуск выгрузки в Google Таблицу: {status}", "WARN")
-        return False
-        
-    try:
-        sheets = build("sheets", "v4", credentials=creds)
-        sheet_id = os.getenv("GOOGLE_SHEET_ID", "").strip()
-        if "GOOGLE_SHEET_ID" in st.secrets: sheet_id = st.secrets["GOOGLE_SHEET_ID"]
-        
-        if not sheet_id:
-            logger.log("ID Google Таблицы (GOOGLE_SHEET_ID) не найден в секретах.", "WARN")
-            return False
-
-        # 1. Генерируем уникальный ID аудита для связи листов
-        audit_id = f"{audit['org_id']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        # 2. Подготовка данных для листа "Main" (Исправлено смещение колонок)
-        row_main = [
-            audit_id,                       # A: Audit_ID
-            mapping["[[DATE]]"],            # B: Дата
-            datetime.datetime.now().strftime("%H:%M:%S"), # C: Время
-            audit["title"],                 # D: Название
-            audit["org_id"],                # E: ID Компании
-            audit["canonical_url"],         # F: Ссылка
-            audit["niche"],                 # G: Ниша
-            audit["rating"],                # H: Рейтинг
-            mapping["[[SCORE]]"],           # I: Балл
-            mapping["[[LOST_LEADS]]"],      # J: Потеря Лидов
-            mapping["[[REV_LOSS_FMT]]"],    # K: Потеря Выручки
-            "",                             # L: Статус воронки (оставляем пустым)
-            "",                             # M: ЛПР и Контакт (оставляем пустым)
-            "",                             # N: Дата фоллоу-апа (оставляем пустым)
-            "",                             # O: Следующий шаг (оставляем пустым)
-            audit.get("ai_score", ""),      # P: AI-Прогноз (%)
-            audit.get("ai_pain_point", "")  # Q: Главная боль (Триггер)
-        ]
-
-        # 3. Подготовка данных для листа "Scores"
-        scores_dict = audit.get("criteria_scores", {})
-        sorted_codes = sorted(scores_dict.keys())
-        row_scores = [audit_id, audit["title"]] + [str(scores_dict[code]) for code in sorted_codes]
-
-        # 4. Подготовка данных для листа "RawData"
-        with open(p_txt, "r", encoding="utf-8") as f: letter_text = f.read()
-        with open(p_json, "r", encoding="utf-8") as f: json_text = f.read()
-        
-        if len(json_text) > 49000:
-            json_text = json_text[:49000] + "\n\n... [JSON ОБРЕЗАН ИЗ-ЗА ЛИМИТА GOOGLE СИМВОЛОВ]"
-
-        row_raw = [audit_id, audit["title"], letter_text, json_text]
-
-        # 5. Отправка данных на 3 разных листа (Изменен диапазон Main на A:Q)
-        sheets.spreadsheets().values().append(
-            spreadsheetId=sheet_id, range="Main!A:Q", valueInputOption="USER_ENTERED", body={"values": [row_main]}
-        ).execute()
-        
-        sheets.spreadsheets().values().append(
-            spreadsheetId=sheet_id, range="Scores!A:AQ", valueInputOption="USER_ENTERED", body={"values": [row_scores]}
-        ).execute()
-        
-        sheets.spreadsheets().values().append(
-            spreadsheetId=sheet_id, range="RawData!A:D", valueInputOption="USER_ENTERED", body={"values": [row_raw]}
-        ).execute()
-        
-        logger.log("Данные успешно распределены по 3 листам Google Таблицы (Main, Scores, RawData)!", "SUCCESS")
-        return True
-    except Exception as e:
-        logger.log(f"Ошибка записи в таблицу: {e}", "ERROR")
-        return False
-
-def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict):
-    try:
-        audit = process_company_data(raw_data, logger, criteria_registry)
-        st.session_state.current_audit = audit
-        mapping = build_metrics(audit, criteria_registry)
-        st.session_state.current_mapping = mapping
-        
-        # ЗАПРОС К GEMINI
-        ai_insights = get_gemini_insights(audit["raw_data_ref"], logger)
-        audit["ai_score"] = ai_insights.get("score", "")
-        audit["ai_pain_point"] = ai_insights.get("pain_point", "")
-
-        logger.log("Генерация письма Icebreaker...", "STEP")
-        c_str = f"«{audit['competitors'][0]}» и «{audit['competitors'][1]}»" if "сосед" not in audit['competitors'][0].lower() else "соседние клиники локации"
-        ll = int(mapping["[[LOST_LEADS]]"])
-        
-        # Формирование персональной боли от ИИ или запасной вариант
-        if audit["ai_pain_point"]:
-            ai_pain = audit['ai_pain_point'].lower().strip(' .')
-        else:
-            ai_pain = f"найдена критическая уязвимость по метрике «{audit['top_failures'][0]['title'].lower()}»"
-
-        # Новый B2B-шаблон письма
-        ib_txt = (
-            f"Тема: Аналитика гео-выдачи: системный сбой в цифровом профиле «{audit['title']}»\n\n"
-            f"[ИМЯ_ЛПР], добрый день.\n\n"
-            f"В 2026 году цифровой профиль медицинской клиники перестал быть просто «точкой на карте». Сегодня это сложный алгоритмический актив, который либо генерирует постоянный поток пациентов, либо выступает физическим барьером.\n\n"
-            f"Меня зовут [Ваше Имя], я основатель аналитического центра PIN100. Мы провели независимую диагностику вашей карточки в Яндекс Картах по методологии из 41 параметра ранжирования.\n\n"
-            f"Главный вывод: Клиника «{audit['title']}» обладает сильной врачебной экспертизой (рейтинг {audit['rating']:.1f}). Однако из-за системных технических сбоев алгоритмы Яндекса пессимизируют профиль в выдаче. В частности, {ai_pain}.\n\n"
-            f"Мы имеем дело с невидимым барьером, который ежедневно перенаправляет платежеспособный спрос к вашим соседям ({c_str}).\n\n"
-            f"Масштаб невидимых потерь:\n"
-            f"— Отток: около {ll} первичных пациентов ежемесячно.\n"
-            f"— Упущенная выручка: порядка {mapping['[[REV_LOSS_FMT]]']} ₽ прямого приема.\n\n"
-            f"Руководителю важно опираться на сухие данные. Я структурировал все найденные алгоритмические уязвимости в независимый PDF-отчет. Он работает как рентгеновский снимок: без IT-жаргона показывает, где именно блокируется трафик. Вы сможете использовать его как готовое ТЗ для проверки вашего текущего маркетинга.\n\n"
-            f"Направьте ответное подтверждение (можно просто написать «Да»), и я пришлю PDF-файл для ознакомления."
-        )
-        
-        st.session_state.current_icebreaker = ib_txt
-
-        logger.log("Компиляция PDF-отчета...", "STEP")
-        out_dir = Path("output"); out_dir.mkdir(exist_ok=True)
-        prefix = f"{re.sub(r'[^a-zA-Z0-9а-яА-Я]', '_', audit['title'])}_{audit['org_id']}"
-        p_pdf, p_txt, p_json = out_dir / f"{prefix}.pdf", out_dir / f"{prefix}.txt", out_dir / f"{prefix}.json"
-        
-        with open(p_txt, "w", encoding="utf-8") as f: f.write(ib_txt)
-        
-        # Удаляем тяжелый raw_data_ref перед сохранением JSON
-        safe_audit_for_json = {k: v for k, v in audit.items() if k != "raw_data_ref"}
-        with open(p_json, "w", encoding="utf-8") as f: json.dump(safe_audit_for_json, f, ensure_ascii=False)
-        
-        tpl = Path("report_template.typ")
-        if tpl.exists():
-            with open(tpl, "r", encoding="utf-8") as f: content = f.read()
-            for k, v in mapping.items(): content = content.replace(k, str(v))
-            if compile_pdf(content, p_pdf, out_dir, logger):
-                st.session_state.pdf_path = str(p_pdf)
-                logger.log("PDF успешно скомпилирован (доступен для скачивания).", "SUCCESS")
-        else: logger.log("Шаблон report_template.typ не найден!", "ERROR")
-
-        logger.log("Сохранение аналитики в базу Google Таблиц...", "STEP")
-        db_saved = sync_to_google(audit, mapping, p_txt, p_json, logger)
-        if db_saved: st.session_state.db_saved = True
-            
-        logger.log("КОНВЕЙЕР УСПЕШНО ЗАВЕРШЕН!", "SUCCESS")
-
-    except Exception as ex:
-        logger.log(f"Критическая ошибка: {ex}", "ERROR")
-        send_telegram_error(str(ex), "Pipeline Run")
-
-def app():
-    criteria_registry, sync_status = fetch_criteria_from_google()
-    
-    with st.sidebar:
-        st.header("⚙️ Настройки системы")
-        if st.button("🔄 Синхронизировать критерии", use_container_width=True):
-            fetch_criteria_from_google.clear()
-            st.rerun()
-            
-        st.caption(f"Загружено правил: {len(criteria_registry)}")
-        if sync_status != "OK":
-            st.error(f"⚠️ Сбой таблицы:\n{sync_status}")
-            
-    st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
-    tab_json, tab_url = st.tabs(["📋 Загрузить JSON", "🔗 Ссылка (Apify API)"])
-
-    with tab_json:
-        col1, col2 = st.columns([1, 2])
-        file = col1.file_uploader("Файл .json из Apify:", type=["json"])
-        txt = col2.text_area("Или код JSON:", height=100)
-        btn_json = st.button("🚀 Запустить конвейер по JSON", type="primary", use_container_width=True)
-
-    with tab_url:
-        url = st.text_input("Ссылка на Яндекс Карты:")
-        btn_url = st.button("🚀 Запустить краулинг и конвейер", type="primary", use_container_width=True)
-
-    st.subheader("🖥️ Терминал выполнения конвейера (Live Diagnostics)")
-    logger = TerminalLogger(st.empty())
-
-    if btn_json:
-        data = json.load(file) if file else (json.loads(txt) if txt.strip() else None)
-        if data: run_pipeline(data, logger, criteria_registry)
-        else: logger.log("Нет данных для анализа.", "ERROR")
-    
-    if btn_url and url.strip():
-        try:
-            data = fetch_apify_data(url, logger)
-            run_pipeline(data, logger, criteria_registry)
-        except Exception as e:
-            logger.log(str(e), "ERROR")
-
-    if st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
-        st.divider()
-        c1, c2 = st.columns([1.1, 0.9])
-        map_d = st.session_state.current_mapping
-        aud = st.session_state.current_audit
-
-        with c1:
-            st.subheader("✉️ Первое сообщение (Icebreaker)")
-            st.text_area("Текст:", value=st.session_state.current_icebreaker, height=350)
-            
-            if aud.get("ai_pain_point"):
-                st.info(f"🧠 ИИ-вывод (пошло в письмо): {aud['ai_pain_point']}")
-            
-            st.markdown("**Топ-3 уязвимости:**")
-            for i, f in enumerate(aud["top_failures"], 1):
-                st.markdown(f"**{i}. {f['title']}**\n<small>{f['desc']}</small>", unsafe_allow_html=True)
-
-        with c2:
-            st.subheader(f"📊 Экономика потерь «{aud['title']}»")
-            m1, m2 = st.columns(2)
-            m1.metric("Балл", f"{map_d['[[SCORE]]']} / 100")
-            m2.metric("Потери", f"~{map_d['[[LOST_LEADS]]']} чел/мес")
-            m3, m4 = st.columns(2)
-            m3.metric("Упущенная выручка", f"{map_d['[[REV_LOSS_FMT]]']} ₽/мес")
-            
-            if aud.get("ai_score"):
-                 m4.metric("🧠 ИИ-Скоринг (Вероятность)", f"{aud['ai_score']}%")
-            else:
-                 m4.metric("Потери за неделю", f"~{map_d['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
-            
-            st.divider()
-            st.subheader("📄 PDF-отчет")
-            if st.session_state.get("pdf_path"):
-                with open(st.session_state.pdf_path, "rb") as f:
-                    st.download_button("📥 Скачать PDF", f, Path(st.session_state.pdf_path).name, "application/pdf", type="primary", use_container_width=True)
-            
-            if st.session_state.get("db_saved"):
-                st.success("✅ Все данные успешно сохранены в вашу базу (Google Таблицы)!")
-
-if __name__ == "__main__":
-    app()
+        ai_data = json.loads(resp.text.replace('```json', '').replace('
