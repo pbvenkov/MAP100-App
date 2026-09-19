@@ -236,6 +236,53 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
     return "обращений"
 
 # ==========================================================
+# 4. АНАЛИЗАТОР ПЕРСПЕКТИВНОСТИ КЛИЕНТА (НОВЫЙ БЛОК)
+# ==========================================================
+
+def calculate_client_potential(rating: float, score: float, lost_leads: int) -> Tuple[int, str, str]:
+    """Анализирует карточку и выдает оценку перспективности для B2B продаж от 1 до 5 звезд."""
+    stars = 0
+    reasons = []
+
+    # 1. Репутация (Фундамент продукта)
+    if rating >= 4.7:
+        stars += 2
+        reasons.append(f"отличная репутация ({rating})")
+    elif rating >= 4.3:
+        stars += 1
+        reasons.append(f"хороший рейтинг ({rating})")
+    else:
+        reasons.append(f"слабая репутация ({rating}) – бизнесу тяжело помочь")
+
+    # 2. Техническая боль (Наш продукт)
+    if score <= 65:
+        stars += 2
+        reasons.append(f"провальная карточка ({score:.1f}/100) – легко показать ошибки")
+    elif score <= 85:
+        stars += 1
+        reasons.append(f"средняя оптимизация ({score:.1f}/100) – есть куда расти")
+    else:
+        reasons.append(f"карточка уже оптимизирована ({score:.1f}/100) – сложно продать аудит")
+
+    # 3. Экономическая боль (Триггер потерь)
+    if lost_leads >= 20:
+        stars += 1
+        reasons.append(f"очевидные фин. потери (-{lost_leads} обращений)")
+
+    # Финализация звезд
+    stars = min(5, max(1, stars)) 
+    star_str = "⭐" * stars
+    
+    if stars >= 4:
+        justification = "Горячий лид: " + ", ".join(reasons) + "."
+    elif stars == 3:
+        justification = "Средний потенциал: " + ", ".join(reasons) + "."
+    else:
+        justification = "Сомнительный клиент: " + ", ".join(reasons) + "."
+        
+    return stars, star_str, justification
+
+# ==========================================================
 # 5. ХАРДКОРНЫЙ ПАРСИНГ (ВСЕЯДНЫЙ)
 # ==========================================================
 
