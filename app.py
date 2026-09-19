@@ -71,6 +71,16 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "ltv_months": 10,
         "benchmark_source": "РБК («Российский рынок эстетической медицины»)",
     },
+    "BEAUTY": {
+        "niche_name": "Парикмахерская / Барбершоп",
+        "niche_genitive": "салонов красоты",
+        "client_word": "клиент",
+        "quality_phrase": "мастерства стилистов и уровня сервиса",
+        "benchmark_leads": 150,
+        "base_check": 1800,
+        "ltv_months": 6,
+        "benchmark_source": "РБК («Российский рынок бьюти-услуг»)",
+    },
     "GENERAL_MEDICINE": {
         "niche_name": "Многопрофильный медицинский центр",
         "niche_genitive": "медицинских центров",
@@ -80,6 +90,16 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "base_check": 3900,
         "ltv_months": 12,
         "benchmark_source": "BusinesStat и НАФИ",
+    },
+    "OTHER": {
+        "niche_name": "Локальный бизнес",
+        "niche_genitive": "конкурентов",
+        "client_word": "клиент",
+        "quality_phrase": "качества услуг и клиентского сервиса",
+        "benchmark_leads": 50,
+        "base_check": 2000,
+        "ltv_months": 3,
+        "benchmark_source": "Усредненные данные локального поиска",
     }
 }
 
@@ -87,7 +107,7 @@ FALLBACK_CRITERIA_REGISTRY = {
     "CONV-48.1": {"title": "Онлайн-запись на приём", "group": "Конверсия", "complexity": 2, "weight": 6.0, "descs": {"Обоснование_ОШИБКИ": "Отсутствие прямой онлайн-записи отсекает до 60% вечернего спроса."}},
     "PROF-10.3": {"title": "Структура услуг в описании", "group": "Базовое заполнение", "complexity": 1, "weight": 4.0, "descs": {"Обоснование_ОШИБКИ": "В описании клиники нет четкой структуры процедур."}},
     "REP-27.1": {"title": "Базовый порог рейтинга (4.5+)", "group": "Репутация", "complexity": 4, "weight": 2.5, "descs": {"Обоснование_ОШИБКИ": "Рейтинг ниже 4.5 приводит к отсечению фильтрами Яндекса."}},
-    "PROF-11.3": {"title": "Цены у товаров и услуг", "group": "Базовое заполнение", "complexity": 1, "weight": 3.5, "descs": {"Обоснование_ОШИБКИ": "Слепой прайс отпугивает пациентов страхом скрытых накруток."}}
+    "PROF-11.3": {"title": "Цены у товаров и услуг", "group": "Базовое заполнение", "complexity": 1, "weight": 3.5, "descs": {"Обоснование_ОШИБКИ": "Слепой прайс отпугивает страхом скрытых накруток."}}
 }
 
 # ==========================================================
@@ -149,7 +169,6 @@ def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
         except ValueError as e:
             return FALLBACK_CRITERIA_REGISTRY, f"В таблице не найден столбец: {e}"
 
-        # Ищем все колонки с текстами ошибок (включая базовую и нишевые)
         desc_cols = {h: i for i, h in enumerate(headers) if h.startswith("Обоснование_ОШИБКИ")}
 
         registry = {}
@@ -161,7 +180,6 @@ def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
                 try: weight = float(str(row[idx_weight]).replace(',', '.'))
                 except ValueError: weight = 0.0
 
-                # Собираем все варианты текстов для текущего правила
                 descs = {}
                 for col_name, col_idx in desc_cols.items():
                     if len(row) > col_idx and str(row[col_idx]).strip():
@@ -171,7 +189,7 @@ def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
                     "title": str(row[idx_title]).strip() if len(row) > idx_title else code,
                     "group": str(row[idx_group]).strip() if len(row) > idx_group else "Анализ",
                     "complexity": 2, "weight": weight,
-                    "descs": descs # Сохраняем весь словарь текстов
+                    "descs": descs
                 }
         return registry, "OK"
     except Exception as e:
@@ -225,7 +243,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     logger.log(f"Запуск оценки по {len(criteria_registry)} правилам из Google Таблицы...", "STEP")
     raw_scores = {}
     
-    # БЕЗОПАСНОЕ ИЗВЛЕЧЕНИЕ (ЗАЩИТА ОТ NULL)
     reviews = data.get("reviews") or []
     working_hours = data.get("workingHours") or data.get("schedule") or []
     photos_count = int(data.get("photoCount") or data.get("photosCount") or len(data.get("photos") or []) or 0)
@@ -392,10 +409,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
         
         if lost > 0.1:
             impact = lost * (6.0 - meta["complexity"])
-            
-            # УМНЫЙ МАРШРУТИЗАТОР ТЕКСТОВ ОШИБОК
             niche_desc_key = f"Обоснование_ОШИБКИ_{niche}"
-            # Проверяем, есть ли колонка под конкретную нишу, если нет - берем базовую
             final_desc = meta.get("descs", {}).get(niche_desc_key) or meta.get("descs", {}).get("Обоснование_ОШИБКИ") or "Требуется оптимизация карточки."
             
             gap_list.append({"code": code, "title": meta["title"], "desc": final_desc, "impact": impact})
@@ -404,7 +418,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     gap_list.sort(key=lambda x: x["impact"], reverse=True)
     top_3 = gap_list[:3]
     while len(top_3) < 3:
-        top_3.append({"title": "Техническая оптимизация", "desc": "Поддерживайте актуальность данных."})
+        top_3.append({"title": "Техническая оптимизация", "desc": "Поддерживайте актуальность данных.", "impact": 0})
 
     return round(total_score, 1), top_3, raw_scores
 
@@ -494,21 +508,23 @@ def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_regist
 
     logger.log(f"Найдена карточка: «{title}» (Рейтинг: {rating})", "INFO")
 
-    niche = "DENTISTRY"
+    niche = "OTHER"
     low_txt = (str(title) + " " + str(data.get("categories", ""))).lower()
-    if any(k in low_txt for k in ["космет", "beauty"]): niche = "COSMETOLOGY"
-    elif any(k in low_txt for k in ["авто", "сервис"]): niche = "AUTOSERVICES"
-    elif any(k in low_txt for k in ["медцентр"]): niche = "GENERAL_MEDICINE"
+    
+    if any(k in low_txt for k in ["стоматолог", "dent"]): niche = "DENTISTRY"
+    elif any(k in low_txt for k in ["космет", "эпиляц", "beauty"]): niche = "COSMETOLOGY"
+    elif any(k in low_txt for k in ["медцентр", "клиника"]): niche = "GENERAL_MEDICINE"
+    elif any(k in low_txt for k in ["стрижк", "барбер", "парикмахер", "волос", "салон красоты"]): niche = "BEAUTY"
+    elif any(k in low_txt for k in ["авто", "шиномонтаж", "сервис"]): niche = "AUTOSERVICES"
 
-    # Передаем определенную нишу в функцию скоринга
     score, top_fails, raw_scores = perform_deep_scoring(data, logger, criteria_registry, niche)
     logger.log(f"Итоговый честный балл готовности: {score:.1f} / 100", "INFO")
 
     comps = data.get("competitors") or []
     if not isinstance(comps, list) or len(comps) < 2:
-        comps = ["соседние клиники локации", "сетевые клиники района"]
+        comps = ["соседние бизнесы локации", "конкуренты района"]
 
-    n_def = NICHE_CONFIG.get(niche, NICHE_CONFIG["DENTISTRY"])
+    n_def = NICHE_CONFIG.get(niche, NICHE_CONFIG["OTHER"])
 
     return {
         "title": title, "org_id": org_id, "rating": rating, "score": score, "niche": niche,
@@ -517,7 +533,7 @@ def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_regist
         "ltv_months": n_def["ltv_months"], "benchmark_source": n_def["benchmark_source"],
         "top_failures": top_fails, "date": datetime.date.today().strftime("%d.%m.%Y"),
         "criteria_scores": raw_scores,
-        "raw_data_ref": data # Сохраняем ссылку на сырые данные для ИИ
+        "raw_data_ref": data 
     }
 
 def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, str]:
@@ -525,13 +541,27 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     score = audit["score"]
     dev = max(0.0, round(100.0 - score, 1))
     
+    # 🧠 Триггер зависти: Расчет балла конкурента
+    competitor_score = min(98.5, round(score + max(12.0, (100.0 - score) * 0.6), 1))
+    
     lost_leads = int(round(audit["benchmark_leads"] * (dev / 100.0)))
+    current_leads = max(0, audit["benchmark_leads"] - lost_leads)
+    
     rev_loss = lost_leads * audit["base_check"]
     weekly_loss = int(round(rev_loss / 4.33))
     ltv_loss = rev_loss * audit["ltv_months"]
 
     table_declension = get_declension(lost_leads, n_info["client_word"])
     failures = audit.get("top_failures", [])
+
+    # 🎨 Триггер Светофор: Определение цвета ошибок для Typst
+    colors = []
+    for f in failures:
+        impact = f.get("impact", 0)
+        if impact > 3.0: colors.append("dc2626")       # Критично (Красный)
+        elif impact > 1.5: colors.append("ea580c")     # Важно (Оранжевый)
+        else: colors.append("eab308")                  # Внимание (Желтый)
+    while len(colors) < 3: colors.append("eab308")
 
     group_losses = {}
     for code, meta in criteria_registry.items():
@@ -543,7 +573,7 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     worst_group = max(group_losses, key=group_losses.get) if group_losses else ""
 
     reason_phrases = {
-        "Конверсия": "из-за отсутствия прямого конверсионного инструментария (онлайн-записи, витрины врачей или промоакций)",
+        "Конверсия": "из-за отсутствия прямого конверсионного инструментария (онлайн-записи, витрины специалистов или промоакций)",
         "Базовое заполнение": "из-за критических пробелов в заполнении карточки (отсутствие цен, структуры услуг или реквизитов)",
         "Репутация": "из-за просадки в репутационных факторах (паузы в отзывах, рейтинг или игнорирование обратной связи)",
         "SEO и Трафик": "из-за слабой гео-оптимизации профиля (нехватка нишевых атрибутов, топонимов или смежных рубрик)",
@@ -551,26 +581,34 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     }
     
     reason_text = reason_phrases.get(worst_group, "из-за технических недочетов в оформлении и настройках профиля")
-    executive_summary = (f"Профиль «{audit['title']}» обладает высокой клинической репутацией ({audit['rating']:.1f}), "
+    executive_summary = (f"Профиль «{audit['title']}» обладает высокой репутацией ({audit['rating']:.1f}), "
                          f"однако {reason_text} алгоритм перенаправляет до {lost_leads} готовых обращений в месяц "
                          f"прямым конкурентам локации.")
     
     return {
         "[[TITLE]]": audit["title"], "[[NICHE]]": n_info["niche_name"], "[[DATE]]": audit["date"],
         "[[SCORE]]": f"{score:.1f}", "[[SCORE_COLOR]]": "16a34a" if score >= 80 else ("d97706" if score >= 60 else "dc2626"),
-        "[[REV_LOSS_FMT]]": f"{int(rev_loss):,}".replace(",", " "), "[[CLIENT_LEADS]]": str(audit["benchmark_leads"]),
+        "[[COMPETITOR_SCORE]]": f"{competitor_score:.1f}",
+        "[[REV_LOSS_FMT]]": f"{int(rev_loss):,}".replace(",", " "), 
+        "[[CLIENT_LEADS]]": str(audit["benchmark_leads"]),
+        "[[CURRENT_LEADS]]": str(current_leads),
+        "[[POTENTIAL_LEADS]]": str(audit["benchmark_leads"]),
         "[[DEV]]": f"{dev:.1f}", "[[LOST_LEADS]]": str(lost_leads), "[[TABLE_DECLENSION]]": table_declension,
         "[[CLIENT_CHECK_FMT]]": f"{int(audit['base_check']):,}".replace(",", " "), "[[CLIENT_LTV]]": str(audit["ltv_months"]),
         "[[LTV_LOSS_FMT]]": f"{int(ltv_loss):,}".replace(",", " "), "[[BENCHMARK_SOURCE]]": audit["benchmark_source"],
         "[[QUALITY_PHRASE]]": n_info["quality_phrase"], "[[EXECUTIVE_SUMMARY]]": executive_summary,
-        "[[PAGE_3_HEADING]]": "Топ-3 фактора потери пациентов", "[[PAGE_3_SUBTITLE]]": "Технические барьеры карточки, снижающие конверсию в первичное обращение:",
+        "[[PAGE_3_HEADING]]": "Топ-3 фактора потери клиентов", "[[PAGE_3_SUBTITLE]]": "Технические барьеры карточки, снижающие конверсию в первичное обращение:",
         "[[FAIL_1_TITLE]]": failures[0]["title"] if len(failures) > 0 else "Барьер конверсии",
         "[[FAIL_1_DESC]]": failures[0]["desc"] if len(failures) > 0 else "Требуется оптимизация карточки.",
+        "[[FAIL_1_COLOR]]": colors[0],
         "[[FAIL_2_TITLE]]": failures[1]["title"] if len(failures) > 1 else "Барьер доверия",
         "[[FAIL_2_DESC]]": failures[1]["desc"] if len(failures) > 1 else "Требуется заполнение команды.",
+        "[[FAIL_2_COLOR]]": colors[1],
         "[[FAIL_3_TITLE]]": failures[2]["title"] if len(failures) > 2 else "Барьер прейскуранта",
         "[[FAIL_3_DESC]]": failures[2]["desc"] if len(failures) > 2 else "Требуется открытие цен.",
-        "[[WEEKLY_LOSS_FMT]]": f"{int(weekly_loss):,}".replace(",", " ")
+        "[[FAIL_3_COLOR]]": colors[2],
+        "[[WEEKLY_LOSS_FMT]]": f"{int(weekly_loss):,}".replace(",", " "),
+        "[[RISK_REVERSAL]]": "Отчет ни к чему вас не обязывает. Вы можете передать его своему маркетологу как готовое ТЗ для самостоятельного исправления уязвимостей."
     }
 
 def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: TerminalLogger) -> bool:
@@ -606,36 +644,32 @@ def sync_to_google(audit: Dict, mapping: Dict, p_txt: Path, p_json: Path, logger
             logger.log("ID Google Таблицы (GOOGLE_SHEET_ID) не найден в секретах.", "WARN")
             return False
 
-        # 1. Генерируем уникальный ID аудита для связи листов
         audit_id = f"{audit['org_id']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-        # 2. Подготовка данных для листа "Main" (Исправлено смещение колонок)
         row_main = [
-            audit_id,                       # A: Audit_ID
-            mapping["[[DATE]]"],            # B: Дата
-            datetime.datetime.now().strftime("%H:%M:%S"), # C: Время
-            audit["title"],                 # D: Название
-            audit["org_id"],                # E: ID Компании
-            audit["canonical_url"],         # F: Ссылка
-            audit["niche"],                 # G: Ниша
-            audit["rating"],                # H: Рейтинг
-            mapping["[[SCORE]]"],           # I: Балл
-            mapping["[[LOST_LEADS]]"],      # J: Потеря Лидов
-            mapping["[[REV_LOSS_FMT]]"],    # K: Потеря Выручки
-            "",                             # L: Статус воронки (оставляем пустым)
-            "",                             # M: ЛПР и Контакт (оставляем пустым)
-            "",                             # N: Дата фоллоу-апа (оставляем пустым)
-            "",                             # O: Следующий шаг (оставляем пустым)
-            audit.get("ai_score", ""),      # P: AI-Прогноз (%)
-            audit.get("ai_pain_point", "")  # Q: Главная боль (Триггер)
+            audit_id,                       
+            mapping["[[DATE]]"],            
+            datetime.datetime.now().strftime("%H:%M:%S"), 
+            audit["title"],                 
+            audit["org_id"],                
+            audit["canonical_url"],         
+            audit["niche"],                 
+            audit["rating"],                
+            mapping["[[SCORE]]"],           
+            mapping["[[LOST_LEADS]]"],      
+            mapping["[[REV_LOSS_FMT]]"],    
+            "",                             
+            "",                             
+            "",                             
+            "",                             
+            audit.get("ai_score", ""),      
+            audit.get("ai_pain_point", "")  
         ]
 
-        # 3. Подготовка данных для листа "Scores"
         scores_dict = audit.get("criteria_scores", {})
         sorted_codes = sorted(scores_dict.keys())
         row_scores = [audit_id, audit["title"]] + [str(scores_dict[code]) for code in sorted_codes]
 
-        # 4. Подготовка данных для листа "RawData"
         with open(p_txt, "r", encoding="utf-8") as f: letter_text = f.read()
         with open(p_json, "r", encoding="utf-8") as f: json_text = f.read()
         
@@ -644,7 +678,6 @@ def sync_to_google(audit: Dict, mapping: Dict, p_txt: Path, p_json: Path, logger
 
         row_raw = [audit_id, audit["title"], letter_text, json_text]
 
-        # 5. Отправка данных на 3 разных листа (Изменен диапазон Main на A:Q)
         sheets.spreadsheets().values().append(
             spreadsheetId=sheet_id, range="Main!A:Q", valueInputOption="USER_ENTERED", body={"values": [row_main]}
         ).execute()
@@ -670,33 +703,37 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         mapping = build_metrics(audit, criteria_registry)
         st.session_state.current_mapping = mapping
         
-        # ЗАПРОС К GEMINI
         ai_insights = get_gemini_insights(audit["raw_data_ref"], logger)
         audit["ai_score"] = ai_insights.get("score", "")
         audit["ai_pain_point"] = ai_insights.get("pain_point", "")
 
         logger.log("Генерация письма Icebreaker...", "STEP")
-        c_str = f"«{audit['competitors'][0]}» и «{audit['competitors'][1]}»" if "сосед" not in audit['competitors'][0].lower() else "соседние клиники локации"
+        c_str = f"«{audit['competitors'][0]}» и «{audit['competitors'][1]}»" if "сосед" not in audit['competitors'][0].lower() else "соседние компании локации"
         ll = int(mapping["[[LOST_LEADS]]"])
+        comp_score = mapping["[[COMPETITOR_SCORE]]"]
         
-        # Формирование персональной боли от ИИ или запасной вариант
+        n_info = NICHE_CONFIG.get(audit["niche"], NICHE_CONFIG["OTHER"])
+        client_word = n_info["client_word"]
+        
         if audit["ai_pain_point"]:
             ai_pain = audit['ai_pain_point'].lower().strip(' .')
         else:
             ai_pain = f"найдена критическая уязвимость по метрике «{audit['top_failures'][0]['title'].lower()}»"
 
-        # Новый B2B-шаблон письма
+        # 🧠 НОВЫЙ ICEBREAKER: Конкурент, Дефицит и Гарантия риска
         ib_txt = (
             f"Тема: Аналитика гео-выдачи: системный сбой в цифровом профиле «{audit['title']}»\n\n"
             f"[ИМЯ_ЛПР], добрый день.\n\n"
-            f"В 2026 году цифровой профиль медицинской клиники перестал быть просто «точкой на карте». Сегодня это сложный алгоритмический актив, который либо генерирует постоянный поток пациентов, либо выступает физическим барьером.\n\n"
+            f"В 2026 году цифровой профиль бизнеса перестал быть просто «точкой на карте». Сегодня это сложный алгоритмический актив, который либо генерирует постоянный поток {client_word}ов, либо выступает физическим барьером.\n\n"
             f"Меня зовут [Ваше Имя], я основатель аналитического центра PIN100. Мы провели независимую диагностику вашей карточки в Яндекс Картах по методологии из 41 параметра ранжирования.\n\n"
-            f"Главный вывод: Клиника «{audit['title']}» обладает сильной врачебной экспертизой (рейтинг {audit['rating']:.1f}). Однако из-за системных технических сбоев алгоритмы Яндекса пессимизируют профиль в выдаче. В частности, {ai_pain}.\n\n"
+            f"Главный вывод: Ваша организация обладает сильной репутацией (рейтинг {audit['rating']:.1f}). Однако техническая оценка профиля составляет всего {audit['score']:.1f}/100 (для сравнения: у лидера вашей локации этот показатель равен {comp_score}/100).\n\n"
+            f"Из-за алгоритмических сбоев Яндекс пессимизирует профиль в выдаче. В частности, {ai_pain}.\n\n"
             f"Мы имеем дело с невидимым барьером, который ежедневно перенаправляет платежеспособный спрос к вашим соседям ({c_str}).\n\n"
             f"Масштаб невидимых потерь:\n"
-            f"— Отток: около {ll} первичных пациентов ежемесячно.\n"
+            f"— Отток: около {ll} первичных обращений ежемесячно.\n"
             f"— Упущенная выручка: порядка {mapping['[[REV_LOSS_FMT]]']} ₽ прямого приема.\n\n"
-            f"Руководителю важно опираться на сухие данные. Я структурировал все найденные алгоритмические уязвимости в независимый PDF-отчет. Он работает как рентгеновский снимок: без IT-жаргона показывает, где именно блокируется трафик. Вы сможете использовать его как готовое ТЗ для проверки вашего текущего маркетинга.\n\n"
+            f"Руководителю важно опираться на сухие данные. Я структурировал все найденные алгоритмические уязвимости в независимый PDF-отчет. Отчет вас ни к чему не обязывает — вы можете просто передать его своему маркетологу как готовое ТЗ для исправления.\n\n"
+            f"Важно: Мы работаем по принципу территориальной эксклюзивности — берем на сопровождение только одну компанию в радиусе 3 км, чтобы не создавать конкуренцию самим себе. Сейчас мы выбираем партнера в вашем районе.\n\n"
             f"Направьте ответное подтверждение (можно просто написать «Да»), и я пришлю PDF-файл для ознакомления."
         )
         
@@ -709,7 +746,6 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         
         with open(p_txt, "w", encoding="utf-8") as f: f.write(ib_txt)
         
-        # Удаляем тяжелый raw_data_ref перед сохранением JSON
         safe_audit_for_json = {k: v for k, v in audit.items() if k != "raw_data_ref"}
         with open(p_json, "w", encoding="utf-8") as f: json.dump(safe_audit_for_json, f, ensure_ascii=False)
         
