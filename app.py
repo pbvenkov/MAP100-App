@@ -539,4 +539,393 @@ def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[st
         """
         
         resp = model.generate_content(prompt)
-        result_text = resp.text.replace('```json', '').replace('
+        # ИСПРАВЛЕНИЕ КАВЫЧЕК ЗДЕСЬ
+        result_text = resp.text.replace('```json', '').replace('```', '').strip()
+        ai_data = json.loads(result_text)
+        logger.log(f"Gemini: Скоринг {ai_data.get('score')}%, Боль: {ai_data.get('pain_point')}", "SUCCESS")
+        return ai_data
+    except Exception as e:
+        logger.log(f"Ошибка Gemini: {e}", "ERROR")
+        return {"score": 0, "pain_point": ""}
+
+
+def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_registry: Dict) -> Dict[str, Any]:
+    data = raw_input[0] if isinstance(raw_input, list) and raw_input else raw_input
+    if isinstance(data, dict) and "items" in data and isinstance(data["items"], list): data = data["items"][0]
+
+    title = data.get("title") or data.get("name") or "Организация"
+    org_id = str(data.get("org_id") or data.get("id") or "0000000000")
+    rating = round(float(data.get("rating") or data.get("reviewsRating") or 5.0), 1)
+
+    logger.log(f"Найдена карточка: «{title}» (Рейтинг: {rating})", "INFO")
+
+    niche = "OTHER"
+    low_txt = (str(title) + " " + str(data.get("categories", ""))).lower()
+    
+    if any(k in low_txt for k in ["стоматолог", "dent"]): niche = "DENTISTRY"
+    elif any(k in low_txt for k in ["космет", "эпиляц", "beauty"]): niche = "COSMETOLOGY"
+    elif any(k in low_txt for k in ["медцентр", "клиника"]): niche = "GENERAL_MEDICINE"
+    elif any(k in low_txt for k in ["стрижк", "барбер", "парикмахер", "волос", "салон красоты"]): niche = "BEAUTY"
+    elif any(k in low_txt for k in ["авто", "шиномонтаж", "сервис"]): niche = "AUTOSERVICES"
+
+    score, top_fails, raw_scores = perform_deep_scoring(data, logger, criteria_registry, niche)
+    logger.log(f"Итоговый честный балл готовности: {score:.1f} / 100", "INFO")
+
+    comps = data.get("competitors") or []
+    if not isinstance(comps, list) or len(comps) < 2:
+        comps = ["соседние бизнесы локации", "конкуренты района"]
+
+    n_def = NICHE_CONFIG.get(niche, NICHE_CONFIG["OTHER"])
+
+    c_word = n_def["client_word"]
+    n_gen = n_def["niche_genitive"]
+    
+    for f in top_fails:
+        desc = f["desc"]
+        desc = desc.replace("{CLIENT_WORD}", c_word.capitalize())
+        desc = desc.replace("{client_word}", c_word)
+        desc = desc.replace("{NICHE_GENITIVE}", n_gen.capitalize())
+        desc = desc.replace("{niche_genitive}", n_gen)
+        f["desc"] = desc
+
+    return {
+        "title": title, "org_id": org_id, "rating": rating, "score": score, "niche": niche,
+        "competitors": comps, "canonical_url": data.get("url", ""),
+        "benchmark_leads": n_def["benchmark_leads"], "base_check": n_def["base_check"], 
+        "ltv_months": n_def["ltv_months"], "benchmark_source": n_def["benchmark_source"],
+        "top_failures": top_fails, "date": datetime.date.today().strftime("%d.%m.%Y"),
+        "criteria_scores": raw_scores,
+        "raw_data_ref": data 
+    }
+
+def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, str]:
+    n_info = NICHE_CONFIG[audit["niche"]]
+    score = audit["score"]
+    dev = max(0.0, round(100.0 - score, 1))
+    
+    competitor_score = min(98.5, round(score + max(12.0, (100.0 - score) * 0.6), 1))
+    
+    lost_leads = int(round(audit["benchmark_leads"] * (dev / 100.0)))
+    current_leads = max(0, audit["benchmark_leads"] - lost_leads)
+    
+    rev_loss = lost_leads * audit["base_check"]
+    weekly_loss = int(round(rev_loss / 4.33))
+    ltv_loss = rev_loss * audit["ltv_months"]
+
+    table_declension = get_declension(lost_leads, n_info["client_word"])
+    failures = audit.get("top_failures", [])
+
+    colors = []
+    for f in failures:
+        impact = f.get("impact", 0)
+        if impact > 3.0: colors.append("dc2626")       
+        elif impact > 1.5: colors.append("ea580c")     
+        else: colors.append("eab308")                  
+    while len(colors) < 3: colors.append("eab308")
+
+    group_losses = {}
+    for code, meta in criteria_registry.items():
+        max_w = meta["weight"]
+        cur_w = audit.get("criteria_scores", {}).get(code, max_w)
+        lost = max_w - cur_w
+        if lost > 0: group_losses[meta["group"]] = group_losses.get(meta["group"], 0.0) + lost
+
+    worst_group = max(group_losses, key=group_losses.get) if group_losses else ""
+
+    reason_phrases = {
+        "Конверсия": "из-за отсутствия прямого конверсионного инструментария (онлайн-записи, витрины специалистов или промоакций)",
+        "Базовое заполнение": "из-за критических пробелов в заполнении карточки (отсутствие цен, структуры услуг или реквизитов)",
+        "Репутация": "из-за просадки в репутационных факторах (паузы в отзывах, рейтинг или игнорирование обратной связи)",
+        "SEO и Трафик": "из-за слабой гео-оптимизации профиля (нехватка нишевых атрибутов, топонимов или смежных рубрик)",
+        "Контент": "из-за недостатка визуального доверия (отсутствие новостей, фото интерьера или видео)"
+    }
+    
+    reason_text = reason_phrases.get(worst_group, "из-за технических недочетов в оформлении и настройках профиля")
+    executive_summary = (f"Профиль «{audit['title']}» обладает высокой репутацией ({audit['rating']:.1f}), "
+                         f"однако {reason_text} алгоритм перенаправляет до {lost_leads} готовых обращений в месяц "
+                         f"прямым конкурентам локации.")
+    
+    return {
+        "[[TITLE]]": audit["title"], "[[NICHE]]": n_info["niche_name"], "[[DATE]]": audit["date"],
+        "[[SCORE]]": f"{score:.1f}", "[[SCORE_COLOR]]": "16a34a" if score >= 80 else ("d97706" if score >= 60 else "dc2626"),
+        "[[COMPETITOR_SCORE]]": f"{competitor_score:.1f}",
+        "[[REV_LOSS_FMT]]": f"{int(rev_loss):,}".replace(",", " "), 
+        "[[CLIENT_LEADS]]": str(audit["benchmark_leads"]),
+        "[[CURRENT_LEADS]]": str(current_leads),
+        "[[POTENTIAL_LEADS]]": str(audit["benchmark_leads"]),
+        "[[DEV]]": f"{dev:.1f}", "[[LOST_LEADS]]": str(lost_leads), "[[TABLE_DECLENSION]]": table_declension,
+        "[[CLIENT_CHECK_FMT]]": f"{int(audit['base_check']):,}".replace(",", " "), "[[CLIENT_LTV]]": str(audit["ltv_months"]),
+        "[[LTV_LOSS_FMT]]": f"{int(ltv_loss):,}".replace(",", " "), "[[BENCHMARK_SOURCE]]": audit["benchmark_source"],
+        "[[QUALITY_PHRASE]]": n_info["quality_phrase"], "[[EXECUTIVE_SUMMARY]]": executive_summary,
+        "[[PAGE_3_HEADING]]": "Топ-3 фактора потери клиентов", "[[PAGE_3_SUBTITLE]]": "Технические барьеры карточки, снижающие конверсию в первичное обращение:",
+        "[[FAIL_1_TITLE]]": failures[0]["title"] if len(failures) > 0 else "Барьер конверсии",
+        "[[FAIL_1_DESC]]": failures[0]["desc"] if len(failures) > 0 else "Требуется оптимизация карточки.",
+        "[[FAIL_1_COLOR]]": colors[0],
+        "[[FAIL_2_TITLE]]": failures[1]["title"] if len(failures) > 1 else "Барьер доверия",
+        "[[FAIL_2_DESC]]": failures[1]["desc"] if len(failures) > 1 else "Требуется заполнение команды.",
+        "[[FAIL_2_COLOR]]": colors[1],
+        "[[FAIL_3_TITLE]]": failures[2]["title"] if len(failures) > 2 else "Барьер прейскуранта",
+        "[[FAIL_3_DESC]]": failures[2]["desc"] if len(failures) > 2 else "Требуется открытие цен.",
+        "[[FAIL_3_COLOR]]": colors[2],
+        "[[WEEKLY_LOSS_FMT]]": f"{int(weekly_loss):,}".replace(",", " "),
+        "[[RISK_REVERSAL]]": "Отчет ни к чему вас не обязывает. Вы можете передать его своему маркетологу как готовое ТЗ для самостоятельного исправления уязвимостей."
+    }
+
+def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: TerminalLogger) -> bool:
+    temp_typ = work_dir / f"temp_{out_path.stem}.typ"
+    try:
+        with open(temp_typ, "w", encoding="utf-8") as f: f.write(typ_content)
+        if PY_TYPST_AVAILABLE:
+            typst.compile(str(temp_typ), output=str(out_path))
+            return True
+        subprocess.run(["typst", "compile", str(temp_typ), str(out_path)], check=True)
+        return True
+    except Exception as e:
+        logger.log(f"Ошибка компиляции Typst: {e}", "ERROR")
+        return False
+    finally:
+        if temp_typ.exists(): temp_typ.unlink()
+
+# ==========================================================
+# 6. ВЫГРУЗКА В GOOGLE ТАБЛИЦУ (НА 3 ЛИСТА)
+# ==========================================================
+def sync_to_google(audit: Dict, mapping: Dict, p_txt: Path, p_json: Path, logger: TerminalLogger) -> bool:
+    creds, status = get_google_credentials()
+    if not creds:
+        logger.log(f"Пропуск выгрузки в Google Таблицу: {status}", "WARN")
+        return False
+        
+    try:
+        sheets = build("sheets", "v4", credentials=creds)
+        sheet_id = os.getenv("GOOGLE_SHEET_ID", "").strip()
+        if "GOOGLE_SHEET_ID" in st.secrets: sheet_id = st.secrets["GOOGLE_SHEET_ID"]
+        
+        if not sheet_id:
+            logger.log("ID Google Таблицы (GOOGLE_SHEET_ID) не найден в секретах.", "WARN")
+            return False
+
+        audit_id = f"{audit['org_id']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        # Интеграция квалификации клиента прямо в колонку ID Компании (E)
+        formatted_org_id = f"{audit['org_id']} | {audit.get('client_stars_str', '')} | {audit.get('client_justification', '')}"
+
+        row_main = [
+            audit_id,                       
+            mapping["[[DATE]]"],            
+            datetime.datetime.now().strftime("%H:%M:%S"), 
+            audit["title"],                 
+            formatted_org_id, # Обогащенный ID Компании                
+            audit["canonical_url"],         
+            audit["niche"],                 
+            audit["rating"],                
+            mapping["[[SCORE]]"],           
+            mapping["[[LOST_LEADS]]"],      
+            mapping["[[REV_LOSS_FMT]]"],    
+            "",                             
+            "",                             
+            "",                             
+            "",                             
+            audit.get("ai_score", ""),      
+            audit.get("ai_pain_point", "")  
+        ]
+
+        scores_dict = audit.get("criteria_scores", {})
+        sorted_codes = sorted(scores_dict.keys())
+        row_scores = [audit_id, audit["title"]] + [str(scores_dict[code]) for code in sorted_codes]
+
+        with open(p_txt, "r", encoding="utf-8") as f: letter_text = f.read()
+        with open(p_json, "r", encoding="utf-8") as f: json_text = f.read()
+        
+        if len(json_text) > 49000:
+            json_text = json_text[:49000] + "\n\n... [JSON ОБРЕЗАН ИЗ-ЗА ЛИМИТА GOOGLE СИМВОЛОВ]"
+
+        row_raw = [audit_id, audit["title"], letter_text, json_text]
+
+        sheets.spreadsheets().values().append(
+            spreadsheetId=sheet_id, range="Main!A:Q", valueInputOption="USER_ENTERED", body={"values": [row_main]}
+        ).execute()
+        
+        sheets.spreadsheets().values().append(
+            spreadsheetId=sheet_id, range="Scores!A:AQ", valueInputOption="USER_ENTERED", body={"values": [row_scores]}
+        ).execute()
+        
+        sheets.spreadsheets().values().append(
+            spreadsheetId=sheet_id, range="RawData!A:D", valueInputOption="USER_ENTERED", body={"values": [row_raw]}
+        ).execute()
+        
+        logger.log("Данные успешно распределены по 3 листам Google Таблицы (Main, Scores, RawData)!", "SUCCESS")
+        return True
+    except Exception as e:
+        logger.log(f"Ошибка записи в таблицу: {e}", "ERROR")
+        return False
+
+def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict):
+    try:
+        audit = process_company_data(raw_data, logger, criteria_registry)
+        
+        # Запускаем анализатор перспективности
+        ll = int(round(audit["benchmark_leads"] * ((100.0 - audit["score"]) / 100.0)))
+        stars, star_str, justification = calculate_client_potential(audit["rating"], audit["score"], ll)
+        
+        audit["client_stars"] = stars
+        audit["client_stars_str"] = star_str
+        audit["client_justification"] = justification
+        
+        st.session_state.current_audit = audit
+        mapping = build_metrics(audit, criteria_registry)
+        st.session_state.current_mapping = mapping
+        
+        ai_insights = get_gemini_insights(audit["raw_data_ref"], logger)
+        audit["ai_score"] = ai_insights.get("score", "")
+        audit["ai_pain_point"] = ai_insights.get("pain_point", "")
+
+        logger.log("Генерация письма Icebreaker...", "STEP")
+        
+        if "сосед" not in audit['competitors'][0].lower():
+            competitors_phrase = f"к вашим соседям («{audit['competitors'][0]}» и «{audit['competitors'][1]}»)"
+        else:
+            competitors_phrase = "напрямую к ближайшим конкурентам в вашем районе"
+            
+        comp_score = mapping["[[COMPETITOR_SCORE]]"]
+        
+        n_info = NICHE_CONFIG.get(audit["niche"], NICHE_CONFIG["OTHER"])
+        client_word = n_info["client_word"]
+        
+        if audit["ai_pain_point"]:
+            ai_pain = audit['ai_pain_point'].lower().strip(' .')
+        else:
+            ai_pain = f"найдена критическая уязвимость по метрике «{audit['top_failures'][0]['title'].lower()}»"
+
+        ib_txt = (
+            f"Тема: Аналитика гео-выдачи: системный сбой в цифровом профиле «{audit['title']}»\n\n"
+            f"[ИМЯ_ЛПР], добрый день.\n\n"
+            f"В 2026 году цифровой профиль бизнеса перестал быть просто «точкой на карте». Сегодня это сложный алгоритмический актив, который либо генерирует постоянный поток {client_word}ов, либо выступает физическим барьером.\n\n"
+            f"Меня зовут [Ваше Имя], я основатель аналитического центра PIN100. Мы провели независимую диагностику вашей карточки в Яндекс Картах по методологии из 41 параметра ранжирования.\n\n"
+            f"Главный вывод: Ваша организация обладает сильной репутацией (рейтинг {audit['rating']:.1f}). Однако техническая оценка профиля составляет всего {audit['score']:.1f}/100 (для сравнения: у лидера вашей локации этот показатель равен {comp_score}/100).\n\n"
+            f"Из-за алгоритмических сбоев Яндекс пессимизирует профиль в выдаче. В частности, {ai_pain}.\n\n"
+            f"Мы имеем дело с невидимым барьером, который ежедневно перенаправляет платежеспособный спрос {competitors_phrase}.\n\n"
+            f"Масштаб невидимых потерь:\n"
+            f"— Отток: около {ll} первичных обращений ежемесячно.\n"
+            f"— Упущенная выручка: порядка {mapping['[[REV_LOSS_FMT]]']} ₽ прямого приема.\n\n"
+            f"Руководителю важно опираться на сухие данные. Я структурировал все найденные алгоритмические уязвимости в независимый PDF-отчет. Отчет вас ни к чему не обязывает — вы можете просто передать его своему маркетологу как готовое ТЗ для исправления.\n\n"
+            f"Важно: Мы работаем по принципу территориальной эксклюзивности — берем на сопровождение только одну компанию в радиусе 3 км, чтобы не создавать конкуренцию самим себе. Сейчас мы выбираем партнера в вашем районе.\n\n"
+            f"Направьте ответное подтверждение (можно просто написать «Да»), и я пришлю PDF-файл для ознакомления."
+        )
+        
+        st.session_state.current_icebreaker = ib_txt
+
+        logger.log("Компиляция PDF-отчета...", "STEP")
+        out_dir = Path("output"); out_dir.mkdir(exist_ok=True)
+        prefix = f"{re.sub(r'[^a-zA-Z0-9а-яА-Я]', '_', audit['title'])}_{audit['org_id']}"
+        p_pdf, p_txt, p_json = out_dir / f"{prefix}.pdf", out_dir / f"{prefix}.txt", out_dir / f"{prefix}.json"
+        
+        with open(p_txt, "w", encoding="utf-8") as f: f.write(ib_txt)
+        
+        safe_audit_for_json = {k: v for k, v in audit.items() if k != "raw_data_ref"}
+        with open(p_json, "w", encoding="utf-8") as f: json.dump(safe_audit_for_json, f, ensure_ascii=False)
+        
+        tpl = Path("report_template.typ")
+        if tpl.exists():
+            with open(tpl, "r", encoding="utf-8") as f: content = f.read()
+            for k, v in mapping.items(): content = content.replace(k, str(v))
+            if compile_pdf(content, p_pdf, out_dir, logger):
+                st.session_state.pdf_path = str(p_pdf)
+                logger.log("PDF успешно скомпилирован (доступен для скачивания).", "SUCCESS")
+        else: logger.log("Шаблон report_template.typ не найден!", "ERROR")
+
+        logger.log("Сохранение аналитики в базу Google Таблиц...", "STEP")
+        db_saved = sync_to_google(audit, mapping, p_txt, p_json, logger)
+        if db_saved: st.session_state.db_saved = True
+            
+        logger.log("КОНВЕЙЕР УСПЕШНО ЗАВЕРШЕН!", "SUCCESS")
+
+    except Exception as ex:
+        logger.log(f"Критическая ошибка: {ex}", "ERROR")
+        send_telegram_error(str(ex), "Pipeline Run")
+
+def app():
+    criteria_registry, sync_status = fetch_criteria_from_google()
+    
+    with st.sidebar:
+        st.header("⚙️ Настройки системы")
+        if st.button("🔄 Синхронизировать критерии", use_container_width=True):
+            fetch_criteria_from_google.clear()
+            st.rerun()
+            
+        st.caption(f"Загружено правил: {len(criteria_registry)}")
+        if sync_status != "OK":
+            st.error(f"⚠️ Сбой таблицы:\n{sync_status}")
+            
+    st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
+    tab_json, tab_url = st.tabs(["📋 Загрузить JSON", "🔗 Ссылка (Apify API)"])
+
+    with tab_json:
+        col1, col2 = st.columns([1, 2])
+        file = col1.file_uploader("Файл .json из Apify:", type=["json"])
+        txt = col2.text_area("Или код JSON:", height=100)
+        btn_json = st.button("🚀 Запустить конвейер по JSON", type="primary", use_container_width=True)
+
+    with tab_url:
+        url = st.text_input("Ссылка на Яндекс Карты:")
+        btn_url = st.button("🚀 Запустить краулинг и конвейер", type="primary", use_container_width=True)
+
+    st.subheader("🖥️ Терминал выполнения конвейера (Live Diagnostics)")
+    logger = TerminalLogger(st.empty())
+
+    if btn_json:
+        data = json.load(file) if file else (json.loads(txt) if txt.strip() else None)
+        if data: run_pipeline(data, logger, criteria_registry)
+        else: logger.log("Нет данных для анализа.", "ERROR")
+    
+    if btn_url and url.strip():
+        try:
+            data = fetch_apify_data(url, logger)
+            run_pipeline(data, logger, criteria_registry)
+        except Exception as e:
+            logger.log(str(e), "ERROR")
+
+    if st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
+        st.divider()
+        c1, c2 = st.columns([1.1, 0.9])
+        map_d = st.session_state.current_mapping
+        aud = st.session_state.current_audit
+
+        with c1:
+            st.subheader("✉️ Первое сообщение (Icebreaker)")
+            st.text_area("Текст:", value=st.session_state.current_icebreaker, height=350)
+            
+            if aud.get("ai_pain_point"):
+                st.info(f"🧠 ИИ-вывод (пошло в письмо): {aud['ai_pain_point']}")
+            
+            st.markdown("**Топ-3 уязвимости:**")
+            for i, f in enumerate(aud["top_failures"], 1):
+                st.markdown(f"**{i}. {f['title']}**\n<small>{f['desc']}</small>", unsafe_allow_html=True)
+
+        with c2:
+            st.subheader("🎯 Квалификация лида (PIN100)")
+            st.markdown(f"**Оценка:** {aud.get('client_stars_str', '')}\n\n**Обоснование:** {aud.get('client_justification', '')}")
+            st.divider()
+            
+            st.subheader(f"📊 Экономика потерь «{aud['title']}»")
+            m1, m2 = st.columns(2)
+            m1.metric("Балл", f"{map_d['[[SCORE]]']} / 100")
+            m2.metric("Потери", f"~{map_d['[[LOST_LEADS]]']} чел/мес")
+            m3, m4 = st.columns(2)
+            m3.metric("Упущенная выручка", f"{map_d['[[REV_LOSS_FMT]]']} ₽/мес")
+            
+            if aud.get("ai_score"):
+                 m4.metric("🧠 ИИ-Скоринг (Вероятность)", f"{aud['ai_score']}%")
+            else:
+                 m4.metric("Потери за неделю", f"~{map_d['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
+            
+            st.divider()
+            st.subheader("📄 PDF-отчет")
+            if st.session_state.get("pdf_path"):
+                with open(st.session_state.pdf_path, "rb") as f:
+                    st.download_button("📥 Скачать PDF", f, Path(st.session_state.pdf_path).name, "application/pdf", type="primary", use_container_width=True)
+            
+            if st.session_state.get("db_saved"):
+                st.success("✅ Все данные успешно сохранены в вашу базу (Google Таблицы)!")
+
+if __name__ == "__main__":
+    app()
