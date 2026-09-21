@@ -511,7 +511,7 @@ def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
     if resp.status_code not in [200, 201]: raise RuntimeError(f"Сбой Apify: {resp.text[:200]}")
     
     items = resp.json()
-    if not items: raise ValueError("Apify вернул пустой массив.")
+    if not items: raise ValueError("Apify вернул пустой массив данных.")
     logger.log("Сырые данные успешно загружены.", "SUCCESS")
     return items[0]
 
@@ -522,7 +522,7 @@ def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[st
     logger.log("🧠 Запрос к Gemini для поиска главной боли...", "STEP")
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash') if hasattr(genai, 'GenerativeModel') else genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-3.8-flash')
         
         safe_data = {
             "title": data.get("title", ""),
@@ -761,7 +761,6 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         points_declension = get_points_declension(num_failures)
         invisible_pct = round(100.0 - audit['score'], 1)
         
-        # 🧠 НОВЫЙ ИДЕАЛЬНЫЙ B2B TEARDOWN (Без ИИ-Галлюцинаций)
         ib_txt = (
             f"Тема: Почему {client_plural} на Яндекс Картах не доходят до {company_word} «{audit['title']}»?\n\n"
             f"[ИМЯ_ЛПР], добрый день.\n\n"
