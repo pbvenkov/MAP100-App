@@ -130,7 +130,7 @@ FALLBACK_CRITERIA_REGISTRY = {
     "PROF-11.3": {"title": "Цены у товаров и услуг", "group": "Базовое заполнение", "complexity": 1, "weight": 3.5, "descs": {"Обоснование_ОШИБКИ": "Слепой прайс отпугивает страхом скрытых накруток."}}
 }
 
-# 🧠 ЭТАЛОННЫЙ ШАБЛОН TYPST (ЗАЩИТА ОТ СЛОМАННЫХ ФАЙЛОВ)
+# 🛡️ ПЛОСКИЙ И БЕЗОПАСНЫЙ ШАБЛОН TYPST (Без функций цвета)
 DEFAULT_TYPST_TEMPLATE = """#set page(
   paper: "a4",
   margin: (x: 2cm, y: 2.5cm),
@@ -189,7 +189,7 @@ DEFAULT_TYPST_TEMPLATE = """#set page(
 #grid(
   columns: (1fr, 1fr),
   column-gutter: 2em,
-  rect(width: 100%, fill: rgb("#[[SCORE_COLOR]]").lighten(80%), stroke: rgb("#[[SCORE_COLOR]]"), radius: 4pt, inset: 15pt)[
+  rect(width: 100%, fill: rgb("#[[SCORE_BG_COLOR]]"), stroke: rgb("#[[SCORE_COLOR]]"), radius: 4pt, inset: 15pt)[
     #text(size: 10pt)[ГОТОВНОСТЬ К ПРИЕМУ ТРАФИКА]\
     #text(size: 24pt, weight: "bold", fill: rgb("#[[SCORE_COLOR]]"))[ [[SCORE]] / 100 ]\
     #text(size: 9pt)[Балл конкурента-лидера: [[COMPETITOR_SCORE]] / 100]
@@ -246,21 +246,21 @@ DEFAULT_TYPST_TEMPLATE = """#set page(
 #text(size: 12pt)[ [[PAGE_3_SUBTITLE]] ]
 #v(2em)
 
-#rect(width: 100%, fill: rgb("#[[FAIL_1_COLOR]]").lighten(90%), stroke: rgb("#[[FAIL_1_COLOR]]"), radius: 4pt, inset: 15pt)[
+#rect(width: 100%, fill: rgb("#[[FAIL_1_BG]]"), stroke: rgb("#[[FAIL_1_COLOR]]"), radius: 4pt, inset: 15pt)[
   #text(size: 14pt, weight: "bold", fill: rgb("#[[FAIL_1_COLOR]]"))[1. [[FAIL_1_TITLE]]]\
   #v(0.5em)
   [[FAIL_1_DESC]]
 ]
 #v(1em)
 
-#rect(width: 100%, fill: rgb("#[[FAIL_2_COLOR]]").lighten(90%), stroke: rgb("#[[FAIL_2_COLOR]]"), radius: 4pt, inset: 15pt)[
+#rect(width: 100%, fill: rgb("#[[FAIL_2_BG]]"), stroke: rgb("#[[FAIL_2_COLOR]]"), radius: 4pt, inset: 15pt)[
   #text(size: 14pt, weight: "bold", fill: rgb("#[[FAIL_2_COLOR]]"))[2. [[FAIL_2_TITLE]]]\
   #v(0.5em)
   [[FAIL_2_DESC]]
 ]
 #v(1em)
 
-#rect(width: 100%, fill: rgb("#[[FAIL_3_COLOR]]").lighten(90%), stroke: rgb("#[[FAIL_3_COLOR]]"), radius: 4pt, inset: 15pt)[
+#rect(width: 100%, fill: rgb("#[[FAIL_3_BG]]"), stroke: rgb("#[[FAIL_3_COLOR]]"), radius: 4pt, inset: 15pt)[
   #text(size: 14pt, weight: "bold", fill: rgb("#[[FAIL_3_COLOR]]"))[3. [[FAIL_3_TITLE]]]\
   #v(0.5em)
   [[FAIL_3_DESC]]
@@ -321,6 +321,18 @@ DEFAULT_TYPST_TEMPLATE = """#set page(
 💬 Telegram: t.me/paulvenkov \
 📞 Телефон: +7 (921) 966-26-89
 """
+
+# ==========================================
+# УТИЛИТА ЭКРАНИРОВАНИЯ ТЕКСТА
+# ==========================================
+def escape_typst(text: Any) -> str:
+    """Полностью обезвреживает пользовательский текст для защиты компилятора Typst"""
+    if text is None: return ""
+    s = str(text)
+    s = s.replace("\\", "\\\\") # Защита от случайных переносов строк
+    s = s.replace("[", "\\[")   # Защита от открытых блоков     s = s.replace("]", "\\]")   # Защита от закрытых блоков
+    s = s.replace("#", "\\#")   # Защита от запуска макросов
+    return s
 
 # ==========================================
 # 2. УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE
@@ -439,6 +451,14 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
         if 2 <= n1 <= 4: return f"{word_type}а"
         return f"{word_type}ов"
     return "обращений"
+
+def get_points_declension(number: int) -> str:
+    n = abs(int(number)) % 100
+    n1 = n % 10
+    if 11 <= n <= 19: return "ключевых точек"
+    if n1 == 1: return "ключевая точка"
+    if 2 <= n1 <= 4: return "ключевые точки"
+    return "ключевых точек"
 
 # ==========================================================
 # 4. АНАЛИЗАТОР ПЕРСПЕКТИВНОСТИ И ИНТЕГРАЦИИ
@@ -824,13 +844,31 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     table_declension = get_declension(lost_leads, n_info["client_word"])
     failures = audit.get("top_failures", [])
 
-    colors = []
+    # Безопасное определение цветов (без функций Lighten)
+    fail_colors = []
+    fail_bgs = []
     for f in failures:
         impact = f.get("impact", 0)
-        if impact > 3.0: colors.append("dc2626")       
-        elif impact > 1.5: colors.append("ea580c")     
-        else: colors.append("eab308")                  
-    while len(colors) < 3: colors.append("eab308")
+        if impact > 3.0: 
+            fail_colors.append("dc2626")
+            fail_bgs.append("fef2f2")
+        elif impact > 1.5: 
+            fail_colors.append("ea580c")
+            fail_bgs.append("fff7ed")
+        else: 
+            fail_colors.append("eab308")
+            fail_bgs.append("fefce8")
+            
+    while len(fail_colors) < 3: 
+        fail_colors.append("eab308")
+        fail_bgs.append("fefce8")
+        
+    if score >= 80:
+        score_col, score_bg = "16a34a", "f0fdf4"
+    elif score >= 60:
+        score_col, score_bg = "d97706", "fff7ed"
+    else:
+        score_col, score_bg = "dc2626", "fef2f2"
 
     reason_text = "из-за технических недочетов в оформлении"
     executive_summary = (f"Профиль «{audit['title']}» обладает высокой репутацией ({audit['rating']:.1f}), "
@@ -841,7 +879,7 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     
     return {
         "[[TITLE]]": audit["title"], "[[NICHE]]": n_info["niche_name"], "[[DATE]]": audit["date"],
-        "[[SCORE]]": f"{score:.1f}", "[[SCORE_COLOR]]": "16a34a" if score >= 80 else ("d97706" if score >= 60 else "dc2626"),
+        "[[SCORE]]": f"{score:.1f}", "[[SCORE_COLOR]]": score_col, "[[SCORE_BG_COLOR]]": score_bg,
         "[[COMPETITOR_SCORE]]": f"{competitor_score:.1f}", "[[REV_LOSS_FMT]]": f"{int(rev_loss):,}".replace(",", " "), 
         "[[CLIENT_LEADS]]": str(audit["benchmark_leads"]), "[[CURRENT_LEADS]]": str(current_leads),
         "[[POTENTIAL_LEADS]]": str(audit["benchmark_leads"]), "[[DEV]]": f"{dev:.1f}", 
@@ -851,11 +889,14 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
         "[[QUALITY_PHRASE]]": n_info["quality_phrase"], "[[EXECUTIVE_SUMMARY]]": executive_summary,
         "[[PAGE_3_HEADING]]": "Топ-3 фактора потери", "[[PAGE_3_SUBTITLE]]": "Технические барьеры карточки, снижающие конверсию:",
         "[[FAIL_1_TITLE]]": failures[0]["title"] if len(failures) > 0 else "Барьер конверсии",
-        "[[FAIL_1_DESC]]": failures[0]["desc"] if len(failures) > 0 else "Требуется оптимизация.", "[[FAIL_1_COLOR]]": colors[0],
+        "[[FAIL_1_DESC]]": failures[0]["desc"] if len(failures) > 0 else "Требуется оптимизация.", 
+        "[[FAIL_1_COLOR]]": fail_colors[0], "[[FAIL_1_BG]]": fail_bgs[0],
         "[[FAIL_2_TITLE]]": failures[1]["title"] if len(failures) > 1 else "Барьер доверия",
-        "[[FAIL_2_DESC]]": failures[1]["desc"] if len(failures) > 1 else "Требуется заполнение команды.", "[[FAIL_2_COLOR]]": colors[1],
+        "[[FAIL_2_DESC]]": failures[1]["desc"] if len(failures) > 1 else "Требуется заполнение команды.", 
+        "[[FAIL_2_COLOR]]": fail_colors[1], "[[FAIL_2_BG]]": fail_bgs[1],
         "[[FAIL_3_TITLE]]": failures[2]["title"] if len(failures) > 2 else "Барьер прейскуранта",
-        "[[FAIL_3_DESC]]": failures[2]["desc"] if len(failures) > 2 else "Требуется открытие цен.", "[[FAIL_3_COLOR]]": colors[2],
+        "[[FAIL_3_DESC]]": failures[2]["desc"] if len(failures) > 2 else "Требуется открытие цен.", 
+        "[[FAIL_3_COLOR]]": fail_colors[2], "[[FAIL_3_BG]]": fail_bgs[2],
         "[[WEEKLY_LOSS_FMT]]": f"{int(weekly_loss):,}".replace(",", " "),
         "[[RISK_REVERSAL]]": "Отчет ни к чему вас не обязывает. Вы можете передать его своему маркетологу как готовое ТЗ."
     }
@@ -869,7 +910,10 @@ def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: Termin
             return True
         result = subprocess.run(["typst", "compile", str(temp_typ), str(out_path)], check=False, capture_output=True, text=True)
         if result.returncode != 0:
-            logger.log(f"Сбой компиляции Typst: {result.stderr}", "ERROR")
+            logger.log(f"Сбой компиляции Typst: {result.stderr.strip()}", "ERROR")
+            # Сохраняем сломанный шаблон для отладки
+            with open(work_dir / "broken_template_debug.typ", "w", encoding="utf-8") as f_err:
+                f_err.write(typ_content)
             return False
         return True
     except FileNotFoundError:
@@ -1005,10 +1049,10 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             
         with open(tpl, "r", encoding="utf-8") as f: content = f.read()
         
-        # Сортируем ключи по длине (самые длинные сначала), чтобы [[SCORE_COLOR]] заменился до [[SCORE]]
+        # Сортируем ключи по длине, чтобы [[SCORE_COLOR]] заменился до [[SCORE]]
         for k, v in sorted(mapping.items(), key=lambda x: len(x[0]), reverse=True):
-            # Экранируем случайные квадратные скобки из текстов, чтобы не сломать Typst!
-            v_str = str(v).replace("[", "\\[").replace("]", "\\]")
+            # Санитайзер: Обезвреживаем случайные скобки и решетки в пользовательском тексте
+            v_str = escape_typst(v)
             content = content.replace(k, v_str)
             
         if compile_pdf(content, p_pdf, out_dir, logger):
