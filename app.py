@@ -46,7 +46,8 @@ st.set_page_config(page_title="PIN100 Analytics", page_icon="📍", layout="wide
 # 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКИ
 # ==========================================================
 
-GDRIVE_SCOPES = ["[https://www.googleapis.com/auth/spreadsheets](https://www.googleapis.com/auth/spreadsheets)"]
+# Ссылка для авторизации (строго без скобок и markdown-форматирования)
+GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
 
@@ -229,7 +230,7 @@ def send_telegram_error(error_message: str, context: str = "") -> bool:
     chat_id = st.secrets.get("TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not bot_token or not chat_id:
         return False
-    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){bot_token}/sendMessage"
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     text = f"🚨 <b>PIN100 Ошибка</b>\n<b>Контекст:</b> {context}\n<code>{error_message}</code>"
     try:
         requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=3)
@@ -309,7 +310,7 @@ def fetch_dadata_ceo(inn: str, logger: TerminalLogger) -> str:
         logger.log("Ключ DADATA_API_KEY не настроен. Поиск ЛПР пропущен.", "WARN")
         return ""
         
-    url = "[https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party](https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party)"
+    url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
@@ -552,7 +553,7 @@ def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
     if not token or not actor:
         raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID в Secrets или .env.")
 
-    run_url = f"[https://api.apify.com/v2/acts/](https://api.apify.com/v2/acts/){actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
     logger.log("Отправка URL в Apify Actor...", "STEP")
     
     payload = {
