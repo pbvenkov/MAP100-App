@@ -130,9 +130,201 @@ FALLBACK_CRITERIA_REGISTRY = {
     "PROF-11.3": {"title": "Цены у товаров и услуг", "group": "Базовое заполнение", "complexity": 1, "weight": 3.5, "descs": {"Обоснование_ОШИБКИ": "Слепой прайс отпугивает страхом скрытых накруток."}}
 }
 
-# ==========================================================
+# 🧠 ЭТАЛОННЫЙ ШАБЛОН TYPST (ЗАЩИТА ОТ СЛОМАННЫХ ФАЙЛОВ)
+DEFAULT_TYPST_TEMPLATE = """#set page(
+  paper: "a4",
+  margin: (x: 2cm, y: 2.5cm),
+  header: align(right)[
+    #text(8pt, fill: luma(120))[PIN 100 Analytics | Независимый аудит гео-выдачи]
+  ],
+  footer: align(center)[
+    #text(8pt, fill: luma(150))[
+      Сгенерировано аналитической платформой. Документ предназначен исключительно для внутреннего использования руководством.
+      #h(1fr)
+      Стр. #counter(page).display()
+    ]
+  ]
+)
+
+#set text(font: ("Arial", "Liberation Sans", "DejaVu Sans", "Roboto"), size: 11pt, lang: "ru")
+
+#align(center)[
+  #text(size: 24pt, weight: "bold", fill: rgb("#1e3a8a"))[PIN 100 ANALYTICS]\
+  #v(1em)
+  #text(size: 18pt, weight: "bold")[Аналитическое заключение:]\
+  #text(size: 14pt)[Где профиль теряет первичных клиентов]\
+  #text(size: 12pt, fill: luma(100))[Расчет упущенной выручки локации и перетока спроса к конкурентам]
+]
+
+#v(3em)
+
+#rect(
+  width: 100%,
+  fill: luma(245),
+  stroke: luma(200),
+  radius: 4pt,
+  inset: 15pt,
+  [
+    #grid(
+      columns: (1fr, 2fr),
+      row-gutter: 1em,
+      [*Организация:*], [*[[TITLE]]*],
+      [*Направление:*], [*[[NICHE]]*],
+      [*Дата фиксации данных:*], [*[[DATE]]*]
+    )
+  ]
+)
+
+#v(3em)
+
+#text(size: 14pt, weight: "bold")[Практическая ценность отчета:]
+#v(0.5em)
+Отчет показывает скрытые программные фильтры Яндекс Карт, из-за которых готовые к обращению клиенты района уходят к ближайшим конкурентам. Здесь нет общих советов по рекламе: зафиксированы конкретные барьеры конверсии в профиле и рассчитана упущенная выручка бизнеса без затрат на платный трафик.
+
+#pagebreak()
+
+#text(size: 18pt, weight: "bold", fill: rgb("#1e3a8a"))[Резюме для руководителя]
+#v(1em)
+
+#grid(
+  columns: (1fr, 1fr),
+  column-gutter: 2em,
+  rect(width: 100%, fill: rgb("#[[SCORE_COLOR]]").lighten(80%), stroke: rgb("#[[SCORE_COLOR]]"), radius: 4pt, inset: 15pt)[
+    #text(size: 10pt)[ГОТОВНОСТЬ К ПРИЕМУ ТРАФИКА]\
+    #text(size: 24pt, weight: "bold", fill: rgb("#[[SCORE_COLOR]]"))[ [[SCORE]] / 100 ]\
+    #text(size: 9pt)[Балл конкурента-лидера: [[COMPETITOR_SCORE]] / 100]
+  ],
+  rect(width: 100%, fill: rgb("#fef2f2"), stroke: rgb("#ef4444"), radius: 4pt, inset: 15pt)[
+    #text(size: 10pt)[ПРЯМЫЕ ПОТЕРИ ВЫРУЧКИ]\
+    #text(size: 24pt, weight: "bold", fill: rgb("#ef4444"))[ [[REV_LOSS_FMT]] ₽/мес ]\
+    #text(size: 9pt)[Консервативная оценка первого визита]
+  ]
+)
+
+#v(2em)
+
+#text(size: 14pt, weight: "bold")[Критический вывод анализа:]
+#v(0.5em)
+[[EXECUTIVE_SUMMARY]]
+
+#v(2em)
+
+#text(size: 14pt, weight: "bold")[Воронка потерь: где именно карточка теряет клиентов]
+#v(1em)
+
+#grid(
+  columns: (1fr, 1fr, 1fr),
+  column-gutter: 1em,
+  rect(width: 100%, stroke: luma(200), inset: 10pt)[
+    *1. ТРАФИК ЛИДЕРОВ*\
+    *[[POTENTIAL_LEADS]] обр.*\
+    #text(size: 9pt)[Медиана прямых контактов в ТОП-3 локации.]
+  ],
+  rect(width: 100%, stroke: luma(200), inset: 10pt)[
+    *2. ЭКРАННЫЙ ФИЛЬТР*\
+    *Отказ от контакта*\
+    #text(size: 9pt)[Часть людей уходит из-за технических недочетов карточки.]
+  ],
+  rect(width: 100%, stroke: rgb("#ef4444"), fill: rgb("#fef2f2"), inset: 10pt)[
+    *3. УХОД К СОСЕДЯМ*\
+    *[[LOST_LEADS]] [[TABLE_DECLENSION]]*\
+    #text(size: 9pt)[Ежемесячно перетекают к активным конкурентам.]
+  ]
+)
+
+#v(2em)
+#text(size: 8pt, fill: luma(100))[
+  * Консервативный расчет первого визита (базовый чек [[CLIENT_CHECK_FMT]] ₽). С учетом повторных визитов и лояльности клиентов (LTV: [[CLIENT_LTV]] мес.) годовой отток районного бюджета составляет до [[LTV_LOSS_FMT]] ₽. Источник бенчмарков: [[BENCHMARK_SOURCE]].\
+  \
+  Важное примечание: Оценка [[SCORE]] / 100 фиксирует исключительно техническую готовность профиля в гео-выдаче Яндекса, а не реальное качество [[QUALITY_PHRASE]]. Это программные особенности поисковой системы, которые не зависят от работы администраторов и специалистов.
+]
+
+#pagebreak()
+
+#text(size: 18pt, weight: "bold", fill: rgb("#1e3a8a"))[ [[PAGE_3_HEADING]] ]
+#v(0.5em)
+#text(size: 12pt)[ [[PAGE_3_SUBTITLE]] ]
+#v(2em)
+
+#rect(width: 100%, fill: rgb("#[[FAIL_1_COLOR]]").lighten(90%), stroke: rgb("#[[FAIL_1_COLOR]]"), radius: 4pt, inset: 15pt)[
+  #text(size: 14pt, weight: "bold", fill: rgb("#[[FAIL_1_COLOR]]"))[1. [[FAIL_1_TITLE]]]\
+  #v(0.5em)
+  [[FAIL_1_DESC]]
+]
+#v(1em)
+
+#rect(width: 100%, fill: rgb("#[[FAIL_2_COLOR]]").lighten(90%), stroke: rgb("#[[FAIL_2_COLOR]]"), radius: 4pt, inset: 15pt)[
+  #text(size: 14pt, weight: "bold", fill: rgb("#[[FAIL_2_COLOR]]"))[2. [[FAIL_2_TITLE]]]\
+  #v(0.5em)
+  [[FAIL_2_DESC]]
+]
+#v(1em)
+
+#rect(width: 100%, fill: rgb("#[[FAIL_3_COLOR]]").lighten(90%), stroke: rgb("#[[FAIL_3_COLOR]]"), radius: 4pt, inset: 15pt)[
+  #text(size: 14pt, weight: "bold", fill: rgb("#[[FAIL_3_COLOR]]"))[3. [[FAIL_3_TITLE]]]\
+  #v(0.5em)
+  [[FAIL_3_DESC]]
+]
+
+#pagebreak()
+
+#text(size: 18pt, weight: "bold", fill: rgb("#1e3a8a"))[Дорожная карта перехвата локального спроса]
+#v(0.5em)
+Пошаговый план возврата первичных клиентов в кассу организации:
+#v(1.5em)
+
+#grid(
+  columns: (1fr, 1fr, 1fr),
+  column-gutter: 1.5em,
+  [
+    *ЭТАП 1: СТАРТ*\
+    *3-5 дней*\
+    #text(size: 10pt)[Привязка услуг к запросам, исправление меток входа, парковки и дублирующих адресов.]
+  ],
+  [
+    *ЭТАП 2: ОЦИФРОВКА*\
+    *14 дней*\
+    #text(size: 10pt)[Подключение инструментов конверсии, оформление карточек команды, наглядный прейскурант.]
+  ],
+  [
+    *ЭТАП 3: ЗАКРЕПЛЕНИЕ*\
+    *Постоянно*\
+    #text(size: 10pt)[Регламент ответов на отзывы, защита от недостоверных правок, удержание в ТОП-3 района.]
+  ]
+)
+
+#v(2em)
+#rect(width: 100%, fill: rgb("#fef2f2"), stroke: rgb("#ef4444"), radius: 4pt, inset: 15pt)[
+  *ЦЕНА НЕДЕЛИ ПРОМЕДЛЕНИЯ: [[WEEKLY_LOSS_FMT]] ₽ / нед*\
+  #text(size: 10pt)[Сумма, которая безвозвратно переходит к прямым конкурентам локации.]\
+  #v(0.5em)
+  *БЫСТРАЯ ОКУПАЕМОСТЬ:*\
+  #text(size: 10pt)[Всего 2-3 первичных визита полностью перекрывают любые затраты на профессиональную оптимизацию профиля.]
+]
+
+#v(2em)
+#line(length: 100%, stroke: 0.5pt + luma(200))
+#v(1em)
+
+#text(size: 16pt, weight: "bold")[Регламент внедрения изменений]
+#v(0.5em)
+[[RISK_REVERSAL]]
+
+#v(2em)
+С уважением, \
+*Павел Венков*\
+Руководитель агентства PIN 100 \
+
+#v(1em)
+*Контакты для связи:*\
+🌐 Сайт: pin100.ru \
+💬 Telegram: t.me/paulvenkov \
+📞 Телефон: +7 (921) 966-26-89
+"""
+
+# ==========================================
 # 2. УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE
-# ==========================================================
+# ==========================================
 
 def get_google_credentials() -> Tuple[Any, str]:
     if not GOOGLE_LIBS_AVAILABLE:
@@ -617,9 +809,11 @@ def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_regist
 def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, str]:
     n_info = NICHE_CONFIG[audit["niche"]]
     score = audit["score"]
-    dev = max(0.0, round(100.0 - score, 1))
     
-    competitor_score = min(98.5, round(score + max(12.0, (100.0 - score) * 0.6), 1))
+    total_params = 41
+    filled_params = int(round(total_params * (score / 100.0)))
+    
+    dev = max(0.0, 100.0 - score)
     lost_leads = int(round(audit["benchmark_leads"] * (dev / 100.0)))
     current_leads = max(0, audit["benchmark_leads"] - lost_leads)
     
@@ -642,6 +836,8 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     executive_summary = (f"Профиль «{audit['title']}» обладает высокой репутацией ({audit['rating']:.1f}), "
                          f"однако {reason_text} алгоритм перенаправляет до {lost_leads} готовых обращений в месяц "
                          f"прямым конкурентам локации.")
+                         
+    competitor_score = min(98.5, round(score + max(12.0, (100.0 - score) * 0.6), 1))
     
     return {
         "[[TITLE]]": audit["title"], "[[NICHE]]": n_info["niche_name"], "[[DATE]]": audit["date"],
@@ -671,7 +867,10 @@ def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: Termin
         if PY_TYPST_AVAILABLE:
             typst.compile(str(temp_typ), output=str(out_path))
             return True
-        subprocess.run(["typst", "compile", str(temp_typ), str(out_path)], check=True, capture_output=True)
+        result = subprocess.run(["typst", "compile", str(temp_typ), str(out_path)], check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.log(f"Сбой компиляции Typst: {result.stderr}", "ERROR")
+            return False
         return True
     except FileNotFoundError:
         logger.log("Критическая ошибка: Компилятор Typst не установлен на сервере!", "ERROR")
@@ -725,7 +924,8 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
     try:
         audit = process_company_data(raw_data, logger, criteria_registry)
         
-        ll = int(round(audit["benchmark_leads"] * ((100.0 - audit["score"]) / 100.0)))
+        dev = max(0.0, 100.0 - audit["score"])
+        ll = int(round(audit["benchmark_leads"] * (dev / 100.0)))
         stars, star_str, justification = calculate_client_potential(audit["rating"], audit["score"], ll)
         
         audit["client_stars"] = stars
@@ -753,20 +953,17 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             competitors_phrase = "ближайших конкурентов района"
             
         failures_text = ""
-        top_3 = audit["top_failures"][:3]  # СТРОГО ТОП-3 ошибки для письма
+        top_3 = audit["top_failures"][:3]
         for f in top_3:
             failures_text += f"• **{f['title']}**. {f['desc']}\n\n"
 
-        # 🧠 МАТЕМАТИКА 41 ПАРАМЕТРА
         total_params = 41
         filled_params = int(round(total_params * (audit["score"] / 100.0)))
         missing_params = total_params - filled_params
         
-        # Интеллектуальное приветствие (имя из DaData или общее)
         lpr_name = audit.get("lpr_info", "").split(" (")[0] if audit.get("lpr_info") else "Коллеги"
         if not lpr_name.strip() or len(lpr_name) < 3: lpr_name = "Коллеги"
 
-        # 🧠 НОВЫЙ ИДЕАЛЬНЫЙ B2B TEARDOWN (Математика и Прозрачность)
         ib_txt = (
             f"Тема: Почему {client_plural} на Яндекс Картах не доходят до {company_word} «{audit['title']}»?\n\n"
             f"{lpr_name}, добрый день.\n\n"
@@ -801,20 +998,25 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         safe_audit_for_json = {k: v for k, v in audit.items() if k != "raw_data_ref"}
         with open(p_json, "w", encoding="utf-8") as f: json.dump(safe_audit_for_json, f, ensure_ascii=False)
         
+        # 🛡️ ПУЛЕНЕПРОБИВАЕМЫЙ ШАБЛОН TYPST
         tpl = Path("report_template.typ")
-        if tpl.exists():
-            with open(tpl, "r", encoding="utf-8") as f: content = f.read()
-            for k, v in mapping.items(): content = content.replace(k, str(v))
+        with open(tpl, "w", encoding="utf-8") as f:
+            f.write(DEFAULT_TYPST_TEMPLATE)
             
-            if compile_pdf(content, p_pdf, out_dir, logger):
-                st.session_state.pdf_path = str(p_pdf)
-                logger.log("PDF скомпилирован успешно.", "SUCCESS")
-            else:
-                st.session_state.pdf_path = None
-                logger.log("Сбой компиляции PDF-отчета.", "ERROR")
+        with open(tpl, "r", encoding="utf-8") as f: content = f.read()
+        
+        # Сортируем ключи по длине (самые длинные сначала), чтобы [[SCORE_COLOR]] заменился до [[SCORE]]
+        for k, v in sorted(mapping.items(), key=lambda x: len(x[0]), reverse=True):
+            # Экранируем случайные квадратные скобки из текстов, чтобы не сломать Typst!
+            v_str = str(v).replace("[", "\\[").replace("]", "\\]")
+            content = content.replace(k, v_str)
+            
+        if compile_pdf(content, p_pdf, out_dir, logger):
+            st.session_state.pdf_path = str(p_pdf)
+            logger.log("PDF скомпилирован успешно.", "SUCCESS")
         else:
             st.session_state.pdf_path = None
-            logger.log("Шаблон report_template.typ не найден в папке проекта!", "ERROR")
+            logger.log("Сбой компиляции PDF-отчета.", "ERROR")
 
         sync_to_google(audit, mapping, p_txt, p_json, logger)
         logger.log("КОНВЕЙЕР УСПЕШНО ЗАВЕРШЕН!", "SUCCESS")
@@ -906,7 +1108,7 @@ def app():
                     pdf_bytes = f.read()
                 st.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
             else:
-                st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован. Убедитесь, что файл `report_template.typ` существует в папке, или проверьте терминал на наличие ошибок Typst.")
+                st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован. В терминале выше указана ошибка компилятора Typst.")
             
             if st.session_state.get("db_saved"):
                 st.success("✅ Данные успешно сохранены в Google Таблицу!")
