@@ -326,12 +326,14 @@ DEFAULT_TYPST_TEMPLATE = """#set page(
 # УТИЛИТА ЭКРАНИРОВАНИЯ ТЕКСТА
 # ==========================================
 def escape_typst(text: Any) -> str:
-    """Полностью обезвреживает пользовательский текст для защиты компилятора Typst"""
+    """Обезвреживает текст из Яндекса и ИИ для защиты компилятора Typst"""
     if text is None: return ""
     s = str(text)
-    s = s.replace("\\", "\\\\") # Защита от случайных переносов строк
+    s = s.replace("\\", "\\\\") # Защита слешей
     s = s.replace("[", "\\[")   # Защита от открытых блоков     s = s.replace("]", "\\]")   # Защита от закрытых блоков
-    s = s.replace("#", "\\#")   # Защита от запуска макросов
+    s = s.replace("#", "\\#")   # Защита от макросов
+    s = s.replace('"', '«')     # ЗАЩИТА ОТ КАВЫЧЕК (главная причина unclosed delimiter)
+    s = s.replace('$', '\\$')   # Защита от математических блоков
     return s
 
 # ==========================================
@@ -844,7 +846,6 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     table_declension = get_declension(lost_leads, n_info["client_word"])
     failures = audit.get("top_failures", [])
 
-    # Безопасное определение цветов (без функций Lighten)
     fail_colors = []
     fail_bgs = []
     for f in failures:
@@ -903,18 +904,18 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
 
 def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: TerminalLogger) -> bool:
     temp_typ = work_dir / f"temp_{out_path.stem}.typ"
+    st.session_state.broken_typst = typ_content  # Сохраняем всегда перед компиляцией
     try:
         with open(temp_typ, "w", encoding="utf-8") as f: f.write(typ_content)
         if PY_TYPST_AVAILABLE:
             typst.compile(str(temp_typ), output=str(out_path))
+            st.session_state.broken_typst = None # Очищаем, если успешно
             return True
         result = subprocess.run(["typst", "compile", str(temp_typ), str(out_path)], check=False, capture_output=True, text=True)
         if result.returncode != 0:
             logger.log(f"Сбой компиляции Typst: {result.stderr.strip()}", "ERROR")
-            # Сохраняем сломанный шаблон для отладки
-            with open(work_dir / "broken_template_debug.typ", "w", encoding="utf-8") as f_err:
-                f_err.write(typ_content)
             return False
+        st.session_state.broken_typst = None # Очищаем, если успешно
         return True
     except FileNotFoundError:
         logger.log("Критическая ошибка: Компилятор Typst не установлен на сервере!", "ERROR")
@@ -1042,16 +1043,13 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         safe_audit_for_json = {k: v for k, v in audit.items() if k != "raw_data_ref"}
         with open(p_json, "w", encoding="utf-8") as f: json.dump(safe_audit_for_json, f, ensure_ascii=False)
         
-        # 🛡️ ПУЛЕНЕПРОБИВАЕМЫЙ ШАБЛОН TYPST
         tpl = Path("report_template.typ")
         with open(tpl, "w", encoding="utf-8") as f:
             f.write(DEFAULT_TYPST_TEMPLATE)
             
         with open(tpl, "r", encoding="utf-8") as f: content = f.read()
         
-        # Сортируем ключи по длине, чтобы [[SCORE_COLOR]] заменился до [[SCORE]]
         for k, v in sorted(mapping.items(), key=lambda x: len(x[0]), reverse=True):
-            # Санитайзер: Обезвреживаем случайные скобки и решетки в пользовательском тексте
             v_str = escape_typst(v)
             content = content.replace(k, v_str)
             
@@ -1153,6 +1151,14 @@ def app():
                 st.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
             else:
                 st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован. В терминале выше указана ошибка компилятора Typst.")
+                
+                # ВЫВОДИМ СЛОМАННЫЙ КОД ТУТ ЖЕ НА ЭКРАН!
+                if st.session_state.get("broken_typst"):
+                    st.warning("🔍 Отладочная информация: ниже приведен сгенерированный код, на котором сломался компилятор. Скопируйте его и пришлите сюда:")
+                    with st.expander("Показать сломанный код шаблона"):
+                        st.code(st.session_state.broken_typst, language="typst")
+                    
+                    st.download_button("📥 Скачать сломанный файл (.typ)", data=st.session_state.broken_typst, file_name="broken_template_debug.typ")
             
             if st.session_state.get("db_saved"):
                 st.success("✅ Данные успешно сохранены в Google Таблицу!")
