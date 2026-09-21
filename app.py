@@ -46,7 +46,6 @@ st.set_page_config(page_title="PIN100 Analytics", page_icon="📍", layout="wide
 # 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКИ
 # ==========================================================
 
-# Ссылка для авторизации (строго без скобок и markdown-форматирования)
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
@@ -127,7 +126,7 @@ FALLBACK_CRITERIA_REGISTRY = {
 }
 
 # ==========================================================
-# 2. УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE
+# 2. УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE И КЭШИРОВАНИЕ
 # ==========================================================
 
 def get_google_credentials() -> Tuple[Any, str]:
@@ -141,7 +140,7 @@ def get_google_credentials() -> Tuple[Any, str]:
             creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=GDRIVE_SCOPES)
             return creds, "OK"
         except Exception as e:
-            return None, f"Ошибка парсинга секретов Google: {e}"
+            return None, f"Ошибка парсинга секретов: {e}"
             
     creds_file = Path("credentials.json")
     if creds_file.exists():
@@ -149,33 +148,35 @@ def get_google_credentials() -> Tuple[Any, str]:
             creds = service_account.Credentials.from_service_account_file(str(creds_file), scopes=GDRIVE_SCOPES)
             return creds, "OK"
         except Exception as e:
-            return None, f"Ошибка чтения локального файла ключей: {e}"
+            return None, f"Ошибка чтения локального файла: {e}"
             
     return None, "Ключи доступа не найдены ни в Secrets, ни в файле."
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
+def _load_google_rules() -> List[List[Any]]:
+    """Загружает сырые данные из Google Таблиц. Не кэширует ошибки."""
     creds, status = get_google_credentials()
     if not creds:
-        return FALLBACK_CRITERIA_REGISTRY, status
+        raise ValueError(f"Нет доступа к ключам: {status}")
+        
+    sheets = build("sheets", "v4", credentials=creds)
+    result = sheets.spreadsheets().values().get(spreadsheetId=CRITERIA_SHEET_ID, range=CRITERIA_RANGE).execute()
+    rows = result.get('values', [])
+    
+    if not rows or len(rows) < 2:
+        raise ValueError("Таблица пуста или не найден лист Rules.")
+    return rows
 
+def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
     try:
-        sheets = build("sheets", "v4", credentials=creds)
-        result = sheets.spreadsheets().values().get(spreadsheetId=CRITERIA_SHEET_ID, range=CRITERIA_RANGE).execute()
-        rows = result.get('values', [])
-
-        if not rows or len(rows) < 2:
-            return FALLBACK_CRITERIA_REGISTRY, "Таблица пуста или не найден лист Rules."
-
+        rows = _load_google_rules()
         headers = [str(h).strip() for h in rows[0]]
-        try:
-            idx_code = headers.index("Код")
-            idx_title = headers.index("Критерий")
-            idx_group = headers.index("Группа метрик")
-            idx_weight = headers.index("Балл")
-        except ValueError as e:
-            return FALLBACK_CRITERIA_REGISTRY, f"В таблице не найден обязательный столбец: {e}"
-
+        
+        idx_code = headers.index("Код")
+        idx_title = headers.index("Критерий")
+        idx_group = headers.index("Группа метрик")
+        idx_weight = headers.index("Балл")
+        
         desc_cols = {h: i for i, h in enumerate(headers) if h.startswith("Обоснование_ОШИБКИ")}
         registry = {}
 
@@ -242,24 +243,18 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
     n = abs(int(number)) % 100
     n1 = n % 10
     if word_type in ["пациент", "клиент"]:
-        if 11 <= n <= 19:
-            return f"{word_type}ов"
-        if n1 == 1:
-            return word_type
-        if 2 <= n1 <= 4:
-            return f"{word_type}а"
+        if 11 <= n <= 19: return f"{word_type}ов"
+        if n1 == 1: return word_type
+        if 2 <= n1 <= 4: return f"{word_type}а"
         return f"{word_type}ов"
     return "обращений"
 
 def get_points_declension(number: int) -> str:
     n = abs(int(number)) % 100
     n1 = n % 10
-    if 11 <= n <= 19:
-        return "ключевых точек"
-    if n1 == 1:
-        return "ключевая точка"
-    if 2 <= n1 <= 4:
-        return "ключевые точки"
+    if 11 <= n <= 19: return "ключевых точек"
+    if n1 == 1: return "ключевая точка"
+    if 2 <= n1 <= 4: return "ключевые точки"
     return "ключевых точек"
 
 # ==========================================================
@@ -295,12 +290,9 @@ def calculate_client_potential(rating: float, score: float, lost_leads: int) -> 
     stars = min(5, max(1, stars))
     star_str = "⭐" * stars
     
-    if stars >= 4:
-        justification = "Горячий лид: " + ", ".join(reasons) + "."
-    elif stars == 3:
-        justification = "Средний потенциал: " + ", ".join(reasons) + "."
-    else:
-        justification = "Сомнительный клиент: " + ", ".join(reasons) + "."
+    if stars >= 4: justification = "Горячий лид: " + ", ".join(reasons) + "."
+    elif stars == 3: justification = "Средний потенциал: " + ", ".join(reasons) + "."
+    else: justification = "Сомнительный клиент: " + ", ".join(reasons) + "."
         
     return stars, star_str, justification
 
@@ -607,14 +599,21 @@ def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[st
         
         resp = model.generate_content(prompt)
         
-        # Безопасная очистка Markdown-разметки от ИИ
-        result_text = resp.text
-        result_text = result_text.replace("```json", "")
-        result_text = result_text.replace("```", "")
-        result_text = result_text.strip()
-        
-        ai_data = json.loads(result_text)
-        return ai_data
+        # Пуленепробиваемый парсер JSON ответа Gemini
+        result_text = resp.text.strip()
+        if result_text.startswith("```"):
+            result_text = re.sub(r"^```(?:json)?\n?", "", result_text)
+            result_text = re.sub(r"\n?```$", "", result_text).strip()
+            
+        try:
+            ai_data = json.loads(result_text)
+            return ai_data
+        except Exception:
+            match = re.search(r'\{.*\}', result_text, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+            return {"score": 0, "pain_point": ""}
+            
     except Exception as e:
         logger.log(f"Ошибка Gemini: {e}", "WARN")
         return {"score": 0, "pain_point": ""}
@@ -917,7 +916,7 @@ def app():
     with st.sidebar:
         st.header("⚙️ Настройки системы")
         if st.button("🔄 Синхронизировать критерии", use_container_width=True):
-            fetch_criteria_from_google.clear()
+            _load_google_rules.clear()
             st.rerun()
             
         st.caption(f"Загружено правил: {len(criteria_registry)}")
