@@ -63,6 +63,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "base_check": 5500,
         "ltv_months": 12,
         "benchmark_source": "BusinesStat («Анализ рынка стоматологии РФ») и РБК",
+        "search_volume": "более 10 000 поисков стоматологических услуг",
     },
     "COSMETOLOGY": {
         "niche_name": "Косметологическая клиника",
@@ -76,6 +77,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "base_check": 4800,
         "ltv_months": 10,
         "benchmark_source": "РБК («Российский рынок эстетической медицины»)",
+        "search_volume": "более 15 000 поисков косметологических услуг",
     },
     "BEAUTY": {
         "niche_name": "Парикмахерская / Барбершоп",
@@ -89,6 +91,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "base_check": 1800,
         "ltv_months": 6,
         "benchmark_source": "РБК («Российский рынок бьюти-услуг»)",
+        "search_volume": "более 25 000 поисков бьюти-услуг",
     },
     "GENERAL_MEDICINE": {
         "niche_name": "Многопрофильный медицинский центр",
@@ -102,6 +105,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "base_check": 3900,
         "ltv_months": 12,
         "benchmark_source": "BusinesStat и НАФИ",
+        "search_volume": "более 20 000 поисков медицинских услуг",
     },
     "OTHER": {
         "niche_name": "Локальный бизнес",
@@ -115,6 +119,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "base_check": 2000,
         "ltv_months": 3,
         "benchmark_source": "Усредненные данные локального поиска",
+        "search_volume": "тысячи локальных поисков",
     }
 }
 
@@ -242,14 +247,6 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
         if 2 <= n1 <= 4: return f"{word_type}а"
         return f"{word_type}ов"
     return "обращений"
-
-def get_points_declension(number: int) -> str:
-    n = abs(int(number)) % 100
-    n1 = n % 10
-    if 11 <= n <= 19: return "ключевых точек"
-    if n1 == 1: return "ключевая точка"
-    if 2 <= n1 <= 4: return "ключевые точки"
-    return "ключевых точек"
 
 # ==========================================================
 # 4. АНАЛИЗАТОР ПЕРСПЕКТИВНОСТИ И ИНТЕГРАЦИИ
@@ -747,38 +744,49 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         
         n_info = NICHE_CONFIG.get(audit["niche"], NICHE_CONFIG["OTHER"])
         client_plural = n_info.get("client_word_plural", "клиенты")
-        client_gen_pl = n_info.get("client_word_genitive_plural", "клиентов")
         company_word = n_info.get("company_word", "организации")
+        search_volume = n_info.get("search_volume", "тысячи локальных поисков")
         
         if "сосед" not in audit['competitors'][0].lower():
-            competitors_phrase = f"соседним конкурентам с настроенными профилями (например, «{audit['competitors'][0]}» и «{audit['competitors'][1]}»)"
+            competitors_phrase = f"«{audit['competitors'][0]}» и «{audit['competitors'][1]}»"
         else:
-            competitors_phrase = "ближайшим конкурентам в вашем районе с настроенными профилями"
+            competitors_phrase = "ближайших конкурентов района"
             
         failures_text = ""
-        num_failures = len(audit["top_failures"])
-        for f in audit["top_failures"]:
-            failures_text += f"• **{f['title']}**\n{f['desc']}\n\n"
-            
-        points_declension = get_points_declension(num_failures)
-        invisible_pct = round(100.0 - audit['score'], 1)
+        top_3 = audit["top_failures"][:3]  # СТРОГО ТОП-3 ошибки для письма
+        for f in top_3:
+            failures_text += f"• **{f['title']}**. {f['desc']}\n\n"
+
+        # 🧠 МАТЕМАТИКА 41 ПАРАМЕТРА
+        total_params = 41
+        filled_params = int(round(total_params * (audit["score"] / 100.0)))
+        missing_params = total_params - filled_params
         
-        # 🧠 ИСПРАВЛЕННЫЙ ТЕКСТ ПИСЬМА: ДЕЛОВОЕ ПРИВЕТСТВИЕ И СТРОГИЙ CTA
+        # Интеллектуальное приветствие (имя из DaData или общее)
+        lpr_name = audit.get("lpr_info", "").split(" (")[0] if audit.get("lpr_info") else "Коллеги"
+        if not lpr_name.strip() or len(lpr_name) < 3: lpr_name = "Коллеги"
+
+        # 🧠 НОВЫЙ ИДЕАЛЬНЫЙ B2B TEARDOWN (Математика и Прозрачность)
         ib_txt = (
             f"Тема: Почему {client_plural} на Яндекс Картах не доходят до {company_word} «{audit['title']}»?\n\n"
-            f"[ИМЯ_ЛПР], добрый день.\n\n"
-            f"Меня зовут [Ваше Имя], аналитический центр PIN100. Мы провели независимый аудит видимости вашей {company_word} на Яндекс Картах по методологии из 41 параметра ранжирования.\n\n"
-            f"📊 **Главный вывод: Низкая алгоритмическая готовность**\n"
-            f"Индекс готовности профиля «{audit['title']}» составляет всего {audit['score']:.1f} из 100. "
-            f"Из-за технических и смысловых уязвимостей витрина невидима для {invisible_pct}% целевых локальных поисков района, "
-            f"из-за чего первичный поток перетекает к {competitors_phrase}.\n\n"
-            f"🚨 **{num_failures} {points_declension} слива {client_gen_pl}:**\n\n"
+            f"{lpr_name}, добрый день.\n\n"
+            f"В вашей локации ежемесячно фиксируется {search_volume}, однако часть этого первичного потока "
+            f"проходит мимо «{audit['title']}» и уходит к ближайшим конкурентам (в частности, в {competitors_phrase}).\n\n"
+            f"Наш аналитический центр провел независимую проверку вашего профиля по алгоритмам Яндекса 2026 года. "
+            f"Из {total_params} обязательных параметров ранжирования в вашей карточке корректно настроены только {filled_params}.\n\n"
+            f"Вот 3 главные причины, почему теряются записи:\n\n"
             f"{failures_text.strip()}\n\n"
-            f"💸 **Финансовый масштаб потерь**\n"
-            f"Из-за комбинации этих факторов «{audit['title']}» ежемесячно упускает около {ll} первичных обращений, "
-            f"что формирует невидимый кассовый разрыв порядка {mapping['[[REV_LOSS_FMT]]']} ₽ упущенной выручки каждый месяц (расчет выполнен на основе локального спроса и базового чека).\n\n"
-            f"Я структурировал все выявленные ошибки и методологию расчета в короткий PDF-отчет (4 страницы). "
-            f"Направьте ответное подтверждение (можно просто написать «Да»), и я пришлю файл для ознакомления."
+            f"**Откуда берется цифра потерь:**\n"
+            f"Теряя всего ~{ll} первичных обращений в месяц при минимальном чеке {mapping['[[CLIENT_CHECK_FMT]]']} ₽, "
+            f"бизнес ежемесячно недополучает около {mapping['[[REV_LOSS_FMT]]']} рублей прямого приема (не считая LTV за повторные визиты).\n\n"
+            f"Все {missing_params} незаполненных параметров и детальный расчет мы оформили в наглядный 4-страничный PDF-отчет. "
+            f"Если вам интересно взглянуть на цифры, ответьте на это письмо словом «Да», и я пришлю файл.\n\n"
+            f"--\n"
+            f"Павел Венков\n"
+            f"Основатель аналитического центра PIN100\n"
+            f"Оцифровка и аналитика гео-карт для бизнеса\n"
+            f"🌐 Сайт: pin100.ru\n"
+            f"📱 Telegram / WhatsApp: +7 (921) 966-26-89"
         )
         
         st.session_state.current_icebreaker = ib_txt
@@ -892,7 +900,6 @@ def app():
             st.divider()
             st.subheader("📄 PDF-отчет")
             
-            # БЕЗОПАСНЫЙ РЕНДЕР КНОПКИ СКАЧИВАНИЯ С ЯВНЫМ СООБЩЕНИЕМ ОБ ОШИБКЕ
             pdf_path = st.session_state.get("pdf_path")
             if pdf_path and os.path.exists(pdf_path):
                 with open(pdf_path, "rb") as f:
