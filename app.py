@@ -537,9 +537,9 @@ def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[st
         {json.dumps(safe_data, ensure_ascii=False)}
         
         ПРАВИЛО ЯЗЫКА (СТРОГО):
-        - Не используй слова: "мастера", "лид-магнит", "кликабельность", "промо-блок".
+        - Не используй слова: "мастера", "лид-магнит", "кликабельность", "промо-блок", "целевое действие".
         - Используй B2B термины: "врачи и специалисты", "точка первого контакта", "ценообразование", "видимость".
-        - Не указывай клиенту, что делать (никакой дидактики и советов "опишите", "добавьте"). Просто констатируй проблему.
+        - Не указывай клиенту, что делать (никакой дидактики и советов "опишите", "добавьте"). Просто констатируй алгоритмическую проблему.
         - Не оскорбляй бизнес (не пиши "вызывает ощущение некомпетентности").
         
         Выдай ответ СТРОГО в формате JSON с ключами:
@@ -674,8 +674,11 @@ def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: Termin
         if PY_TYPST_AVAILABLE:
             typst.compile(str(temp_typ), output=str(out_path))
             return True
-        subprocess.run(["typst", "compile", str(temp_typ), str(out_path)], check=True)
+        subprocess.run(["typst", "compile", str(temp_typ), str(out_path)], check=True, capture_output=True)
         return True
+    except FileNotFoundError:
+        logger.log("Критическая ошибка: Компилятор Typst не установлен на сервере!", "ERROR")
+        return False
     except Exception as e:
         logger.log(f"Ошибка компиляции Typst: {e}", "ERROR")
         return False
@@ -718,7 +721,7 @@ def sync_to_google(audit: Dict, mapping: Dict, p_txt: Path, p_json: Path, logger
         logger.log("Данные синхронизированы с Google Таблицей.", "SUCCESS")
         return True
     except Exception as e:
-        logger.log(f"Ошибка записи в Google Sheets: {e}", "ERROR")
+        logger.log(f"Ошибка записи в Google Sheets (пропущено): {e}", "WARN")
         return False
 
 def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict):
@@ -743,10 +746,9 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         logger.log("Генерация B2B-письма Teardown...", "STEP")
         
         n_info = NICHE_CONFIG.get(audit["niche"], NICHE_CONFIG["OTHER"])
-        client_word = n_info["client_word"]
         client_plural = n_info.get("client_word_plural", "клиенты")
         client_gen_pl = n_info.get("client_word_genitive_plural", "клиентов")
-        company_word = n_info.get("company_word", "компании")
+        company_word = n_info.get("company_word", "организации")
         
         if "сосед" not in audit['competitors'][0].lower():
             competitors_phrase = f"соседним конкурентам с настроенными профилями (например, «{audit['competitors'][0]}» и «{audit['competitors'][1]}»)"
@@ -761,6 +763,7 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         points_declension = get_points_declension(num_failures)
         invisible_pct = round(100.0 - audit['score'], 1)
         
+        # 🧠 ИСПРАВЛЕННЫЙ ТЕКСТ ПИСЬМА: ДЕЛОВОЕ ПРИВЕТСТВИЕ И СТРОГИЙ CTA
         ib_txt = (
             f"Тема: Почему {client_plural} на Яндекс Картах не доходят до {company_word} «{audit['title']}»?\n\n"
             f"[ИМЯ_ЛПР], добрый день.\n\n"
@@ -794,17 +797,22 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         if tpl.exists():
             with open(tpl, "r", encoding="utf-8") as f: content = f.read()
             for k, v in mapping.items(): content = content.replace(k, str(v))
+            
             if compile_pdf(content, p_pdf, out_dir, logger):
                 st.session_state.pdf_path = str(p_pdf)
                 logger.log("PDF скомпилирован успешно.", "SUCCESS")
+            else:
+                st.session_state.pdf_path = None
+                logger.log("Сбой компиляции PDF-отчета.", "ERROR")
         else:
-            logger.log("Шаблон report_template.typ не найден!", "ERROR")
+            st.session_state.pdf_path = None
+            logger.log("Шаблон report_template.typ не найден в папке проекта!", "ERROR")
 
         sync_to_google(audit, mapping, p_txt, p_json, logger)
         logger.log("КОНВЕЙЕР УСПЕШНО ЗАВЕРШЕН!", "SUCCESS")
 
     except Exception as ex:
-        logger.log(f"Критическая ошибка: {ex}", "ERROR")
+        logger.log(f"Критическая ошибка конвейера: {ex}", "ERROR")
         send_telegram_error(str(ex), "Pipeline Run")
 
 def app():
@@ -883,9 +891,15 @@ def app():
             
             st.divider()
             st.subheader("📄 PDF-отчет")
-            if st.session_state.get("pdf_path"):
-                with open(st.session_state.pdf_path, "rb") as f:
-                    st.download_button("📥 Скачать PDF", f, Path(st.session_state.pdf_path).name, "application/pdf", type="primary", use_container_width=True)
+            
+            # БЕЗОПАСНЫЙ РЕНДЕР КНОПКИ СКАЧИВАНИЯ С ЯВНЫМ СООБЩЕНИЕМ ОБ ОШИБКЕ
+            pdf_path = st.session_state.get("pdf_path")
+            if pdf_path and os.path.exists(pdf_path):
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+                st.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
+            else:
+                st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован. Убедитесь, что файл `report_template.typ` существует в папке, или проверьте терминал на наличие ошибок Typst.")
             
             if st.session_state.get("db_saved"):
                 st.success("✅ Данные успешно сохранены в Google Таблицу!")
