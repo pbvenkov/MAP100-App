@@ -4,6 +4,7 @@ import math
 import os
 import re
 import subprocess
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -132,7 +133,7 @@ FALLBACK_CRITERIA_REGISTRY = {
     "PROF-11.3": {"title": "Цены у товаров и услуг", "group": "Базовое заполнение", "complexity": 1, "weight": 3.5, "descs": {"Обоснование_ОШИБКИ": "Слепой прайс отпугивает страхом скрытых накруток."}}
 }
 
-# 🛡️ АБСОЛЮТНО БЕЗОПАСНЫЙ RAW-ШАБЛОН TYPST (С защитой от проглатывания строк Python'ом)
+# 🛡️ АБСОЛЮТНО БЕЗОПАСНЫЙ RAW-ШАБЛОН TYPST
 DEFAULT_TYPST_TEMPLATE = r"""#set page(
   paper: "a4",
   margin: (x: 2cm, y: 2.5cm),
@@ -343,11 +344,11 @@ def escape_typst(text: Any) -> str:
     """Обезвреживает текст из Яндекса и ИИ для защиты компилятора Typst"""
     if text is None: return ""
     s = str(text)
-    s = s.replace("\\", "\\\\") # Защита слешей
-    s = s.replace("[", "\\[")   # Защита от открытых блоков     s = s.replace("]", "\\]")   # Защита от закрытых блоков
-    s = s.replace("#", "\\#")   # Защита от макросов
-    s = s.replace('"', '«')     # Защита от кавычек
-    s = s.replace('$', '\\$')   # Защита от математических блоков
+    s = s.replace("\\", "\\\\") 
+    s = s.replace("[", "\\[")        s = s.replace("]", "\\]")   
+    s = s.replace("#", "\\#")   
+    s = s.replace('"', '«')     
+    s = s.replace('$', '\\$')   
     return s
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
@@ -740,6 +741,30 @@ def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
     logger.log("Сырые данные успешно загружены.", "SUCCESS")
     return items[0]
 
+# ==========================================================
+# 🚀 НОВЫЙ АЛГОРИТМ: ПАКЕТНЫЙ ПОИСК РАЙОНА В YANDEX ЧЕРЕЗ APIFY
+# ==========================================================
+def fetch_apify_batch_search(query: str, max_items: int, logger: TerminalLogger) -> List[Dict[str, Any]]:
+    token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
+    actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
+    
+    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
+
+    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    logger.log(f"Отправка запроса в Apify: «{query}» (Лимит: {max_items} клиник)...", "STEP")
+    logger.log("⏳ Это может занять 1-3 минуты. Пожалуйста, подождите...", "INFO")
+    
+    search_url = f"https://yandex.ru/maps/search/{urllib.parse.quote(query)}"
+    payload = {"startUrls": [{"url": search_url}], "maxItems": max_items, "includeReviews": True}
+    
+    resp = requests.post(run_url, json=payload, timeout=310)
+    if resp.status_code not in [200, 201]: raise RuntimeError(f"Сбой Apify: {resp.text[:200]}")
+    
+    items = resp.json()
+    if not items: raise ValueError("Apify вернул пустой массив. Возможно, по вашему запросу ничего не найдено.")
+    logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
+    return items
+
 def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[str, Any]:
     api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key or not GEMINI_AVAILABLE: return {"score": 0, "pain_point": ""}
@@ -794,7 +819,6 @@ def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_regist
     org_id = str(data.get("org_id") or data.get("id") or "0000000000")
     rating = round(float(data.get("rating") or data.get("reviewsRating") or 5.0), 1)
     
-    # 🎯 Извлечение координат для Матрицы Зависти
     loc = data.get("location", {})
     lat = loc.get("lat") or data.get("latitude") or 0.0
     lon = loc.get("lng") or loc.get("lon") or data.get("longitude") or 0.0
@@ -834,7 +858,6 @@ def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_regist
 
     lpr_info = fetch_dadata_ceo(inn, logger) if inn else ""
 
-    # Высчитываем выручку сразу для таблицы
     dev = max(0.0, 100.0 - score)
     ll = int(round(n_def["benchmark_leads"] * (dev / 100.0)))
     rev_loss = ll * n_def["base_check"]
@@ -996,13 +1019,10 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
         for comp in audits:
             if lead['org_id'] == comp['org_id']: continue
             
-            # Считаем дистанцию
             dist = haversine(lead['lat'], lead['lon'], comp['lat'], comp['lon'])
             
-            # Конкурент должен быть в радиусе 2 км и иметь балл выше хотя бы на 15 пунктов
             if dist <= 2000 and comp['score'] > lead['score'] + 15:
                 contrast = comp['score'] - lead['score']
-                # Если у конкурента еще и рейтинг хуже, это джекпот (бьет по эго)
                 if comp['rating'] < lead['rating']:
                     contrast += 20 
                     
@@ -1011,7 +1031,6 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
                     best_comp = comp
                     best_comp_dist = dist
                     
-        # Формируем данные для вкладки Lead
         vuln = lead['top_failures'][0]['title'] if lead['top_failures'] else "Слабое заполнение"
         
         if best_comp:
@@ -1161,7 +1180,12 @@ def app():
             st.error(f"⚠️ Сбой таблицы:\n{sync_status}")
             
     st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
-    tab_json, tab_url, tab_batch = st.tabs(["📋 Одиночный аудит (JSON)", "🔗 Ссылка (Apify API)", "📂 Пакетный JSON (Матрица Зависти)"])
+    tab_json, tab_url, tab_batch, tab_apify_search = st.tabs([
+        "📋 Одиночный (JSON)", 
+        "🔗 Одиночный (Ссылка)", 
+        "📂 Пакетный (JSON)", 
+        "🌍 Парсинг района (Apify)"
+    ])
 
     with tab_json:
         col1, col2 = st.columns([1, 2])
@@ -1174,9 +1198,18 @@ def app():
         btn_url = st.button("🚀 Запустить краулинг и конвейер", type="primary", use_container_width=True)
 
     with tab_batch:
-        st.info("💡 Загрузите массив выгрузки Apify (от 10 до 200 клиник). Скрипт отскорит их все, найдет слабые звенья, подберет для каждого идеального лидера в радиусе 2 км и отправит готовые скрипты продаж в Google Таблицу (Вкладка 'Lead').")
+        st.info("💡 Загрузите готовый массив выгрузки (от 10 до 200 клиник). Скрипт отскорит их все, найдет слабые звенья и подберет идеального лидера в радиусе 2 км для записи видеоразбора.")
         batch_file = st.file_uploader("Массив .json из Apify:", type=["json"], key="batch_file")
         btn_batch = st.button("🔥 Запустить Predictive Matchmaking", type="primary", use_container_width=True)
+
+    with tab_apify_search:
+        st.info("💡 Задайте локацию и нишу. Скрипт сам запросит Apify собрать карточки, отскорит их, найдет лидеров и занесет готовые связки в Google Таблицу (Вкладка 'Lead').")
+        c1, c2 = st.columns(2)
+        search_city = c1.text_input("Город:", value="Санкт-Петербург")
+        search_district = c2.text_input("Район / Метро / Улица:", value="Васильевский остров")
+        search_niche = st.selectbox("Выберите нишу:", options=list(NICHE_CONFIG.keys()), format_func=lambda x: NICHE_CONFIG[x]["niche_name"])
+        search_max = st.slider("Лимит сбора карточек (чем больше, тем дольше парсинг):", 5, 100, 20)
+        btn_apify_search = st.button("🗺️ Запустить автоматический сбор и анализ", type="primary", use_container_width=True)
 
     st.subheader("🖥️ Терминал выполнения конвейера (Live Diagnostics)")
     logger = TerminalLogger(st.empty())
@@ -1196,13 +1229,23 @@ def app():
     if btn_batch:
         if batch_file:
             data = json.load(batch_file)
-            # Если Apify отдал список словарей, берем его напрямую.
             if isinstance(data, list):
                 process_batch(data, logger, criteria_registry)
             else:
                 logger.log("Файл не является массивом (ожидался список объектов).", "ERROR")
         else:
             logger.log("Загрузите файл с массивом.", "ERROR")
+
+    if btn_apify_search:
+        if not search_city.strip() or not search_district.strip():
+            logger.log("Укажите город и район для поиска.", "ERROR")
+        else:
+            query = f"{search_city} {search_district} {NICHE_CONFIG[search_niche]['niche_name']}"
+            try:
+                data = fetch_apify_batch_search(query, search_max, logger)
+                process_batch(data, logger, criteria_registry)
+            except Exception as e:
+                logger.log(str(e), "ERROR")
 
     if st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
         st.divider()
