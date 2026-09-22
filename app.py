@@ -469,14 +469,6 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
         return f"{word_type}ов"
     return "обращений"
 
-def get_points_declension(number: int) -> str:
-    n = abs(int(number)) % 100
-    n1 = n % 10
-    if 11 <= n <= 19: return "ключевых точек"
-    if n1 == 1: return "ключевая точка"
-    if 2 <= n1 <= 4: return "ключевые точки"
-    return "ключевых точек"
-
 # ==========================================================
 # 4. АНАЛИЗАТОР ПЕРСПЕКТИВНОСТИ И ИНТЕГРАЦИИ
 # ==========================================================
@@ -722,50 +714,26 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
 
     return round(total_score, 1), top_n, raw_scores
 
-def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
+# ==========================================================
+# 🚀 НОВЫЙ БЕЗОПАСНЫЙ СБОРЩИК (МАССОВО И ТОЧЕЧНО ПО ПРЯМЫМ ССЫЛКАМ)
+# ==========================================================
+def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, Any]]:
     token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
     actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
     
     if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
 
     run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
-    logger.log("Отправка URL в Apify Actor...", "STEP")
     
-    payload = {"startUrls": [{"url": target_url.strip()}], "maxItems": 1, "includeReviews": True}
-    resp = requests.post(run_url, json=payload, timeout=310)
-    if resp.status_code not in [200, 201]: raise RuntimeError(f"Сбой Apify: {resp.text[:200]}")
+    logger.log(f"Отправка {len(urls)} прямых ссылок в Apify...", "STEP")
+    logger.log("⏳ Парсер будет обрабатывать их последовательно. Ожидайте...", "INFO")
     
-    items = resp.json()
+    # Мы отдаем парсеру только чистые, прямые ссылки, которые он 100% умеет читать
+    start_urls = [{"url": u.strip()} for u in urls if u.strip()]
     
-    if isinstance(items, dict) and "error" in items:
-        error_msg = items["error"].get("message", str(items))
-        raise RuntimeError(f"Парсер Apify завершился с внутренней ошибкой: {error_msg}")
-        
-    if not items: raise ValueError("Apify вернул пустой массив данных.")
-    logger.log("Сырые данные успешно загружены.", "SUCCESS")
-    return items[0]
-
-# ==========================================================
-# 🚀 ИСПРАВЛЕННЫЙ АЛГОРИТМ ПАКЕТНОГО ПОИСКА В APIFY
-# ==========================================================
-def fetch_apify_batch_search(query: str, max_items: int, logger: TerminalLogger) -> List[Dict[str, Any]]:
-    token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
-    actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
-    
-    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
-
-    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
-    logger.log(f"Отправка запроса в Apify: «{query}» (Лимит: {max_items} клиник)...", "STEP")
-    logger.log("⏳ Это может занять 1-3 минуты. Пожалуйста, подождите...", "INFO")
-    
-    # 🎯 ЖЕЛЕЗОБЕТОННЫЙ ФОРМАТ ССЫЛКИ. Имитируем реальный поиск в браузере (пробелы = +)
-    query_encoded = urllib.parse.quote_plus(query)
-    search_url = f"https://yandex.ru/maps/?text={query_encoded}"
-    
-    # Строго передаем ссылку в startUrls, как этого требуют стандартные парсеры (например, compass)
     payload = {
-        "startUrls": [{"url": search_url}],
-        "maxItems": max_items,
+        "startUrls": start_urls,
+        "maxItems": len(start_urls),
         "includeReviews": True
     }
     
@@ -776,16 +744,40 @@ def fetch_apify_batch_search(query: str, max_items: int, logger: TerminalLogger)
     
     items = resp.json()
     
-    # Apify возвращает код 201, даже если внутри контейнера произошел сбой.
-    # Поэтому мы проверяем наличие объекта 'error' внутри полученного JSON.
     if isinstance(items, dict) and "error" in items:
         error_msg = items["error"].get("message", str(items))
         raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}")
         
     if not items: 
-        raise ValueError("Apify вернул пустой массив. По вашему запросу ничего не найдено.")
+        raise ValueError("Apify вернул пустой массив.")
         
     logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
+    return items
+
+def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> List[Dict[str, Any]]:
+    token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
+    actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
+    
+    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
+
+    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    logger.log(f"Тестируем поисковый запрос в Apify: «{query}»...", "STEP")
+    
+    payload = {
+        "searchStringsArray": [query],
+        "maxItems": max_items,
+        "includeReviews": True
+    }
+    
+    resp = requests.post(run_url, json=payload, timeout=310)
+    
+    if resp.status_code == 400 or (resp.status_code == 201 and isinstance(resp.json(), dict) and "error" in resp.json()):
+        raise RuntimeError("⚠️ ВНИМАНИЕ: Ваш текущий Actor в Apify не умеет обрабатывать поисковую выдачу. Он работает только с прямыми ссылками. Перейдите на вкладку «🔗 Парсинг по ссылкам» и вставьте прямые ссылки на клиники столбиком!")
+        
+    if resp.status_code not in [200, 201]: 
+        raise RuntimeError(f"Сбой Apify API: HTTP {resp.status_code}")
+    
+    items = resp.json()
     return items
 
 def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[str, Any]:
@@ -1200,12 +1192,27 @@ def app():
             st.error(f"⚠️ Сбой таблицы:\n{sync_status}")
             
     st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
-    tab_json, tab_url, tab_batch, tab_apify_search = st.tabs([
-        "📋 Одиночный (JSON)", 
-        "🔗 Одиночный (Ссылка)", 
-        "📂 Пакетный (JSON)", 
-        "🌍 Парсинг района (Apify)"
+    
+    # 🎯 НОВЫЙ ИНТЕРФЕЙС
+    tab_urls, tab_search, tab_json = st.tabs([
+        "🔗 Парсинг по ссылкам (Точечно / Массово)", 
+        "🌍 Поиск по району (Apify)",
+        "📂 Загрузка JSON (Резерв)"
     ])
+
+    with tab_urls:
+        st.info("💡 Вставьте одну или несколько **прямых ссылок** на Яндекс Карты (каждая с новой строки). Скрипт пройдется по всем!")
+        text_urls = st.text_area("Ссылки на карточки (например: [https://yandex.ru/maps/org/](https://yandex.ru/maps/org/)...):", height=150)
+        btn_urls = st.button("🚀 Запустить конвейер по ссылкам", type="primary", use_container_width=True)
+
+    with tab_search:
+        st.info("💡 Укажите город и нишу. Внимание: Ваш скрипт Apify может не поддерживать этот режим. В случае ошибки используйте парсинг по ссылкам.")
+        c1, c2 = st.columns(2)
+        search_city = c1.text_input("Город:", value="Санкт-Петербург")
+        search_district = c2.text_input("Район / Метро / Улица:", value="Васильевский остров")
+        search_niche = st.selectbox("Выберите нишу:", options=list(NICHE_CONFIG.keys()), format_func=lambda x: NICHE_CONFIG[x]["niche_name"])
+        search_max = st.slider("Лимит сбора карточек:", 5, 50, 10)
+        btn_apify_search = st.button("🗺️ Запустить автоматический поиск", type="primary", use_container_width=True)
 
     with tab_json:
         col1, col2 = st.columns([1, 2])
@@ -1213,59 +1220,43 @@ def app():
         txt = col2.text_area("Или код JSON:", height=100)
         btn_json = st.button("🚀 Запустить конвейер по JSON", type="primary", use_container_width=True)
 
-    with tab_url:
-        url = st.text_input("Ссылка на Яндекс Карты:")
-        btn_url = st.button("🚀 Запустить краулинг и конвейер", type="primary", use_container_width=True)
-
-    with tab_batch:
-        st.info("💡 Загрузите готовый массив выгрузки (от 10 до 200 клиник). Скрипт отскорит их все, найдет слабые звенья и подберет идеального лидера в радиусе 2 км для записи видеоразбора.")
-        batch_file = st.file_uploader("Массив .json из Apify:", type=["json"], key="batch_file")
-        btn_batch = st.button("🔥 Запустить Predictive Matchmaking", type="primary", use_container_width=True)
-
-    with tab_apify_search:
-        st.info("💡 Задайте локацию и нишу. Скрипт сам запросит Apify собрать карточки, отскорит их, найдет лидеров и занесет готовые связки в Google Таблицу (Вкладка 'Lead').")
-        c1, c2 = st.columns(2)
-        search_city = c1.text_input("Город:", value="Санкт-Петербург")
-        search_district = c2.text_input("Район / Метро / Улица:", value="Васильевский остров")
-        search_niche = st.selectbox("Выберите нишу:", options=list(NICHE_CONFIG.keys()), format_func=lambda x: NICHE_CONFIG[x]["niche_name"])
-        search_max = st.slider("Лимит сбора карточек (чем больше, тем дольше парсинг):", 5, 100, 20)
-        btn_apify_search = st.button("🗺️ Запустить автоматический сбор и анализ", type="primary", use_container_width=True)
-
     st.subheader("🖥️ Терминал выполнения конвейера (Live Diagnostics)")
     logger = TerminalLogger(st.empty())
 
-    if btn_json:
-        data = json.load(file) if file else (json.loads(txt) if txt.strip() else None)
-        if data: run_pipeline(data, logger, criteria_registry)
-        else: logger.log("Нет данных для анализа.", "ERROR")
-    
-    if btn_url and url.strip():
-        try:
-            data = fetch_apify_data(url, logger)
-            run_pipeline(data, logger, criteria_registry)
-        except Exception as e:
-            logger.log(str(e), "ERROR")
-
-    if btn_batch:
-        if batch_file:
-            data = json.load(batch_file)
-            if isinstance(data, list):
-                process_batch(data, logger, criteria_registry)
-            else:
-                logger.log("Файл не является массивом (ожидался список объектов).", "ERROR")
+    if btn_urls:
+        urls = [u.strip() for u in text_urls.split('\n') if u.strip()]
+        if not urls:
+            logger.log("Вы не вставили ни одной ссылки.", "ERROR")
         else:
-            logger.log("Загрузите файл с массивом.", "ERROR")
+            try:
+                data = fetch_apify_urls(urls, logger)
+                if len(urls) == 1:
+                    run_pipeline(data, logger, criteria_registry)
+                else:
+                    process_batch(data, logger, criteria_registry)
+            except Exception as e:
+                logger.log(str(e), "ERROR")
 
-    if btn_apify_search:
+    if btn_search:
         if not search_city.strip() or not search_district.strip():
             logger.log("Укажите город и район для поиска.", "ERROR")
         else:
             query = f"{search_city} {search_district} {NICHE_CONFIG[search_niche]['niche_name']}"
             try:
-                data = fetch_apify_batch_search(query, search_max, logger)
+                data = fetch_apify_search(query, search_max, logger)
                 process_batch(data, logger, criteria_registry)
             except Exception as e:
                 logger.log(str(e), "ERROR")
+
+    if btn_json:
+        data = json.load(file) if file else (json.loads(txt) if txt.strip() else None)
+        if data:
+            if isinstance(data, list) and len(data) > 1:
+                process_batch(data, logger, criteria_registry)
+            else:
+                run_pipeline(data, logger, criteria_registry)
+        else: 
+            logger.log("Нет данных для анализа.", "ERROR")
 
     if st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
         st.divider()
@@ -1309,13 +1300,9 @@ def app():
                 st.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
             else:
                 st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован.")
-                
                 if st.session_state.get("broken_typst"):
-                    st.warning("🔍 Отладочная информация: ниже приведен сгенерированный код, на котором сломался компилятор.")
                     with st.expander("Показать сломанный код шаблона"):
                         st.code(st.session_state.broken_typst, language="typst")
-                    
-                    st.download_button("📥 Скачать сломанный файл (.typ)", data=st.session_state.broken_typst, file_name="broken_template_debug.typ")
 
 if __name__ == "__main__":
     app()
