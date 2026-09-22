@@ -732,9 +732,6 @@ def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
     logger.log("Сырые данные успешно загружены.", "SUCCESS")
     return items[0]
 
-# ==========================================================
-# 🚀 ИСПРАВЛЕННЫЙ АЛГОРИТМ ПАКЕТНОГО ПОИСКА В APIFY
-# ==========================================================
 def fetch_apify_batch_search(query: str, max_items: int, logger: TerminalLogger) -> List[Dict[str, Any]]:
     token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
     actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
@@ -745,18 +742,15 @@ def fetch_apify_batch_search(query: str, max_items: int, logger: TerminalLogger)
     logger.log(f"Отправка запроса в Apify: «{query}» (Лимит: {max_items} клиник)...", "STEP")
     logger.log("⏳ Это может занять 1-3 минуты. Пожалуйста, подождите...", "INFO")
     
-    # 🎯 РЕШЕНИЕ: Передаем запрос как текст напрямую в параметры поиска парсера, 
-    # а не прячем его в URL. Это предотвращает падение алгоритма Apify.
     payload = {
-        "searchStrings": [query],           # Универсальный ключ для compass/yandex-maps-scraper
-        "searchStringsArray": [query],      # Альтернативный ключ для dtrvtoushk/yandex-maps-scraper
+        "searchStrings": [query],
+        "searchStringsArray": [query],
         "maxItems": max_items,
         "includeReviews": True
     }
     
     resp = requests.post(run_url, json=payload, timeout=310)
     
-    # Резервный механизм на случай, если конкретный парсер отклоняет текстовый поиск (HTTP 400)
     if resp.status_code == 400:
         logger.log("Парсер требует строгий URL. Пробуем резервный метод...", "WARN")
         search_url = f"https://yandex.ru/maps/search/{urllib.parse.quote(query)}/"
@@ -1239,3 +1233,69 @@ def app():
                 process_batch(data, logger, criteria_registry)
             else:
                 logger.log("Файл не является массивом (ожидался список объектов).", "ERROR")
+        else:
+            logger.log("Загрузите файл с массивом.", "ERROR")
+
+    if btn_apify_search:
+        if not search_city.strip() or not search_district.strip():
+            logger.log("Укажите город и район для поиска.", "ERROR")
+        else:
+            query = f"{search_city} {search_district} {NICHE_CONFIG[search_niche]['niche_name']}"
+            try:
+                data = fetch_apify_batch_search(query, search_max, logger)
+                process_batch(data, logger, criteria_registry)
+            except Exception as e:
+                logger.log(str(e), "ERROR")
+
+    if st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
+        st.divider()
+        c1, c2 = st.columns([1.1, 0.9])
+        map_d = st.session_state.current_mapping
+        aud = st.session_state.current_audit
+
+        with c1:
+            st.subheader("✉️ Письмо для Аутрича (Teardown)")
+            if aud.get("lpr_info"):
+                st.success(f"👤 **Найден ЛПР:** {aud['lpr_info']}")
+            else:
+                st.info("👤 ЛПР не найден (ИНН отсутствует или не зарегистрирован в базе)")
+                
+            st.text_area("Текст для рассылки:", value=st.session_state.current_icebreaker, height=500)
+
+        with c2:
+            st.subheader("🎯 Квалификация лида (PIN100)")
+            st.markdown(f"**Оценка:** {aud.get('client_stars_str', '')}\n\n**Обоснование:** {aud.get('client_justification', '')}")
+            st.divider()
+            
+            st.subheader(f"📊 Экономика потерь «{aud['title']}»")
+            m1, m2 = st.columns(2)
+            m1.metric("Балл", f"{map_d['[[SCORE]]']} / 100")
+            m2.metric("Потери", f"~{map_d['[[LOST_LEADS]]']} чел/мес")
+            m3, m4 = st.columns(2)
+            m3.metric("Упущенная выручка", f"{map_d['[[REV_LOSS_FMT]]']} ₽/мес")
+            
+            if aud.get("ai_score"):
+                 m4.metric("🧠 ИИ-Скоринг (Вероятность)", f"{aud['ai_score']}%")
+            else:
+                 m4.metric("Потери за неделю", f"~{map_d['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
+            
+            st.divider()
+            st.subheader("📄 PDF-отчет")
+            
+            pdf_path = st.session_state.get("pdf_path")
+            if pdf_path and os.path.exists(pdf_path):
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+                st.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
+            else:
+                st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован.")
+                
+                if st.session_state.get("broken_typst"):
+                    st.warning("🔍 Отладочная информация: ниже приведен сгенерированный код, на котором сломался компилятор.")
+                    with st.expander("Показать сломанный код шаблона"):
+                        st.code(st.session_state.broken_typst, language="typst")
+                    
+                    st.download_button("📥 Скачать сломанный файл (.typ)", data=st.session_state.broken_typst, file_name="broken_template_debug.typ")
+
+if __name__ == "__main__":
+    app()
