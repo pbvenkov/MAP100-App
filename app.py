@@ -340,12 +340,10 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 # УТИЛИТА ЭКРАНИРОВАНИЯ ТЕКСТА
 # ==========================================
 def escape_typst(text: Any) -> str:
-    """Защита от склеивания строк при копировании: все замены идут одной цепочкой!"""
     if text is None: return ""
     return str(text).replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]").replace("#", "\\#").replace('"', '«').replace('$', '\\$')
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
-    """Вычисляет расстояние между двумя GPS-координатами в метрах"""
     R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
@@ -744,8 +742,14 @@ def fetch_apify_batch_search(query: str, max_items: int, logger: TerminalLogger)
     logger.log(f"Отправка запроса в Apify: «{query}» (Лимит: {max_items} клиник)...", "STEP")
     logger.log("⏳ Это может занять 1-3 минуты. Пожалуйста, подождите...", "INFO")
     
-    search_url = f"https://yandex.ru/maps/search/{urllib.parse.quote(query)}"
-    payload = {"startUrls": [{"url": search_url}], "maxItems": max_items, "includeReviews": True}
+    # 🎯 ИСПРАВЛЕННЫЙ УНИВЕРСАЛЬНЫЙ ФОРМАТ ССЫЛКИ ДЛЯ ЯНДЕКС КАРТ
+    search_url = f"https://yandex.ru/maps/?text={urllib.parse.quote(query)}"
+    
+    payload = {
+        "startUrls": [{"url": search_url}], 
+        "maxItems": max_items, 
+        "includeReviews": True
+    }
     
     resp = requests.post(run_url, json=payload, timeout=310)
     if resp.status_code not in [200, 201]: raise RuntimeError(f"Сбой Apify: {resp.text[:200]}")
