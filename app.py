@@ -1,5 +1,6 @@
 import datetime
 import json
+import math
 import os
 import re
 import subprocess
@@ -40,7 +41,7 @@ try:
 except ImportError:
     GEMINI_AVAILABLE = False
 
-st.set_page_config(page_title="PIN100 Analytics", page_icon="📍", layout="wide")
+st.set_page_config(page_title="PIN100 Analytics | Envy Matrix", page_icon="📍", layout="wide")
 
 # ==========================================================
 # 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКИ
@@ -49,6 +50,7 @@ st.set_page_config(page_title="PIN100 Analytics", page_icon="📍", layout="wide
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
+CRM_SHEET_RANGE = "Lead!A:N" # 🎯 Вкладка Lead в таблице Клиенты PiN 100
 
 NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
     "DENTISTRY": {
@@ -342,12 +344,20 @@ def escape_typst(text: Any) -> str:
     if text is None: return ""
     s = str(text)
     s = s.replace("\\", "\\\\") # Защита слешей
-    s = s.replace("[", "\\[")   # Защита от открытых блоков
-    s = s.replace("]", "\\]")   # Защита от закрытых блоков
+    s = s.replace("[", "\\[")   # Защита от открытых блоков     s = s.replace("]", "\\]")   # Защита от закрытых блоков
     s = s.replace("#", "\\#")   # Защита от макросов
     s = s.replace('"', '«')     # Защита от кавычек
     s = s.replace('$', '\\$')   # Защита от математических блоков
     return s
+
+def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
+    """Вычисляет расстояние между двумя GPS-координатами в метрах"""
+    R = 6371000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    return int(2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
 
 # ==========================================
 # 2. УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE
@@ -467,14 +477,6 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
         return f"{word_type}ов"
     return "обращений"
 
-def get_points_declension(number: int) -> str:
-    n = abs(int(number)) % 100
-    n1 = n % 10
-    if 11 <= n <= 19: return "ключевых точек"
-    if n1 == 1: return "ключевая точка"
-    if 2 <= n1 <= 4: return "ключевые точки"
-    return "ключевых точек"
-
 # ==========================================================
 # 4. АНАЛИЗАТОР ПЕРСПЕКТИВНОСТИ И ИНТЕГРАЦИИ
 # ==========================================================
@@ -550,7 +552,6 @@ def fetch_dadata_ceo(inn: str, logger: TerminalLogger) -> str:
 # ==========================================================
 
 def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_registry: Dict, niche: str) -> Tuple[float, List[Dict[str, Any]], Dict[str, float]]:
-    logger.log(f"Запуск оценки по {len(criteria_registry)} правилам из таблицы...", "STEP")
     raw_scores = {}
     
     reviews = data.get("reviews") or []
@@ -743,7 +744,6 @@ def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[st
     api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key or not GEMINI_AVAILABLE: return {"score": 0, "pain_point": ""}
         
-    logger.log("🧠 Запрос к Gemini для поиска главной боли...", "STEP")
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-3.8-flash')
@@ -784,7 +784,6 @@ def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[st
             return json.loads(match.group(0)) if match else {"score": 0, "pain_point": ""}
             
     except Exception as e:
-        logger.log(f"Ошибка Gemini: {e}", "WARN")
         return {"score": 0, "pain_point": ""}
 
 def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_registry: Dict) -> Dict[str, Any]:
@@ -794,8 +793,11 @@ def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_regist
     title = data.get("title") or data.get("name") or "Организация"
     org_id = str(data.get("org_id") or data.get("id") or "0000000000")
     rating = round(float(data.get("rating") or data.get("reviewsRating") or 5.0), 1)
-
-    logger.log(f"Найдена карточка: «{title}» (Рейтинг: {rating})", "INFO")
+    
+    # 🎯 Извлечение координат для Матрицы Зависти
+    loc = data.get("location", {})
+    lat = loc.get("lat") or data.get("latitude") or 0.0
+    lon = loc.get("lng") or loc.get("lon") or data.get("longitude") or 0.0
 
     niche = "OTHER"
     low_txt = (str(title) + " " + str(data.get("categories", ""))).lower()
@@ -832,13 +834,20 @@ def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_regist
 
     lpr_info = fetch_dadata_ceo(inn, logger) if inn else ""
 
+    # Высчитываем выручку сразу для таблицы
+    dev = max(0.0, 100.0 - score)
+    ll = int(round(n_def["benchmark_leads"] * (dev / 100.0)))
+    rev_loss = ll * n_def["base_check"]
+
     return {
         "title": title, "org_id": org_id, "rating": rating, "score": score, "niche": niche,
+        "lat": lat, "lon": lon,
         "competitors": comps, "canonical_url": data.get("url", ""),
         "benchmark_leads": n_def["benchmark_leads"], "base_check": n_def["base_check"], 
         "ltv_months": n_def["ltv_months"], "benchmark_source": n_def["benchmark_source"],
         "top_failures": top_fails, "date": datetime.date.today().strftime("%d.%m.%Y"),
-        "criteria_scores": raw_scores, "raw_data_ref": data, "lpr_info": lpr_info
+        "criteria_scores": raw_scores, "raw_data_ref": data, "lpr_info": lpr_info,
+        "rev_loss": rev_loss
     }
 
 def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, str]:
@@ -912,7 +921,7 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
         "[[FAIL_3_DESC]]": failures[2]["desc"] if len(failures) > 2 else "Требуется открытие цен.", 
         "[[FAIL_3_COLOR]]": fail_colors[2], "[[FAIL_3_BG]]": fail_bgs[2],
         "[[WEEKLY_LOSS_FMT]]": f"{int(weekly_loss):,}".replace(",", " "),
-        "[[RISK_REVERSAL]]": "Отчет ни к чему вас не обязывает. Вы можете передать его своему маркетологу как готовое ТЗ."
+        "[[RISK_REVERSAL]]": "Я готов бесплатно записать для вас 3-минутный видеоразбор. В нем я открою Яндекс Карты и прямо на экране покажу, как именно конкуренты перехватывают ваши поисковые запросы."
     }
 
 def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: TerminalLogger) -> bool:
@@ -939,44 +948,105 @@ def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: Termin
     finally:
         if temp_typ.exists(): temp_typ.unlink()
 
-def sync_to_google(audit: Dict, mapping: Dict, p_txt: Path, p_json: Path, logger: TerminalLogger) -> bool:
+def sync_batch_to_google(rows: List[List[Any]], logger: TerminalLogger) -> bool:
     creds, status = get_google_credentials()
     if not creds: return False
-        
     try:
         sheets = build("sheets", "v4", credentials=creds)
         sheet_id = st.secrets.get("GOOGLE_SHEET_ID") or os.getenv("GOOGLE_SHEET_ID", "").strip()
         if not sheet_id: return False
 
-        audit_id = f"{audit['org_id']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        formatted_org_id = f"{audit['org_id']} | {audit.get('client_stars_str', '')} | {audit.get('client_justification', '')}"
-
-        row_main = [
-            audit_id, mapping["[[DATE]]"], datetime.datetime.now().strftime("%H:%M:%S"), 
-            audit["title"], formatted_org_id, audit["canonical_url"], audit["niche"], 
-            audit["rating"], mapping["[[SCORE]]"], mapping["[[LOST_LEADS]]"], mapping["[[REV_LOSS_FMT]]"], 
-            "", audit.get("lpr_info", ""), "", "", audit.get("ai_score", ""), audit.get("ai_pain_point", "")
-        ]
-
-        scores_dict = audit.get("criteria_scores", {})
-        sorted_codes = sorted(scores_dict.keys())
-        row_scores = [audit_id, audit["title"]] + [str(scores_dict[code]) for code in sorted_codes]
-
-        with open(p_txt, "r", encoding="utf-8") as f: letter_text = f.read()
-        with open(p_json, "r", encoding="utf-8") as f: json_text = f.read()
-        if len(json_text) > 49000: json_text = json_text[:49000] + "\n\n... [JSON ОБРЕЗАН]"
-
-        row_raw = [audit_id, audit["title"], letter_text, json_text]
-
-        sheets.spreadsheets().values().append(spreadsheetId=sheet_id, range="Main!A:Q", valueInputOption="USER_ENTERED", body={"values": [row_main]}).execute()
-        sheets.spreadsheets().values().append(spreadsheetId=sheet_id, range="Scores!A:AQ", valueInputOption="USER_ENTERED", body={"values": [row_scores]}).execute()
-        sheets.spreadsheets().values().append(spreadsheetId=sheet_id, range="RawData!A:D", valueInputOption="USER_ENTERED", body={"values": [row_raw]}).execute()
+        sheets.spreadsheets().values().append(
+            spreadsheetId=sheet_id, 
+            range=CRM_SHEET_RANGE, 
+            valueInputOption="USER_ENTERED", 
+            body={"values": rows}
+        ).execute()
         
-        logger.log("Данные синхронизированы с Google Таблицей.", "SUCCESS")
+        logger.log(f"Успешно выгружено {len(rows)} строк во вкладку Lead.", "SUCCESS")
         return True
     except Exception as e:
-        logger.log(f"Ошибка записи в Google Sheets (пропущено): {e}", "WARN")
+        logger.log(f"Ошибка выгрузки матрицы в Google Sheets: {e}", "WARN")
         return False
+
+# ==========================================================
+# 🎯 PREDICTIVE MATCHMAKING ALGORITHM
+# ==========================================================
+def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: Dict):
+    logger.log(f"Начата пакетная обработка {len(items)} локаций...", "STEP")
+    audits = []
+    for idx, raw_item in enumerate(items):
+        try:
+            audit = process_company_data([raw_item], logger, criteria_registry)
+            audits.append(audit)
+        except Exception as e:
+            logger.log(f"Сбой парсинга локации #{idx+1}: {e}", "WARN")
+            
+    logger.log(f"Аудит завершен. Ищем идеальных раздражителей...", "STEP")
+    
+    rows_to_export = []
+    
+    for lead in audits:
+        if lead['score'] >= 85: continue # Пропускаем лидеров, они нам не клиенты
+        
+        best_comp = None
+        best_comp_dist = float('inf')
+        max_contrast = -1
+        
+        for comp in audits:
+            if lead['org_id'] == comp['org_id']: continue
+            
+            # Считаем дистанцию
+            dist = haversine(lead['lat'], lead['lon'], comp['lat'], comp['lon'])
+            
+            # Конкурент должен быть в радиусе 2 км и иметь балл выше хотя бы на 15 пунктов
+            if dist <= 2000 and comp['score'] > lead['score'] + 15:
+                contrast = comp['score'] - lead['score']
+                # Если у конкурента еще и рейтинг хуже, это джекпот (бьет по эго)
+                if comp['rating'] < lead['rating']:
+                    contrast += 20 
+                    
+                if contrast > max_contrast:
+                    max_contrast = contrast
+                    best_comp = comp
+                    best_comp_dist = dist
+                    
+        # Формируем данные для вкладки Lead
+        vuln = lead['top_failures'][0]['title'] if lead['top_failures'] else "Слабое заполнение"
+        
+        if best_comp:
+            comp_name = best_comp['title']
+            dist_str = f"{best_comp_dist} метров"
+            comp_adv = f"Балл алгоритма {best_comp['score']} из 100"
+            scenario = f"Сравниваем с «{comp_name}» ({dist_str}). Покажи экран: Яндекс дает им {best_comp['score']} баллов, а нашему клиенту {lead['score']}. Главная боль: {vuln}."
+        else:
+            comp_name = "Нет сильного соседа рядом"
+            dist_str = "-"
+            comp_adv = "-"
+            scenario = f"Соседей-лидеров в радиусе 2 км нет. Дави на то, что локация свободна и можно легко забрать весь трафик, исправив '{vuln}'."
+
+        row = [
+            lead['title'], 
+            lead['canonical_url'], 
+            f"{lead['lat']}, {lead['lon']}",
+            lead['lpr_info'],
+            f"{lead['score']:.1f}",
+            lead['rev_loss'],
+            vuln,
+            comp_name,
+            dist_str,
+            comp_adv,
+            scenario,
+            "Новый",
+            "Записать видеоразбор",
+            datetime.date.today().strftime("%d.%m.%Y")
+        ]
+        rows_to_export.append(row)
+        
+    sync_batch_to_google(rows_to_export, logger)
+    logger.log("Пакетный конвейер завершен! Матрица зависти сформирована.", "SUCCESS")
+    st.session_state.batch_done = True
+    st.balloons()
 
 def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict):
     try:
@@ -1073,9 +1143,6 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             st.session_state.pdf_path = None
             logger.log("Сбой компиляции PDF-отчета.", "ERROR")
 
-        sync_to_google(audit, mapping, p_txt, p_json, logger)
-        logger.log("КОНВЕЙЕР УСПЕШНО ЗАВЕРШЕН!", "SUCCESS")
-
     except Exception as ex:
         logger.log(f"Критическая ошибка конвейера: {ex}", "ERROR")
         send_telegram_error(str(ex), "Pipeline Run")
@@ -1094,17 +1161,22 @@ def app():
             st.error(f"⚠️ Сбой таблицы:\n{sync_status}")
             
     st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
-    tab_json, tab_url = st.tabs(["📋 Загрузить JSON", "🔗 Ссылка (Apify API)"])
+    tab_json, tab_url, tab_batch = st.tabs(["📋 Одиночный аудит (JSON)", "🔗 Ссылка (Apify API)", "📂 Пакетный JSON (Матрица Зависти)"])
 
     with tab_json:
         col1, col2 = st.columns([1, 2])
-        file = col1.file_uploader("Файл .json из Apify:", type=["json"])
+        file = col1.file_uploader("Файл .json из Apify:", type=["json"], key="single_file")
         txt = col2.text_area("Или код JSON:", height=100)
         btn_json = st.button("🚀 Запустить конвейер по JSON", type="primary", use_container_width=True)
 
     with tab_url:
         url = st.text_input("Ссылка на Яндекс Карты:")
         btn_url = st.button("🚀 Запустить краулинг и конвейер", type="primary", use_container_width=True)
+
+    with tab_batch:
+        st.info("💡 Загрузите массив выгрузки Apify (от 10 до 200 клиник). Скрипт отскорит их все, найдет слабые звенья, подберет для каждого идеального лидера в радиусе 2 км и отправит готовые скрипты продаж в Google Таблицу (Вкладка 'Lead').")
+        batch_file = st.file_uploader("Массив .json из Apify:", type=["json"], key="batch_file")
+        btn_batch = st.button("🔥 Запустить Predictive Matchmaking", type="primary", use_container_width=True)
 
     st.subheader("🖥️ Терминал выполнения конвейера (Live Diagnostics)")
     logger = TerminalLogger(st.empty())
@@ -1121,6 +1193,17 @@ def app():
         except Exception as e:
             logger.log(str(e), "ERROR")
 
+    if btn_batch:
+        if batch_file:
+            data = json.load(batch_file)
+            # Если Apify отдал список словарей, берем его напрямую.
+            if isinstance(data, list):
+                process_batch(data, logger, criteria_registry)
+            else:
+                logger.log("Файл не является массивом (ожидался список объектов).", "ERROR")
+        else:
+            logger.log("Загрузите файл с массивом.", "ERROR")
+
     if st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
         st.divider()
         c1, c2 = st.columns([1.1, 0.9])
@@ -1129,7 +1212,6 @@ def app():
 
         with c1:
             st.subheader("✉️ Письмо для Аутрича (Teardown)")
-            
             if aud.get("lpr_info"):
                 st.success(f"👤 **Найден ЛПР:** {aud['lpr_info']}")
             else:
@@ -1163,17 +1245,7 @@ def app():
                     pdf_bytes = f.read()
                 st.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
             else:
-                st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован. В терминале выше указана ошибка компилятора Typst.")
-                
-                if st.session_state.get("broken_typst"):
-                    st.warning("🔍 Отладочная информация: ниже приведен сгенерированный код, на котором сломался компилятор. Скопируйте его и пришлите сюда:")
-                    with st.expander("Показать сломанный код шаблона"):
-                        st.code(st.session_state.broken_typst, language="typst")
-                    
-                    st.download_button("📥 Скачать сломанный файл (.typ)", data=st.session_state.broken_typst, file_name="broken_template_debug.typ")
-            
-            if st.session_state.get("db_saved"):
-                st.success("✅ Данные успешно сохранены в Google Таблицу!")
+                st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован.")
 
 if __name__ == "__main__":
     app()
