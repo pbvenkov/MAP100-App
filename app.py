@@ -1267,4 +1267,93 @@ def app():
 
     with tab_json:
         col1, col2 = st.columns([1, 2])
-        file = col1.file_uploader("Файл .json из Apify:", type=["json"],
+        file = col1.file_uploader("Файл .json из Apify:", type=["json"], key="single_file")
+        txt = col2.text_area("Или код JSON:", height=100)
+        btn_json = st.button("🚀 Запустить конвейер по JSON", type="primary", use_container_width=True)
+
+    st.subheader("🖥️ Терминал выполнения конвейера (Live Diagnostics)")
+    logger = TerminalLogger(st.empty())
+
+    if btn_urls:
+        urls = [u.strip() for u in text_urls.split('\n') if u.strip()]
+        if not urls:
+            logger.log("Вы не вставили ни одной ссылки.", "ERROR")
+        else:
+            try:
+                data = fetch_apify_urls(urls, logger)
+                if len(urls) == 1:
+                    run_pipeline(data, logger, criteria_registry)
+                else:
+                    process_batch(data, logger, criteria_registry)
+            except Exception as e:
+                logger.log(str(e), "ERROR")
+
+    if btn_apify_search:
+        if not search_city.strip() or not search_district.strip():
+            logger.log("Укажите город и район для поиска.", "ERROR")
+        else:
+            query = f"{search_city} {search_district} {NICHE_CONFIG[search_niche]['niche_name']}"
+            try:
+                data = fetch_apify_search(query, search_max, logger)
+                process_batch(data, logger, criteria_registry)
+            except Exception as e:
+                logger.log(str(e), "ERROR")
+
+    if btn_json:
+        data = json.load(file) if file else (json.loads(txt) if txt.strip() else None)
+        if data:
+            if isinstance(data, list) and len(data) > 1:
+                process_batch(data, logger, criteria_registry)
+            else:
+                run_pipeline(data, logger, criteria_registry)
+        else: 
+            logger.log("Нет данных для анализа.", "ERROR")
+
+    if st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
+        st.divider()
+        c1, c2 = st.columns([1.1, 0.9])
+        map_d = st.session_state.current_mapping
+        aud = st.session_state.current_audit
+
+        with c1:
+            st.subheader("✉️ Письмо для Аутрича (Teardown)")
+            if aud.get("lpr_info"):
+                st.success(f"👤 **Найден ЛПР:** {aud['lpr_info']}")
+            else:
+                st.info("👤 ЛПР не найден (ИНН отсутствует или не зарегистрирован в базе)")
+                
+            st.text_area("Текст для рассылки:", value=st.session_state.current_icebreaker, height=500)
+
+        with c2:
+            st.subheader("🎯 Квалификация лида (PIN100)")
+            st.markdown(f"**Оценка:** {aud.get('client_stars_str', '')}\n\n**Обоснование:** {aud.get('client_justification', '')}")
+            st.divider()
+            
+            st.subheader(f"📊 Экономика потерь «{aud['title']}»")
+            m1, m2 = st.columns(2)
+            m1.metric("Балл", f"{map_d['[[SCORE]]']} / 100")
+            m2.metric("Потери", f"~{map_d['[[LOST_LEADS]]']} чел/мес")
+            m3, m4 = st.columns(2)
+            m3.metric("Упущенная выручка", f"{map_d['[[REV_LOSS_FMT]]']} ₽/мес")
+            
+            if aud.get("ai_score"):
+                 m4.metric("🧠 ИИ-Скоринг (Вероятность)", f"{aud['ai_score']}%")
+            else:
+                 m4.metric("Потери за неделю", f"~{map_d['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
+            
+            st.divider()
+            st.subheader("📄 PDF-отчет")
+            
+            pdf_path = st.session_state.get("pdf_path")
+            if pdf_path and os.path.exists(pdf_path):
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+                st.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
+            else:
+                st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован.")
+                if st.session_state.get("broken_typst"):
+                    with st.expander("Показать сломанный код шаблона"):
+                        st.code(st.session_state.broken_typst, language="typst")
+
+if __name__ == "__main__":
+    app()
