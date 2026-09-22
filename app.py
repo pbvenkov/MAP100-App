@@ -1237,7 +1237,7 @@ def app():
             except Exception as e:
                 logger.log(str(e), "ERROR")
 
-    if btn_search:
+    if btn_apify_search:
         if not search_city.strip() or not search_district.strip():
             logger.log("Укажите город и район для поиска.", "ERROR")
         else:
