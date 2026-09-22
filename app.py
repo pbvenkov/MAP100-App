@@ -763,21 +763,27 @@ def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> Li
     run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
     logger.log(f"Тестируем поисковый запрос в Apify: «{query}»...", "STEP")
     
+    # Строгий URL формат для поисковых запросов в парсер
+    query_encoded = urllib.parse.quote_plus(query)
+    search_url = f"https://yandex.ru/maps/?text={query_encoded}"
+    
     payload = {
-        "searchStringsArray": [query],
+        "startUrls": [{"url": search_url}],
         "maxItems": max_items,
         "includeReviews": True
     }
     
     resp = requests.post(run_url, json=payload, timeout=310)
     
-    if resp.status_code == 400 or (resp.status_code == 201 and isinstance(resp.json(), dict) and "error" in resp.json()):
-        raise RuntimeError("⚠️ ВНИМАНИЕ: Ваш текущий Actor в Apify не умеет обрабатывать поисковую выдачу. Он работает только с прямыми ссылками. Перейдите на вкладку «🔗 Парсинг по ссылкам» и вставьте прямые ссылки на клиники столбиком!")
-        
     if resp.status_code not in [200, 201]: 
         raise RuntimeError(f"Сбой Apify API: HTTP {resp.status_code}")
     
     items = resp.json()
+    
+    if isinstance(items, dict) and "error" in items:
+        error_msg = items["error"].get("message", str(items))
+        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего Actor не поддерживает поисковые ссылки, используйте вкладку 'Точечно по ссылкам'.")
+        
     return items
 
 def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[str, Any]:
@@ -1004,7 +1010,7 @@ def sync_batch_to_google(rows: List[List[Any]], logger: TerminalLogger) -> bool:
         logger.log(f"Успешно выгружено {len(rows)} строк во вкладку Lead.", "SUCCESS")
         return True
     except Exception as e:
-        logger.log(f"Ошибка выгрузки матрицы в Google Sheets: {e}", "WARN")
+        logger.log(f"Ошибка выгрузки в Google Sheets: {e}", "WARN")
         return False
 
 def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: Dict):
@@ -1173,6 +1179,26 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         else:
             st.session_state.pdf_path = None
             logger.log("Сбой компиляции PDF-отчета.", "ERROR")
+
+        # 🎯 СОХРАНЕНИЕ ОДИНОЧНОГО ЛИДА В GOOGLE ТАБЛИЦУ (Вкладка Lead)
+        vuln = audit['top_failures'][0]['title'] if audit['top_failures'] else "Слабое заполнение"
+        single_row = [
+            audit['title'], 
+            audit['canonical_url'], 
+            f"{audit['lat']}, {audit['lon']}",
+            audit.get('lpr_info', ''),
+            f"{audit['score']:.1f}",
+            audit.get('rev_loss', 0),
+            vuln,
+            "Одиночный аудит (без конкурента)", 
+            "-", 
+            "-", 
+            "Взят в работу точечно. Дави на ошибку: " + vuln,
+            "Новый",
+            "Связаться / Отправить Teardown",
+            datetime.date.today().strftime("%d.%m.%Y")
+        ]
+        sync_batch_to_google([single_row], logger)
 
     except Exception as ex:
         logger.log(f"Критическая ошибка конвейера: {ex}", "ERROR")
