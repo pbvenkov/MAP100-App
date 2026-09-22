@@ -51,7 +51,7 @@ st.set_page_config(page_title="PIN100 Analytics | Envy Matrix", page_icon="📍"
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
-CRM_SHEET_RANGE = "Lead!A:N" # 🎯 Вкладка Lead в таблице Клиенты PiN 100
+CRM_SHEET_RANGE = "Lead!A:N"
 
 NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
     "DENTISTRY": {
@@ -133,7 +133,6 @@ FALLBACK_CRITERIA_REGISTRY = {
     "PROF-11.3": {"title": "Цены у товаров и услуг", "group": "Базовое заполнение", "complexity": 1, "weight": 3.5, "descs": {"Обоснование_ОШИБКИ": "Слепой прайс отпугивает страхом скрытых накруток."}}
 }
 
-# 🛡️ АБСОЛЮТНО БЕЗОПАСНЫЙ RAW-ШАБЛОН TYPST
 DEFAULT_TYPST_TEMPLATE = r"""#set page(
   paper: "a4",
   margin: (x: 2cm, y: 2.5cm),
@@ -341,18 +340,16 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 # УТИЛИТА ЭКРАНИРОВАНИЯ ТЕКСТА
 # ==========================================
 def escape_typst(text: Any) -> str:
-    """Обезвреживает текст из Яндекса и ИИ для защиты компилятора Typst"""
     if text is None: return ""
     s = str(text)
-    s = s.replace("\\", "\\\\") 
-    s = s.replace("[", "\\[")        s = s.replace("]", "\\]")   
-    s = s.replace("#", "\\#")   
-    s = s.replace('"', '«')     
-    s = s.replace('$', '\\$')   
+    s = s.replace("\\", "\\\\")
+    s = s.replace("[", "\\[")     s = s.replace("]", "\\]")
+    s = s.replace("#", "\\#")
+    s = s.replace('"', '«')
+    s = s.replace('$', '\\$')
     return s
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
-    """Вычисляет расстояние между двумя GPS-координатами в метрах"""
     R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
@@ -741,9 +738,6 @@ def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
     logger.log("Сырые данные успешно загружены.", "SUCCESS")
     return items[0]
 
-# ==========================================================
-# 🚀 НОВЫЙ АЛГОРИТМ: ПАКЕТНЫЙ ПОИСК РАЙОНА В YANDEX ЧЕРЕЗ APIFY
-# ==========================================================
 def fetch_apify_batch_search(query: str, max_items: int, logger: TerminalLogger) -> List[Dict[str, Any]]:
     token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
     actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
@@ -992,9 +986,6 @@ def sync_batch_to_google(rows: List[List[Any]], logger: TerminalLogger) -> bool:
         logger.log(f"Ошибка выгрузки матрицы в Google Sheets: {e}", "WARN")
         return False
 
-# ==========================================================
-# 🎯 PREDICTIVE MATCHMAKING ALGORITHM
-# ==========================================================
 def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: Dict):
     logger.log(f"Начата пакетная обработка {len(items)} локаций...", "STEP")
     audits = []
@@ -1010,7 +1001,7 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
     rows_to_export = []
     
     for lead in audits:
-        if lead['score'] >= 85: continue # Пропускаем лидеров, они нам не клиенты
+        if lead['score'] >= 85: continue 
         
         best_comp = None
         best_comp_dist = float('inf')
@@ -1289,6 +1280,13 @@ def app():
                 st.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
             else:
                 st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован.")
+                
+                if st.session_state.get("broken_typst"):
+                    st.warning("🔍 Отладочная информация: ниже приведен сгенерированный код, на котором сломался компилятор.")
+                    with st.expander("Показать сломанный код шаблона"):
+                        st.code(st.session_state.broken_typst, language="typst")
+                    
+                    st.download_button("📥 Скачать сломанный файл (.typ)", data=st.session_state.broken_typst, file_name="broken_template_debug.typ")
 
 if __name__ == "__main__":
     app()
