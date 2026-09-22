@@ -340,16 +340,12 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 # УТИЛИТА ЭКРАНИРОВАНИЯ ТЕКСТА
 # ==========================================
 def escape_typst(text: Any) -> str:
+    """Защита от склеивания строк при копировании: все замены идут одной цепочкой!"""
     if text is None: return ""
-    s = str(text)
-    s = s.replace("\\", "\\\\")
-    s = s.replace("[", "\\[")     s = s.replace("]", "\\]")
-    s = s.replace("#", "\\#")
-    s = s.replace('"', '«')
-    s = s.replace('$', '\\$')
-    return s
+    return str(text).replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]").replace("#", "\\#").replace('"', '«').replace('$', '\\$')
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
+    """Вычисляет расстояние между двумя GPS-координатами в метрах"""
     R = 6371000
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
