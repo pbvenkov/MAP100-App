@@ -725,42 +725,43 @@ def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, 
 
     run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
     
-    logger.log(f"Отправка {len(urls)} прямых ссылок в Apify...", "STEP")
+    plain_urls = [u.strip() for u in urls if u.strip()]
+    logger.log(f"Отправка {len(plain_urls)} прямых ссылок в Apify...", "STEP")
     logger.log("⏳ Парсер будет обрабатывать их последовательно. Ожидайте...", "INFO")
     
-    start_urls = [{"url": u.strip()} for u in urls if u.strip()]
-    
-    # 🎯 Убрали maxItems, чтобы парсер не падал при обработке одиночных ссылок,
-    # если внутри контейнера происходят дополнительные редиректы.
+    # 🎯 УНИВЕРСАЛЬНЫЙ PAYLOAD: Передаем парсеру все возможные форматы (и ссылки, и тексты), 
+    # чтобы он сам выбрал тот, который не вызывает ошибку, ПЛЮС обязательно передаем maxItems!
     payload = {
-        "startUrls": start_urls,
+        "startUrls": [{"url": u} for u in plain_urls],
+        "searchStrings": plain_urls,
+        "searchStringsArray": plain_urls,
+        "maxItems": len(plain_urls) + 5, # Запас на случай внутренних редиректов
         "includeReviews": True
     }
     
     resp = requests.post(run_url, json=payload, timeout=310)
     
-    # 🎯 Если Actor жестко отвергает прямые ссылки в startUrls (сбой HTTP 400),
-    # используем обходной путь: превращаем ссылку в поисковый URL Яндекса!
-    if resp.status_code == 400:
-        logger.log("Парсер отклонил формат startUrls. Включаю резервный режим обертывания в поиск...", "WARN")
-        fallback_urls = [{"url": f"https://yandex.ru/maps/?text={urllib.parse.quote_plus(u.strip())}"} for u in urls if u.strip()]
-        payload_fallback = {
-            "startUrls": fallback_urls,
-            "includeReviews": True
-        }
-        resp = requests.post(run_url, json=payload_fallback, timeout=310)
-    
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {}
+        
     if resp.status_code not in [200, 201]: 
-        raise RuntimeError(f"Сбой сервера Apify API: HTTP {resp.status_code} - {resp.text[:200]}")
+        error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
+        raise RuntimeError(f"Сбой сервера Apify API (HTTP {resp.status_code}): {error_msg}")
     
-    items = resp.json()
-    
-    if isinstance(items, dict) and "error" in items:
-        error_msg = items["error"].get("message", str(items))
+    if isinstance(resp_json, dict) and "error" in resp_json:
+        error_msg = resp_json["error"].get("message", str(resp_json))
         raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}")
         
-    if not items: 
+    if not resp_json: 
         raise ValueError("Apify вернул пустой массив.")
+        
+    # Парсеры Яндекса иногда возвращают пустые объекты-заглушки. Отфильтруем их.
+    items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
+    
+    if not items:
+        raise ValueError("Apify вернул пустой массив (нет данных о клиниках). Проверьте корректность ссылок.")
         
     logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
     return items
@@ -772,29 +773,41 @@ def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> Li
     if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
 
     run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
-    logger.log(f"Тестируем поисковый запрос в Apify: «{query}»...", "STEP")
+    logger.log(f"Отправка поискового запроса в Apify: «{query}» (Лимит: {max_items})...", "STEP")
+    logger.log("⏳ Это может занять 1-3 минуты. Пожалуйста, подождите...", "INFO")
     
-    # Строгий URL формат для поисковых запросов в парсер
     query_encoded = urllib.parse.quote_plus(query)
     search_url = f"https://yandex.ru/maps/?text={query_encoded}"
     
     payload = {
         "startUrls": [{"url": search_url}],
+        "searchStrings": [query],
+        "searchStringsArray": [query],
         "maxItems": max_items,
         "includeReviews": True
     }
     
     resp = requests.post(run_url, json=payload, timeout=310)
     
-    if resp.status_code not in [200, 201]: 
-        raise RuntimeError(f"Сбой Apify API: HTTP {resp.status_code}")
-    
-    items = resp.json()
-    
-    if isinstance(items, dict) and "error" in items:
-        error_msg = items["error"].get("message", str(items))
-        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего Actor не поддерживает поисковые ссылки, используйте вкладку 'Парсинг по ссылкам'.")
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {}
         
+    if resp.status_code not in [200, 201]: 
+        error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
+        raise RuntimeError(f"Сбой Apify API (HTTP {resp.status_code}): {error_msg}")
+    
+    if isinstance(resp_json, dict) and "error" in resp_json:
+        error_msg = resp_json["error"].get("message", str(resp_json))
+        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего ваш парсер не поддерживает поисковые ссылки, используйте вкладку 'Точечно по ссылкам'.")
+        
+    items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
+    
+    if not items:
+        raise ValueError("Apify вернул пустой массив. По вашему запросу ничего не найдено.")
+        
+    logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
     return items
 
 def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[str, Any]:
@@ -1021,7 +1034,7 @@ def sync_batch_to_google(rows: List[List[Any]], logger: TerminalLogger) -> bool:
         logger.log(f"Успешно выгружено {len(rows)} строк во вкладку Lead.", "SUCCESS")
         return True
     except Exception as e:
-        logger.log(f"Ошибка выгрузки в Google Sheets: {e}", "WARN")
+        logger.log(f"Ошибка выгрузки матрицы в Google Sheets: {e}", "WARN")
         return False
 
 def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: Dict):
@@ -1137,15 +1150,19 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         filled_params = int(round(total_params * (audit["score"] / 100.0)))
         missing_params = total_params - filled_params
         
-        # 🎯 ИСПРАВЛЕНИЕ: Автоматически форматируем "Фамилия Имя Отчество" в "Имя Отчество"
+        # 🎯 ИНТЕЛЛЕКТУАЛЬНАЯ ОБРАБОТКА ИМЕНИ ЛПР (Без фамилии)
         lpr_raw = audit.get("lpr_info", "")
         if lpr_raw:
+            # Отрезаем должность в скобках
             full_name = lpr_raw.split(" (")[0].strip()
             parts = full_name.split()
+            # Если есть Фамилия Имя Отчество
             if len(parts) >= 3:
                 lpr_name = f"{parts[1].capitalize()} {parts[2].capitalize()}"
+            # Если только Фамилия Имя
             elif len(parts) == 2:
                 lpr_name = parts[1].capitalize()
+            # Если только одно слово (вдруг просто Имя)
             else:
                 lpr_name = parts[0].capitalize()
         else:
@@ -1244,7 +1261,6 @@ def app():
             
     st.title("📍 PIN100 Analytics: Генератор аудитов гео-выдачи")
     
-    # 🎯 НОВЫЙ ИНТЕРФЕЙС
     tab_urls, tab_search, tab_json = st.tabs([
         "🔗 Парсинг по ссылкам (Точечно / Массово)", 
         "🌍 Поиск по району (Apify)",
