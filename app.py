@@ -469,6 +469,14 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
         return f"{word_type}ов"
     return "обращений"
 
+def get_points_declension(number: int) -> str:
+    n = abs(int(number)) % 100
+    n1 = n % 10
+    if 11 <= n <= 19: return "ключевых точек"
+    if n1 == 1: return "ключевая точка"
+    if 2 <= n1 <= 4: return "ключевые точки"
+    return "ключевых точек"
+
 # ==========================================================
 # 4. АНАЛИЗАТОР ПЕРСПЕКТИВНОСТИ И ИНТЕГРАЦИИ
 # ==========================================================
@@ -728,10 +736,18 @@ def fetch_apify_data(target_url: str, logger: TerminalLogger) -> Dict[str, Any]:
     if resp.status_code not in [200, 201]: raise RuntimeError(f"Сбой Apify: {resp.text[:200]}")
     
     items = resp.json()
+    
+    if isinstance(items, dict) and "error" in items:
+        error_msg = items["error"].get("message", str(items))
+        raise RuntimeError(f"Парсер Apify завершился с внутренней ошибкой: {error_msg}")
+        
     if not items: raise ValueError("Apify вернул пустой массив данных.")
     logger.log("Сырые данные успешно загружены.", "SUCCESS")
     return items[0]
 
+# ==========================================================
+# 🚀 ИСПРАВЛЕННЫЙ АЛГОРИТМ ПАКЕТНОГО ПОИСКА В APIFY
+# ==========================================================
 def fetch_apify_batch_search(query: str, max_items: int, logger: TerminalLogger) -> List[Dict[str, Any]]:
     token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
     actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
@@ -742,29 +758,33 @@ def fetch_apify_batch_search(query: str, max_items: int, logger: TerminalLogger)
     logger.log(f"Отправка запроса в Apify: «{query}» (Лимит: {max_items} клиник)...", "STEP")
     logger.log("⏳ Это может занять 1-3 минуты. Пожалуйста, подождите...", "INFO")
     
+    # 🎯 ЖЕЛЕЗОБЕТОННЫЙ ФОРМАТ ССЫЛКИ. Имитируем реальный поиск в браузере (пробелы = +)
+    query_encoded = urllib.parse.quote_plus(query)
+    search_url = f"https://yandex.ru/maps/?text={query_encoded}"
+    
+    # Строго передаем ссылку в startUrls, как этого требуют стандартные парсеры (например, compass)
     payload = {
-        "searchStrings": [query],
-        "searchStringsArray": [query],
+        "startUrls": [{"url": search_url}],
         "maxItems": max_items,
         "includeReviews": True
     }
     
     resp = requests.post(run_url, json=payload, timeout=310)
     
-    if resp.status_code == 400:
-        logger.log("Парсер требует строгий URL. Пробуем резервный метод...", "WARN")
-        search_url = f"https://yandex.ru/maps/search/{urllib.parse.quote(query)}/"
-        payload = {
-            "startUrls": [{"url": search_url}],
-            "maxItems": max_items,
-            "includeReviews": True
-        }
-        resp = requests.post(run_url, json=payload, timeout=310)
-        
-    if resp.status_code not in [200, 201]: raise RuntimeError(f"Сбой Apify: {resp.text[:200]}")
+    if resp.status_code not in [200, 201]: 
+        raise RuntimeError(f"Сбой сервера Apify API: HTTP {resp.status_code} - {resp.text[:200]}")
     
     items = resp.json()
-    if not items: raise ValueError("Apify вернул пустой массив. Возможно, по вашему запросу ничего не найдено.")
+    
+    # Apify возвращает код 201, даже если внутри контейнера произошел сбой.
+    # Поэтому мы проверяем наличие объекта 'error' внутри полученного JSON.
+    if isinstance(items, dict) and "error" in items:
+        error_msg = items["error"].get("message", str(items))
+        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}")
+        
+    if not items: 
+        raise ValueError("Apify вернул пустой массив. По вашему запросу ничего не найдено.")
+        
     logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
     return items
 
