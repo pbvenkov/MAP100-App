@@ -728,16 +728,27 @@ def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, 
     logger.log(f"Отправка {len(urls)} прямых ссылок в Apify...", "STEP")
     logger.log("⏳ Парсер будет обрабатывать их последовательно. Ожидайте...", "INFO")
     
-    # Мы отдаем парсеру только чистые, прямые ссылки, которые он 100% умеет читать
     start_urls = [{"url": u.strip()} for u in urls if u.strip()]
     
+    # 🎯 Убрали maxItems, чтобы парсер не падал при обработке одиночных ссылок,
+    # если внутри контейнера происходят дополнительные редиректы.
     payload = {
         "startUrls": start_urls,
-        "maxItems": len(start_urls),
         "includeReviews": True
     }
     
     resp = requests.post(run_url, json=payload, timeout=310)
+    
+    # 🎯 Если Actor жестко отвергает прямые ссылки в startUrls (сбой HTTP 400),
+    # используем обходной путь: превращаем ссылку в поисковый URL Яндекса!
+    if resp.status_code == 400:
+        logger.log("Парсер отклонил формат startUrls. Включаю резервный режим обертывания в поиск...", "WARN")
+        fallback_urls = [{"url": f"https://yandex.ru/maps/?text={urllib.parse.quote_plus(u.strip())}"} for u in urls if u.strip()]
+        payload_fallback = {
+            "startUrls": fallback_urls,
+            "includeReviews": True
+        }
+        resp = requests.post(run_url, json=payload_fallback, timeout=310)
     
     if resp.status_code not in [200, 201]: 
         raise RuntimeError(f"Сбой сервера Apify API: HTTP {resp.status_code} - {resp.text[:200]}")
@@ -782,7 +793,7 @@ def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> Li
     
     if isinstance(items, dict) and "error" in items:
         error_msg = items["error"].get("message", str(items))
-        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего Actor не поддерживает поисковые ссылки, используйте вкладку 'Точечно по ссылкам'.")
+        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего Actor не поддерживает поисковые ссылки, используйте вкладку 'Парсинг по ссылкам'.")
         
     return items
 
@@ -1126,8 +1137,22 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         filled_params = int(round(total_params * (audit["score"] / 100.0)))
         missing_params = total_params - filled_params
         
-        lpr_name = audit.get("lpr_info", "").split(" (")[0] if audit.get("lpr_info") else "Коллеги"
-        if not lpr_name.strip() or len(lpr_name) < 3: lpr_name = "Коллеги"
+        # 🎯 ИСПРАВЛЕНИЕ: Автоматически форматируем "Фамилия Имя Отчество" в "Имя Отчество"
+        lpr_raw = audit.get("lpr_info", "")
+        if lpr_raw:
+            full_name = lpr_raw.split(" (")[0].strip()
+            parts = full_name.split()
+            if len(parts) >= 3:
+                lpr_name = f"{parts[1].capitalize()} {parts[2].capitalize()}"
+            elif len(parts) == 2:
+                lpr_name = parts[1].capitalize()
+            else:
+                lpr_name = parts[0].capitalize()
+        else:
+            lpr_name = "Коллеги"
+            
+        if not lpr_name.strip() or len(lpr_name) < 2: 
+            lpr_name = "Коллеги"
 
         ib_txt = (
             f"Тема: Почему {client_plural} на Яндекс Картах не доходят до {company_word} «{audit['title']}»?\n\n"
@@ -1242,93 +1267,4 @@ def app():
 
     with tab_json:
         col1, col2 = st.columns([1, 2])
-        file = col1.file_uploader("Файл .json из Apify:", type=["json"], key="single_file")
-        txt = col2.text_area("Или код JSON:", height=100)
-        btn_json = st.button("🚀 Запустить конвейер по JSON", type="primary", use_container_width=True)
-
-    st.subheader("🖥️ Терминал выполнения конвейера (Live Diagnostics)")
-    logger = TerminalLogger(st.empty())
-
-    if btn_urls:
-        urls = [u.strip() for u in text_urls.split('\n') if u.strip()]
-        if not urls:
-            logger.log("Вы не вставили ни одной ссылки.", "ERROR")
-        else:
-            try:
-                data = fetch_apify_urls(urls, logger)
-                if len(urls) == 1:
-                    run_pipeline(data, logger, criteria_registry)
-                else:
-                    process_batch(data, logger, criteria_registry)
-            except Exception as e:
-                logger.log(str(e), "ERROR")
-
-    if btn_apify_search:
-        if not search_city.strip() or not search_district.strip():
-            logger.log("Укажите город и район для поиска.", "ERROR")
-        else:
-            query = f"{search_city} {search_district} {NICHE_CONFIG[search_niche]['niche_name']}"
-            try:
-                data = fetch_apify_search(query, search_max, logger)
-                process_batch(data, logger, criteria_registry)
-            except Exception as e:
-                logger.log(str(e), "ERROR")
-
-    if btn_json:
-        data = json.load(file) if file else (json.loads(txt) if txt.strip() else None)
-        if data:
-            if isinstance(data, list) and len(data) > 1:
-                process_batch(data, logger, criteria_registry)
-            else:
-                run_pipeline(data, logger, criteria_registry)
-        else: 
-            logger.log("Нет данных для анализа.", "ERROR")
-
-    if st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
-        st.divider()
-        c1, c2 = st.columns([1.1, 0.9])
-        map_d = st.session_state.current_mapping
-        aud = st.session_state.current_audit
-
-        with c1:
-            st.subheader("✉️ Письмо для Аутрича (Teardown)")
-            if aud.get("lpr_info"):
-                st.success(f"👤 **Найден ЛПР:** {aud['lpr_info']}")
-            else:
-                st.info("👤 ЛПР не найден (ИНН отсутствует или не зарегистрирован в базе)")
-                
-            st.text_area("Текст для рассылки:", value=st.session_state.current_icebreaker, height=500)
-
-        with c2:
-            st.subheader("🎯 Квалификация лида (PIN100)")
-            st.markdown(f"**Оценка:** {aud.get('client_stars_str', '')}\n\n**Обоснование:** {aud.get('client_justification', '')}")
-            st.divider()
-            
-            st.subheader(f"📊 Экономика потерь «{aud['title']}»")
-            m1, m2 = st.columns(2)
-            m1.metric("Балл", f"{map_d['[[SCORE]]']} / 100")
-            m2.metric("Потери", f"~{map_d['[[LOST_LEADS]]']} чел/мес")
-            m3, m4 = st.columns(2)
-            m3.metric("Упущенная выручка", f"{map_d['[[REV_LOSS_FMT]]']} ₽/мес")
-            
-            if aud.get("ai_score"):
-                 m4.metric("🧠 ИИ-Скоринг (Вероятность)", f"{aud['ai_score']}%")
-            else:
-                 m4.metric("Потери за неделю", f"~{map_d['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
-            
-            st.divider()
-            st.subheader("📄 PDF-отчет")
-            
-            pdf_path = st.session_state.get("pdf_path")
-            if pdf_path and os.path.exists(pdf_path):
-                with open(pdf_path, "rb") as f:
-                    pdf_bytes = f.read()
-                st.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
-            else:
-                st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован.")
-                if st.session_state.get("broken_typst"):
-                    with st.expander("Показать сломанный код шаблона"):
-                        st.code(st.session_state.broken_typst, language="typst")
-
-if __name__ == "__main__":
-    app()
+        file = col1.file_uploader("Файл .json из Apify:", type=["json"],
