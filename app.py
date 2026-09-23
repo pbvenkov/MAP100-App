@@ -715,7 +715,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     return round(total_score, 1), top_n, raw_scores
 
 # ==========================================================
-# 🚀 НОВЫЙ БЕЗОПАСНЫЙ СБОРЩИК (МАССОВО И ТОЧЕЧНО ПО ПРЯМЫМ ССЫЛКАМ)
+# 🚀 МИНИМАЛИСТИЧНЫЙ БРОНЕБОЙНЫЙ СБОРЩИК ПО ССЫЛКАМ
 # ==========================================================
 def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, Any]]:
     token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
@@ -726,17 +726,12 @@ def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, 
     run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
     
     plain_urls = [u.strip() for u in urls if u.strip()]
-    logger.log(f"Отправка {len(plain_urls)} прямых ссылок в Apify...", "STEP")
-    logger.log("⏳ Парсер будет обрабатывать их последовательно. Ожидайте...", "INFO")
+    logger.log(f"Отправка {len(plain_urls)} прямых ссылок в Apify (Базовый режим)...", "STEP")
     
-    # 🎯 УНИВЕРСАЛЬНЫЙ PAYLOAD: Передаем парсеру все возможные форматы (и ссылки, и тексты), 
-    # чтобы он сам выбрал тот, который не вызывает ошибку, ПЛЮС обязательно передаем maxItems!
+    # 🎯 Ультра-минимальный запрос: только массив startUrls без дополнительных параметров,
+    # которые могут конфликтовать со схемой конкретного Actor'a.
     payload = {
-        "startUrls": [{"url": u} for u in plain_urls],
-        "searchStrings": plain_urls,
-        "searchStringsArray": plain_urls,
-        "maxItems": len(plain_urls) + 5, # Запас на случай внутренних редиректов
-        "includeReviews": True
+        "startUrls": [{"url": u} for u in plain_urls]
     }
     
     resp = requests.post(run_url, json=payload, timeout=310)
@@ -754,14 +749,10 @@ def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, 
         error_msg = resp_json["error"].get("message", str(resp_json))
         raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}")
         
-    if not resp_json: 
-        raise ValueError("Apify вернул пустой массив.")
-        
-    # Парсеры Яндекса иногда возвращают пустые объекты-заглушки. Отфильтруем их.
     items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
     
     if not items:
-        raise ValueError("Apify вернул пустой массив (нет данных о клиниках). Проверьте корректность ссылок.")
+        raise ValueError("Apify вернул пустой массив. Возможно, парсер не смог загрузить эти ссылки.")
         
     logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
     return items
@@ -773,8 +764,7 @@ def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> Li
     if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
 
     run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
-    logger.log(f"Отправка поискового запроса в Apify: «{query}» (Лимит: {max_items})...", "STEP")
-    logger.log("⏳ Это может занять 1-3 минуты. Пожалуйста, подождите...", "INFO")
+    logger.log(f"Тестируем поисковый запрос в Apify: «{query}»...", "STEP")
     
     query_encoded = urllib.parse.quote_plus(query)
     search_url = f"https://yandex.ru/maps/?text={query_encoded}"
@@ -800,7 +790,7 @@ def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> Li
     
     if isinstance(resp_json, dict) and "error" in resp_json:
         error_msg = resp_json["error"].get("message", str(resp_json))
-        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего ваш парсер не поддерживает поисковые ссылки, используйте вкладку 'Точечно по ссылкам'.")
+        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего ваш парсер не поддерживает поисковые ссылки, используйте вкладку 'Парсинг по ссылкам'.")
         
     items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
     
@@ -1034,7 +1024,7 @@ def sync_batch_to_google(rows: List[List[Any]], logger: TerminalLogger) -> bool:
         logger.log(f"Успешно выгружено {len(rows)} строк во вкладку Lead.", "SUCCESS")
         return True
     except Exception as e:
-        logger.log(f"Ошибка выгрузки матрицы в Google Sheets: {e}", "WARN")
+        logger.log(f"Ошибка выгрузки в Google Sheets: {e}", "WARN")
         return False
 
 def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: Dict):
@@ -1150,19 +1140,14 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         filled_params = int(round(total_params * (audit["score"] / 100.0)))
         missing_params = total_params - filled_params
         
-        # 🎯 ИНТЕЛЛЕКТУАЛЬНАЯ ОБРАБОТКА ИМЕНИ ЛПР (Без фамилии)
         lpr_raw = audit.get("lpr_info", "")
         if lpr_raw:
-            # Отрезаем должность в скобках
             full_name = lpr_raw.split(" (")[0].strip()
             parts = full_name.split()
-            # Если есть Фамилия Имя Отчество
             if len(parts) >= 3:
                 lpr_name = f"{parts[1].capitalize()} {parts[2].capitalize()}"
-            # Если только Фамилия Имя
             elif len(parts) == 2:
                 lpr_name = parts[1].capitalize()
-            # Если только одно слово (вдруг просто Имя)
             else:
                 lpr_name = parts[0].capitalize()
         else:
@@ -1222,7 +1207,6 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             st.session_state.pdf_path = None
             logger.log("Сбой компиляции PDF-отчета.", "ERROR")
 
-        # 🎯 СОХРАНЕНИЕ ОДИНОЧНОГО ЛИДА В GOOGLE ТАБЛИЦУ (Вкладка Lead)
         vuln = audit['top_failures'][0]['title'] if audit['top_failures'] else "Слабое заполнение"
         single_row = [
             audit['title'], 
