@@ -45,7 +45,7 @@ except ImportError:
 st.set_page_config(page_title="PIN100 Analytics | Envy Matrix", page_icon="📍", layout="wide")
 
 # ==========================================================
-# 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКИ
+# 1. КОНФИГУРАЦИЯ СИСТЕМЫ, ШАБЛОНОВ И БЕНЧМАРКОВ
 # ==========================================================
 
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -350,6 +350,39 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
     dlambda = math.radians(lon2 - lon1)
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return int(2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
+
+# ==========================================
+# АВТОСОЗДАНИЕ ШАБЛОНОВ ПИСЕМ
+# ==========================================
+def ensure_templates_exist():
+    tpl_dir = Path("templates")
+    tpl_dir.mkdir(exist_ok=True)
+    default_path = tpl_dir / "email_default.txt"
+    if not default_path.exists():
+        default_path.write_text("""Тема: Почему [[CLIENT_PLURAL]] на Яндекс Картах не доходят до [[COMPANY_WORD]] «[[TITLE]]»?
+
+[[LPR_NAME]], добрый день.
+
+В вашей локации ежемесячно фиксируется [[SEARCH_VOLUME]], однако часть этого первичного потока проходит мимо «[[TITLE]]» и уходит к ближайшим конкурентам[[COMPETITORS_PHRASE]].
+
+Наш аналитический центр провел независимую проверку вашего профиля по алгоритмам Яндекса 2026 года. Алгоритм оценивает карточку по [[TOTAL_PARAMS]] факторам ранжирования. Ваш профиль выглядит неплохо ([[FILLED_PARAMS]] базовых настроек), но в нем пропущено несколько критических уязвимостей, из-за которых система урезает вам показы.
+
+Вот 3 главные причины, почему теряются записи:
+
+[[FAILURES_TEXT]]
+**Откуда берется цифра потерь:**
+Теряя всего ~[[LOST_LEADS]] первичных обращений в месяц (при минимальном чеке [[CLIENT_CHECK_FMT]] ₽), вы ежемесячно недополучаете [[REV_LOSS_FMT]] рублей прямого приема. С учетом LTV (повторных визитов) это скрытая потеря до [[LTV_LOSS_FMT]] рублей годового оборота, который просто перетекает вашим соседям.
+
+Детальный аудит и разбор всех [[MISSING_PARAMS]] незаполненных параметров мы оформили в наглядный 4-страничный PDF-отчет. Если вам интересно взглянуть на цифры, ответьте на это письмо словом «Да», и я пришлю файл.
+
+--
+Павел Венков
+Основатель аналитического центра PIN100
+Оцифровка и аналитика гео-карт для бизнеса
+🌐 Сайт: pin100.ru
+📱 Telegram / WhatsApp: +7 (921) 966-26-89""", encoding="utf-8")
+
+ensure_templates_exist()
 
 # ==========================================
 # 2. УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE
@@ -728,8 +761,6 @@ def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, 
     plain_urls = [u.strip() for u in urls if u.strip()]
     logger.log(f"Отправка {len(plain_urls)} прямых ссылок в Apify (Базовый режим)...", "STEP")
     
-    # 🎯 Ультра-минимальный запрос: только массив startUrls без дополнительных параметров,
-    # которые могут конфликтовать со схемой конкретного Actor'a.
     payload = {
         "startUrls": [{"url": u} for u in plain_urls]
     }
@@ -1024,7 +1055,7 @@ def sync_batch_to_google(rows: List[List[Any]], logger: TerminalLogger) -> bool:
         logger.log(f"Успешно выгружено {len(rows)} строк во вкладку Lead.", "SUCCESS")
         return True
     except Exception as e:
-        logger.log(f"Ошибка выгрузки в Google Sheets: {e}", "WARN")
+        logger.log(f"Ошибка выгрузки матрицы в Google Sheets: {e}", "WARN")
         return False
 
 def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: Dict):
@@ -1127,9 +1158,9 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         search_volume = n_info.get("search_volume", "тысячи локальных поисков")
         
         if "сосед" not in audit['competitors'][0].lower():
-            competitors_phrase = f"«{audit['competitors'][0]}» и «{audit['competitors'][1]}»"
+            competitors_phrase = f" (в частности, в «{audit['competitors'][0]}» и «{audit['competitors'][1]}»)"
         else:
-            competitors_phrase = "ближайших конкурентов района"
+            competitors_phrase = ""
             
         failures_text = ""
         top_3 = audit["top_failures"][:3]
@@ -1140,6 +1171,7 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         filled_params = int(round(total_params * (audit["score"] / 100.0)))
         missing_params = total_params - filled_params
         
+        # Интеллектуальный парсинг Имени-Отчества ЛПР
         lpr_raw = audit.get("lpr_info", "")
         if lpr_raw:
             full_name = lpr_raw.split(" (")[0].strip()
@@ -1156,28 +1188,30 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         if not lpr_name.strip() or len(lpr_name) < 2: 
             lpr_name = "Коллеги"
 
-        ib_txt = (
-            f"Тема: Почему {client_plural} на Яндекс Картах не доходят до {company_word} «{audit['title']}»?\n\n"
-            f"{lpr_name}, добрый день.\n\n"
-            f"В вашей локации ежемесячно фиксируется {search_volume}, однако часть этого первичного потока "
-            f"проходит мимо «{audit['title']}» и уходит к ближайшим конкурентам (в частности, в {competitors_phrase}).\n\n"
-            f"Наш аналитический центр провел независимую проверку вашего профиля по алгоритмам Яндекса 2026 года. "
-            f"Из {total_params} обязательных параметров ранжирования в вашей карточке корректно настроены только {filled_params}.\n\n"
-            f"Вот 3 главные причины, почему теряются записи:\n\n"
-            f"{failures_text.strip()}\n\n"
-            f"**Откуда берется цифра потерь:**\n"
-            f"Теряя всего ~{ll} первичных обращений в месяц при минимальном чеке {mapping['[[CLIENT_CHECK_FMT]]']} ₽, "
-            f"бизнес ежемесячно недополучает около {mapping['[[REV_LOSS_FMT]]']} рублей прямого приема (не считая LTV за повторные визиты).\n\n"
-            f"Все {missing_params} незаполненных параметров и детальный расчет мы оформили в наглядный 4-страничный PDF-отчет. "
-            f"Если вам интересно взглянуть на цифры, ответьте на это письмо словом «Да», и я пришлю файл.\n\n"
-            f"--\n"
-            f"Павел Венков\n"
-            f"Основатель аналитического центра PIN100\n"
-            f"Оцифровка и аналитика гео-карт для бизнеса\n"
-            f"🌐 Сайт: pin100.ru\n"
-            f"📱 Telegram / WhatsApp: +7 (921) 966-26-89"
-        )
-        
+        # 🎯 ЗАГРУЗКА ШАБЛОНА ИЗ ПАПКИ TEMPLATES
+        ensure_templates_exist()
+        niche_template_path = Path(f"templates/email_{audit['niche'].lower()}.txt")
+        if niche_template_path.exists():
+            raw_template = niche_template_path.read_text(encoding="utf-8")
+        else:
+            raw_template = Path("templates/email_default.txt").read_text(encoding="utf-8")
+
+        # Замена переменных-плейсхолдеров
+        ib_txt = raw_template.replace("[[CLIENT_PLURAL]]", client_plural) \
+                             .replace("[[COMPANY_WORD]]", company_word) \
+                             .replace("[[TITLE]]", audit['title']) \
+                             .replace("[[LPR_NAME]]", lpr_name) \
+                             .replace("[[SEARCH_VOLUME]]", search_volume) \
+                             .replace("[[COMPETITORS_PHRASE]]", competitors_phrase) \
+                             .replace("[[TOTAL_PARAMS]]", str(total_params)) \
+                             .replace("[[FILLED_PARAMS]]", str(filled_params)) \
+                             .replace("[[FAILURES_TEXT]]", failures_text.strip()) \
+                             .replace("[[LOST_LEADS]]", str(ll)) \
+                             .replace("[[CLIENT_CHECK_FMT]]", mapping.get('[[CLIENT_CHECK_FMT]]', '')) \
+                             .replace("[[REV_LOSS_FMT]]", mapping.get('[[REV_LOSS_FMT]]', '')) \
+                             .replace("[[LTV_LOSS_FMT]]", mapping.get('[[LTV_LOSS_FMT]]', '')) \
+                             .replace("[[MISSING_PARAMS]]", str(missing_params))
+
         st.session_state.current_icebreaker = ib_txt
 
         logger.log("Компиляция PDF-отчета...", "STEP")
@@ -1356,4 +1390,5 @@ def app():
                         st.code(st.session_state.broken_typst, language="typst")
 
 if __name__ == "__main__":
+    ensure_templates_exist()
     app()
