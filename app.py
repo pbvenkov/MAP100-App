@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import urllib.parse
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -32,7 +33,6 @@ except ImportError:
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
-    from googleapiclient.http import MediaFileUpload
     GOOGLE_LIBS_AVAILABLE = True
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
@@ -49,12 +49,9 @@ st.set_page_config(page_title="PIN100 Analytics | CRM Matrix", page_icon="📍",
 # 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКОВ
 # ==========================================================
 
-# 📌 Разделение строк для защиты от автоформатирования ссылок при копировании
+# 📌 Защита ссылок и отключение Google Drive (Используем только Таблицы)
 g_api = "www.googleapis.com"
-GDRIVE_SCOPES = [
-    f"https://{g_api}/auth/spreadsheets", 
-    f"https://{g_api}/auth/drive"
-]
+GDRIVE_SCOPES = [f"https://{g_api}/auth/spreadsheets"]
 
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
@@ -369,11 +366,9 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 
 def clean_and_expand_url(raw_url: str) -> str:
     """Очищает ссылку от скобок Markdown и раскрывает короткие ссылки Яндекса"""
-    # 1. Извлекаем чистую ссылку, если она была вставлена как [Текст](https://...)
     match = re.search(r'(https?://[^\s\]\)]+)', raw_url)
     clean_u = match.group(1) if match else raw_url.strip()
     
-    # 2. Если это короткая ссылка Яндекса, переходим по ней, чтобы получить полную
     if "yandex" in clean_u and "/-/" in clean_u:
         try:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -989,7 +984,7 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     }
 
 # ==========================================================
-# 6. УТИЛИТЫ, PDF И ЗАГРУЗКА НА DRIVE
+# 6. УТИЛИТЫ И PDF
 # ==========================================================
 
 def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: TerminalLogger) -> bool:
@@ -1015,38 +1010,6 @@ def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: Termin
         return False
     finally:
         if temp_typ.exists(): temp_typ.unlink()
-
-def upload_pdf_to_drive(pdf_path: Path, title: str, logger: TerminalLogger) -> str:
-    creds, status = get_google_credentials()
-    if not creds:
-        logger.log("Нет доступов Google для загрузки PDF на Диск.", "WARN")
-        return ""
-        
-    folder_id = st.secrets.get("GDRIVE_FOLDER_ID") or os.getenv("GDRIVE_FOLDER_ID", "").strip()
-    if not folder_id:
-        logger.log("Не указан GDRIVE_FOLDER_ID в секретах. Пропускаю загрузку.", "WARN")
-        return ""
-
-    try:
-        drive_service = build('drive', 'v3', credentials=creds)
-        file_metadata = {
-            'name': f"PIN100_Аудит_{title}.pdf",
-            'parents': [folder_id]
-        }
-        media = MediaFileUpload(str(pdf_path), mimetype='application/pdf', resumable=True)
-        
-        file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-        file_id = file.get('id')
-        
-        permission = {'type': 'anyone', 'role': 'reader'}
-        drive_service.permissions().create(fileId=file_id, body=permission).execute()
-        
-        link = file.get('webViewLink')
-        logger.log(f"PDF успешно загружен на Google Диск: {link}", "SUCCESS")
-        return link
-    except Exception as e:
-        logger.log(f"Ошибка загрузки PDF на Диск: {e}", "ERROR")
-        return ""
 
 def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger) -> Tuple[str, str, str]:
     n_info = NICHE_CONFIG.get(lead["niche"], NICHE_CONFIG["OTHER"])
@@ -1093,14 +1056,13 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
         else:
             content = content.replace(k, escape_typst(v))
             
-    pdf_link = ""
+    pdf_link = "Скачано из интерфейса PIN100"
     if compile_pdf(content, p_pdf, out_dir, logger):
-        logger.log(f"PDF для '{lead['title']}' скомпилирован успешно.", "SUCCESS")
-        pdf_link = upload_pdf_to_drive(p_pdf, lead['title'], logger)
+        logger.log(f"PDF для '{lead['title']}' скомпилирован успешно и доступен для скачивания.", "SUCCESS")
     else:
         logger.log(f"Сбой компиляции PDF для '{lead['title']}'.", "ERROR")
+        pdf_link = "Ошибка генерации"
 
-    # Безопасное формирование текста
     ib_txt = (raw_template.replace("[[CLIENT_PLURAL]]", client_plural)
                          .replace("[[COMPANY_WORD]]", company_word)
                          .replace("[[TITLE]]", lead['title'])
@@ -1115,7 +1077,7 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
                          .replace("[[REV_LOSS_FMT]]", mapping.get('[[REV_LOSS_FMT]]', ''))
                          .replace("[[LTV_LOSS_FMT]]", mapping.get('[[LTV_LOSS_FMT]]', ''))
                          .replace("[[MISSING_PARAMS]]", str(missing_params))
-                         .replace("[[PDF_LINK]]", pdf_link if pdf_link else "Ссылка генерируется..."))
+                         .replace("[[PDF_LINK]]", pdf_link))
                          
     return pdf_link, ib_txt, str(p_pdf)
 
@@ -1157,6 +1119,7 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
     logger.log(f"Аудит завершен. Генерируем PDF-отчеты и формируем CRM-матрицу...", "STEP")
     
     rows_to_export = []
+    pdf_paths = []
     
     for lead in audits:
         if lead['score'] >= 85: continue 
@@ -1190,7 +1153,10 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
             scenario = f"Соседей-лидеров в радиусе 2 км нет. Дави на то, что локация свободна и можно легко забрать весь трафик, исправив '{vuln}'."
 
         mapping = build_metrics(lead, criteria_registry)
-        pdf_link, ib_txt, _ = generate_lead_collaterals(lead, mapping, logger)
+        pdf_link, ib_txt, p_pdf = generate_lead_collaterals(lead, mapping, logger)
+        
+        if p_pdf and os.path.exists(p_pdf):
+            pdf_paths.append(p_pdf)
 
         row = [
             datetime.date.today().strftime("%d.%m.%Y"), 
@@ -1216,6 +1182,17 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
         rows_to_export.append(row)
         
     sync_batch_to_google(rows_to_export, logger)
+    
+    # Сборка ZIP архива
+    if pdf_paths:
+        logger.log("Упаковка всех отчетов в единый ZIP-архив...", "STEP")
+        zip_path = Path("output") / "PIN100_Batch_Reports.zip"
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file in pdf_paths:
+                zipf.write(file, Path(file).name)
+        st.session_state.batch_zip_path = str(zip_path)
+        logger.log("ZIP-архив успешно создан.", "SUCCESS")
+        
     logger.log("Пакетный конвейер завершен! Матрица для CRM сформирована.", "SUCCESS")
     st.session_state.batch_done = True
     st.balloons()
@@ -1277,99 +1254,8 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         send_telegram_error(str(ex), "Pipeline Run")
 
 # ==========================================================
-# 8. APIFY И ЗАПУСК STREAMLIT
+# 8. ЗАПУСК STREAMLIT
 # ==========================================================
-
-def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, Any]]:
-    token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
-    actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
-    
-    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
-
-    apify_host = "api.apify.com"
-    run_url = f"https://{apify_host}/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
-    
-    # 📌 Очистка от Markdown и раскрытие коротких ссылок
-    plain_urls = []
-    for u in urls:
-        if not u.strip(): continue
-        expanded = clean_and_expand_url(u)
-        plain_urls.append(expanded)
-        
-    logger.log(f"Отправка {len(plain_urls)} прямых ссылок в Apify (Базовый режим)...", "STEP")
-    
-    payload = {
-        "startUrls": [{"url": u} for u in plain_urls]
-    }
-    
-    resp = requests.post(run_url, json=payload, timeout=310)
-    
-    try:
-        resp_json = resp.json()
-    except Exception:
-        resp_json = {}
-        
-    if resp.status_code not in [200, 201]: 
-        error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
-        raise RuntimeError(f"Сбой сервера Apify API (HTTP {resp.status_code}): {error_msg}")
-    
-    if isinstance(resp_json, dict) and "error" in resp_json:
-        error_msg = resp_json["error"].get("message", str(resp_json))
-        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}")
-        
-    items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
-    
-    if not items:
-        raise ValueError("Apify вернул пустой массив. Возможно, парсер не смог загрузить эти ссылки.")
-        
-    logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
-    return items
-
-def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> List[Dict[str, Any]]:
-    token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
-    actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
-    
-    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
-
-    apify_host = "api.apify.com"
-    run_url = f"https://{apify_host}/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
-    
-    logger.log(f"Тестируем поисковый запрос в Apify: «{query}»...", "STEP")
-    
-    query_encoded = urllib.parse.quote_plus(query)
-    y_host = "yandex.ru"
-    search_url = f"https://{y_host}/maps/?text={query_encoded}"
-    
-    payload = {
-        "startUrls": [{"url": search_url}],
-        "searchStrings": [query],
-        "searchStringsArray": [query],
-        "maxItems": max_items,
-        "includeReviews": True
-    }
-    
-    resp = requests.post(run_url, json=payload, timeout=310)
-    
-    try:
-        resp_json = resp.json()
-    except Exception:
-        resp_json = {}
-        
-    if resp.status_code not in [200, 201]: 
-        error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
-        raise RuntimeError(f"Сбой Apify API (HTTP {resp.status_code}): {error_msg}")
-    
-    if isinstance(resp_json, dict) and "error" in resp_json:
-        error_msg = resp_json["error"].get("message", str(resp_json))
-        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего ваш парсер не поддерживает поисковые ссылки, используйте вкладку 'Парсинг по ссылкам'.")
-        
-    items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
-    
-    if not items:
-        raise ValueError("Apify вернул пустой массив. По вашему запросу ничего не найдено.")
-        
-    logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
-    return items
 
 def app():
     criteria_registry, sync_status = fetch_criteria_from_google()
@@ -1415,6 +1301,10 @@ def app():
     st.subheader("🖥️ Терминал выполнения конвейера (Live Diagnostics)")
     logger = TerminalLogger(st.empty())
 
+    if btn_urls or btn_apify_search or btn_json:
+        st.session_state.batch_done = False
+        st.session_state.batch_zip_path = None
+
     if btn_urls:
         urls = [u.strip() for u in text_urls.split('\n') if u.strip()]
         if not urls:
@@ -1450,7 +1340,8 @@ def app():
         else: 
             logger.log("Нет данных для анализа.", "ERROR")
 
-    if st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
+    # Отображение результатов одиночного аудита
+    if not st.session_state.get("batch_done") and st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
         st.divider()
         c1, c2 = st.columns([1.1, 0.9])
         map_d = st.session_state.current_mapping
@@ -1495,6 +1386,22 @@ def app():
                 if st.session_state.get("broken_typst"):
                     with st.expander("Показать сломанный код шаблона"):
                         st.code(st.session_state.broken_typst, language="typst")
+
+    # Отображение архива при массовом парсинге
+    if st.session_state.get("batch_done") and st.session_state.get("batch_zip_path"):
+        st.divider()
+        st.subheader("📦 Пакетная генерация завершена")
+        zip_path = st.session_state.get("batch_zip_path")
+        if os.path.exists(zip_path):
+            with open(zip_path, "rb") as f:
+                st.download_button(
+                    "📥 Скачать все PDF-отчеты одним архивом (ZIP)", 
+                    data=f.read(), 
+                    file_name=f"PIN100_Batch_Reports_{datetime.date.today().strftime('%d_%m_%Y')}.zip", 
+                    mime="application/zip", 
+                    type="primary", 
+                    use_container_width=True
+                )
 
 if __name__ == "__main__":
     ensure_templates_exist()
