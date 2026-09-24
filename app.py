@@ -134,7 +134,7 @@ FALLBACK_CRITERIA_REGISTRY = {
 }
 
 # ==========================================================
-# ПРЕМИАЛЬНЫЙ ШАБЛОН PDF С ДИНАМИЧЕСКИМ МАССИВОМ
+# ПРЕМИАЛЬНЫЙ ШАБЛОН PDF (С ФИКСОМ CONTEXT ДЛЯ ТИПСТА 0.11+)
 # ==========================================================
 DEFAULT_TYPST_TEMPLATE = r"""#set page(
   paper: "a4",
@@ -156,7 +156,7 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
     #grid(
       columns: (3fr, 1fr),
       align(left)[Сгенерировано аналитической платформой. Предназначено для внутреннего использования.],
-      align(right)[Стр. #counter(page).display()]
+      align(right)[Стр. #context counter(page).display()]
     )
   ]
 )
