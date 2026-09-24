@@ -42,16 +42,17 @@ try:
 except ImportError:
     GEMINI_AVAILABLE = False
 
-st.set_page_config(page_title="PIN100 Analytics | Envy Matrix", page_icon="📍", layout="wide")
+st.set_page_config(page_title="PIN100 Analytics | CRM Matrix", page_icon="📍", layout="wide")
 
 # ==========================================================
-# 1. КОНФИГУРАЦИЯ СИСТЕМЫ, ШАБЛОНОВ И БЕНЧМАРКОВ
+# 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКОВ
 # ==========================================================
 
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
-CRM_SHEET_RANGE = "Lead!A:N"
+# 📌 ИСПРАВЛЕНИЕ: Расширен диапазон CRM до 19 колонок (до столбца S)
+CRM_SHEET_RANGE = "Lead!A:S"
 
 NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
     "DENTISTRY": {
@@ -129,12 +130,11 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
 FALLBACK_CRITERIA_REGISTRY = {
     "CONV-48.1": {"title": "Онлайн-запись на приём", "group": "Конверсия", "complexity": 2, "weight": 6.0, "descs": {"Обоснование_ОШИБКИ": "Отсутствие прямой онлайн-записи отсекает до 60% вечернего спроса."}},
     "PROF-10.3": {"title": "Структура услуг в описании", "group": "Базовое заполнение", "complexity": 1, "weight": 4.0, "descs": {"Обоснование_ОШИБКИ": "В описании нет четкой структуры процедур."}},
-    "REP-27.1": {"title": "Базовый порог рейтинга (4.5+)", "group": "Репутация", "complexity": 4, "weight": 2.5, "descs": {"Обоснование_ОШИБКИ": "Рейтинг ниже 4.5 приводит к отсечению фильтрами."}},
-    "PROF-11.3": {"title": "Цены у товаров и услуг", "group": "Базовое заполнение", "complexity": 1, "weight": 3.5, "descs": {"Обоснование_ОШИБКИ": "Слепой прайс отпугивает страхом скрытых накруток."}}
+    "REP-27.1": {"title": "Базовый порог рейтинга (4.5+)", "group": "Репутация", "complexity": 4, "weight": 2.5, "descs": {"Обоснование_ОШИБКИ": "Рейтинг ниже 4.5 приводит к отсечению фильтрами."}}
 }
 
 # ==========================================================
-# ПРЕМИАЛЬНЫЙ ШАБЛОН PDF (С ФИКСОМ CONTEXT ДЛЯ ТИПСТА 0.11+)
+# ПРЕМИАЛЬНЫЙ ШАБЛОН PDF
 # ==========================================================
 DEFAULT_TYPST_TEMPLATE = r"""#set page(
   paper: "a4",
@@ -164,7 +164,6 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 #set text(font: ("Roboto", "Arial", "PT Sans", "Helvetica"), size: 11pt, lang: "ru")
 #set par(justify: true, leading: 0.65em)
 
-// Этот массив Python подставит сам (не трогаем!)
 #let gaps = (
   [[GAPS_ARRAY]]
 )
@@ -811,136 +810,6 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
 
     return round(total_score, 1), top_n, raw_scores
 
-# ==========================================================
-# 🚀 МИНИМАЛИСТИЧНЫЙ БРОНЕБОЙНЫЙ СБОРЩИК ПО ССЫЛКАМ
-# ==========================================================
-def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, Any]]:
-    token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
-    actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
-    
-    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
-
-    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
-    
-    plain_urls = [u.strip() for u in urls if u.strip()]
-    logger.log(f"Отправка {len(plain_urls)} прямых ссылок в Apify (Базовый режим)...", "STEP")
-    
-    payload = {
-        "startUrls": [{"url": u} for u in plain_urls]
-    }
-    
-    resp = requests.post(run_url, json=payload, timeout=310)
-    
-    try:
-        resp_json = resp.json()
-    except Exception:
-        resp_json = {}
-        
-    if resp.status_code not in [200, 201]: 
-        error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
-        raise RuntimeError(f"Сбой сервера Apify API (HTTP {resp.status_code}): {error_msg}")
-    
-    if isinstance(resp_json, dict) and "error" in resp_json:
-        error_msg = resp_json["error"].get("message", str(resp_json))
-        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}")
-        
-    items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
-    
-    if not items:
-        raise ValueError("Apify вернул пустой массив. Возможно, парсер не смог загрузить эти ссылки.")
-        
-    logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
-    return items
-
-def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> List[Dict[str, Any]]:
-    token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
-    actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
-    
-    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
-
-    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
-    logger.log(f"Тестируем поисковый запрос в Apify: «{query}»...", "STEP")
-    
-    query_encoded = urllib.parse.quote_plus(query)
-    search_url = f"https://yandex.ru/maps/?text={query_encoded}"
-    
-    payload = {
-        "startUrls": [{"url": search_url}],
-        "searchStrings": [query],
-        "searchStringsArray": [query],
-        "maxItems": max_items,
-        "includeReviews": True
-    }
-    
-    resp = requests.post(run_url, json=payload, timeout=310)
-    
-    try:
-        resp_json = resp.json()
-    except Exception:
-        resp_json = {}
-        
-    if resp.status_code not in [200, 201]: 
-        error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
-        raise RuntimeError(f"Сбой Apify API (HTTP {resp.status_code}): {error_msg}")
-    
-    if isinstance(resp_json, dict) and "error" in resp_json:
-        error_msg = resp_json["error"].get("message", str(resp_json))
-        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего ваш парсер не поддерживает поисковые ссылки, используйте вкладку 'Парсинг по ссылкам'.")
-        
-    items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
-    
-    if not items:
-        raise ValueError("Apify вернул пустой массив. По вашему запросу ничего не найдено.")
-        
-    logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
-    return items
-
-def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[str, Any]:
-    api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY", "").strip()
-    if not api_key or not GEMINI_AVAILABLE: return {"score": 0, "pain_point": ""}
-        
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-3.8-flash')
-        
-        safe_data = {
-            "title": data.get("title", ""),
-            "rating": data.get("rating", ""),
-            "reviews_count": data.get("reviewsCount", ""),
-            "features": data.get("features") or [],
-            "recent_reviews": [r.get("text", "") for r in (data.get("reviews") or [])[:5] if isinstance(r, dict)]
-        }
-        
-        prompt = f"""
-        Ты маркетолог-эксперт по B2B продажам. Анализируем профиль бизнеса:
-        {json.dumps(safe_data, ensure_ascii=False)}
-        
-        ПРАВИЛО ЯЗЫКА (СТРОГО):
-        - Не используй слова: "мастера", "лид-магнит", "кликабельность", "промо-блок", "целевое действие".
-        - Используй B2B термины: "врачи и специалисты", "точка первого контакта", "ценообразование", "видимость".
-        - Не указывай клиенту, что делать (никакой дидактики и советов "опишите", "добавьте"). Просто констатируй алгоритмическую проблему.
-        - Не оскорбляй бизнес (не пиши "вызывает ощущение некомпетентности").
-        
-        Выдай ответ СТРОГО в формате JSON с ключами:
-        1. "score" (число 0-100).
-        2. "pain_point" (текст): Одно предложение с самой грубой алгоритмической ошибкой.
-        """
-        
-        resp = model.generate_content(prompt)
-        result_text = resp.text.strip()
-        if result_text.startswith("```"):
-            result_text = re.sub(r"^```(?:json)?\n?", "", result_text)
-            result_text = re.sub(r"\n?```$", "", result_text).strip()
-            
-        try:
-            return json.loads(result_text)
-        except Exception:
-            match = re.search(r'\{.*\}', result_text, re.DOTALL)
-            return json.loads(match.group(0)) if match else {"score": 0, "pain_point": ""}
-            
-    except Exception as e:
-        return {"score": 0, "pain_point": ""}
-
 def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_registry: Dict) -> Dict[str, Any]:
     data = raw_input[0] if isinstance(raw_input, list) and raw_input else raw_input
     if isinstance(data, dict) and "items" in data and isinstance(data["items"], list): data = data["items"][0]
@@ -977,6 +846,19 @@ def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_regist
         desc = desc.replace("{NICHE_GENITIVE}", n_gen.capitalize()).replace("{niche_genitive}", n_gen)
         f["desc"] = desc
 
+    # 📌 ДОБАВЛЕНИЕ: Парсинг Телефонов и Email для CRM
+    phones_data = data.get("phones", [])
+    if isinstance(phones_data, list) and len(phones_data) > 0:
+        phone_str = ", ".join([str(p.get("formattedNumber", p.get("number", ""))) for p in phones_data if isinstance(p, dict)])
+    else:
+        phone_str = ""
+        
+    emails_data = data.get("emails", [])
+    if isinstance(emails_data, list) and len(emails_data) > 0:
+        email_str = ", ".join([str(e) for e in emails_data if isinstance(e, str)])
+    else:
+        email_str = ""
+
     legal_info = data.get("legalInfo")
     tax_id = legal_info.get("taxId") if isinstance(legal_info, dict) else None
     
@@ -986,7 +868,15 @@ def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_regist
         match = re.search(r'(?:инн|inn)\s*:?\s*(\d{10,12})\b', struct_str)
         if match: inn = match.group(1)
 
+    # 📌 ДОБАВЛЕНИЕ: Разделение ФИО и Должности для CRM
     lpr_info = fetch_dadata_ceo(inn, logger) if inn else ""
+    lpr_name_raw = ""
+    lpr_post = ""
+    if lpr_info:
+        parts = lpr_info.split(" (")
+        lpr_name_raw = parts[0].strip()
+        if len(parts) > 1:
+            lpr_post = parts[1].replace(")", "").strip()
 
     dev = max(0.0, 100.0 - score)
     ll = int(round(n_def["benchmark_leads"] * (dev / 100.0)))
@@ -994,12 +884,13 @@ def process_company_data(raw_input: Any, logger: TerminalLogger, criteria_regist
 
     return {
         "title": title, "org_id": org_id, "rating": rating, "score": score, "niche": niche,
-        "lat": lat, "lon": lon,
+        "lat": lat, "lon": lon, "phone": phone_str, "email": email_str,
         "competitors": comps, "canonical_url": data.get("url", ""),
         "benchmark_leads": n_def["benchmark_leads"], "base_check": n_def["base_check"], 
         "ltv_months": n_def["ltv_months"], "benchmark_source": n_def["benchmark_source"],
         "top_failures": top_fails, "date": datetime.date.today().strftime("%d.%m.%Y"),
-        "criteria_scores": raw_scores, "raw_data_ref": data, "lpr_info": lpr_info,
+        "criteria_scores": raw_scores, "raw_data_ref": data, 
+        "lpr_info": lpr_info, "lpr_name_raw": lpr_name_raw, "lpr_post": lpr_post,
         "rev_loss": rev_loss
     }
 
@@ -1116,7 +1007,7 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
         except Exception as e:
             logger.log(f"Сбой парсинга локации #{idx+1}: {e}", "WARN")
             
-    logger.log(f"Аудит завершен. Ищем идеальных раздражителей...", "STEP")
+    logger.log(f"Аудит завершен. Формируем CRM-матрицу...", "STEP")
     
     rows_to_export = []
     
@@ -1147,36 +1038,122 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
         if best_comp:
             comp_name = best_comp['title']
             dist_str = f"{best_comp_dist} метров"
-            comp_adv = f"Балл алгоритма {best_comp['score']} из 100"
             scenario = f"Сравниваем с «{comp_name}» ({dist_str}). Покажи экран: Яндекс дает им {best_comp['score']} баллов, а нашему клиенту {lead['score']}. Главная боль: {vuln}."
         else:
-            comp_name = "Нет сильного соседа рядом"
-            dist_str = "-"
-            comp_adv = "-"
             scenario = f"Соседей-лидеров в радиусе 2 км нет. Дави на то, что локация свободна и можно легко забрать весь трафик, исправив '{vuln}'."
 
+        # 📌 ИСПРАВЛЕНИЕ: Формирование строки из 19 колонок для CRM
         row = [
-            lead['title'], 
-            lead['canonical_url'], 
-            f"{lead['lat']}, {lead['lon']}",
-            lead['lpr_info'],
-            f"{lead['score']:.1f}",
-            lead['rev_loss'],
-            vuln,
-            comp_name,
-            dist_str,
-            comp_adv,
-            scenario,
-            "Новый",
-            "Записать видеоразбор",
-            datetime.date.today().strftime("%d.%m.%Y")
+            datetime.date.today().strftime("%d.%m.%Y"), # 1. Дата
+            lead['title'],                              # 2. Компания
+            NICHE_CONFIG[lead['niche']]['niche_name'],  # 3. Ниша
+            lead['canonical_url'],                      # 4. Ссылка на Карты
+            lead['lpr_name_raw'],                       # 5. ФИО ЛПР
+            lead['lpr_post'],                           # 6. Должность
+            lead['phone'],                              # 7. Телефон
+            "",                                         # 8. Мессенджер (для менеджера)
+            lead['email'],                              # 9. Email
+            f"{lead['score']:.1f}",                     # 10. Балл
+            f"{int(lead['rev_loss']):,} ₽".replace(',', ' '), # 11. Потери
+            vuln,                                       # 12. Главная боль
+            scenario,                                   # 13. Сценарий продаж
+            "Новый",                                    # 14. Статус лида
+            "Найти контакты / Квалификация",            # 15. Следующий шаг
+            "",                                         # 16. Дедлайн
+            "",                                         # 17. Комментарий
+            "",                                         # 18. Ссылка на PDF
+            ""                                          # 19. Текст письма
         ]
         rows_to_export.append(row)
         
     sync_batch_to_google(rows_to_export, logger)
-    logger.log("Пакетный конвейер завершен! Матрица зависти сформирована.", "SUCCESS")
+    logger.log("Пакетный конвейер завершен! Матрица для CRM сформирована.", "SUCCESS")
     st.session_state.batch_done = True
     st.balloons()
+
+# ==========================================================
+# 🚀 МИНИМАЛИСТИЧНЫЙ БРОНЕБОЙНЫЙ СБОРЩИК ПО ССЫЛКАМ
+# ==========================================================
+def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, Any]]:
+    token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
+    actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
+    
+    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
+
+    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    
+    plain_urls = [u.strip() for u in urls if u.strip()]
+    logger.log(f"Отправка {len(plain_urls)} прямых ссылок в Apify (Базовый режим)...", "STEP")
+    
+    payload = {
+        "startUrls": [{"url": u} for u in plain_urls]
+    }
+    
+    resp = requests.post(run_url, json=payload, timeout=310)
+    
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {}
+        
+    if resp.status_code not in [200, 201]: 
+        error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
+        raise RuntimeError(f"Сбой сервера Apify API (HTTP {resp.status_code}): {error_msg}")
+    
+    if isinstance(resp_json, dict) and "error" in resp_json:
+        error_msg = resp_json["error"].get("message", str(resp_json))
+        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}")
+        
+    items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
+    
+    if not items:
+        raise ValueError("Apify вернул пустой массив. Возможно, парсер не смог загрузить эти ссылки.")
+        
+    logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
+    return items
+
+def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> List[Dict[str, Any]]:
+    token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
+    actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
+    
+    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
+
+    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    logger.log(f"Тестируем поисковый запрос в Apify: «{query}»...", "STEP")
+    
+    query_encoded = urllib.parse.quote_plus(query)
+    search_url = f"https://yandex.ru/maps/?text={query_encoded}"
+    
+    payload = {
+        "startUrls": [{"url": search_url}],
+        "searchStrings": [query],
+        "searchStringsArray": [query],
+        "maxItems": max_items,
+        "includeReviews": True
+    }
+    
+    resp = requests.post(run_url, json=payload, timeout=310)
+    
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {}
+        
+    if resp.status_code not in [200, 201]: 
+        error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
+        raise RuntimeError(f"Сбой Apify API (HTTP {resp.status_code}): {error_msg}")
+    
+    if isinstance(resp_json, dict) and "error" in resp_json:
+        error_msg = resp_json["error"].get("message", str(resp_json))
+        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего ваш парсер не поддерживает поисковые ссылки, используйте вкладку 'Парсинг по ссылкам'.")
+        
+    items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
+    
+    if not items:
+        raise ValueError("Apify вернул пустой массив. По вашему запросу ничего не найдено.")
+        
+    logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
+    return items
 
 def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict):
     try:
@@ -1219,7 +1196,7 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         filled_params = int(round(total_params * (audit["score"] / 100.0)))
         missing_params = total_params - filled_params
         
-        lpr_name = format_lpr_name(audit.get("lpr_info", ""))
+        lpr_name = format_lpr_name(audit.get("lpr_name_raw", ""))
 
         ensure_templates_exist()
         niche_template_path = Path(f"templates/email_{audit['niche'].lower()}.txt")
@@ -1276,21 +1253,28 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             logger.log("Сбой компиляции PDF-отчета.", "ERROR")
 
         vuln = audit['top_failures'][0]['title'] if audit['top_failures'] else "Слабое заполнение"
+        
+        # 📌 ИСПРАВЛЕНИЕ: Выгрузка точечного аудита в 19 колонок CRM
         single_row = [
-            audit['title'], 
-            audit['canonical_url'], 
-            f"{audit['lat']}, {audit['lon']}",
-            audit.get('lpr_info', ''),
-            f"{audit['score']:.1f}",
-            audit.get('rev_loss', 0),
-            vuln,
-            "Одиночный аудит (без конкурента)", 
-            "-", 
-            "-", 
-            "Взят в работу точечно. Дави на ошибку: " + vuln,
-            "Новый",
-            "Связаться / Отправить Teardown",
-            datetime.date.today().strftime("%d.%m.%Y")
+            datetime.date.today().strftime("%d.%m.%Y"), # 1. Дата
+            audit['title'],                              # 2. Компания
+            NICHE_CONFIG[audit['niche']]['niche_name'],  # 3. Ниша
+            audit['canonical_url'],                      # 4. Ссылка на Карты
+            audit['lpr_name_raw'],                       # 5. ФИО ЛПР
+            audit['lpr_post'],                           # 6. Должность
+            audit['phone'],                              # 7. Телефон
+            "",                                         # 8. Мессенджер
+            audit['email'],                              # 9. Email
+            f"{audit['score']:.1f}",                     # 10. Балл
+            f"{int(audit['rev_loss']):,} ₽".replace(',', ' '), # 11. Потери
+            vuln,                                       # 12. Главная боль
+            "Взят в работу точечно. Дави на ошибку: " + vuln, # 13. Сценарий продаж
+            "Новый",                                    # 14. Статус лида
+            "Связаться / Отправить Teardown",           # 15. Следующий шаг
+            "",                                         # 16. Дедлайн
+            "",                                         # 17. Комментарий
+            "",                                         # 18. Ссылка на PDF
+            ib_txt                                      # 19. Текст письма
         ]
         sync_batch_to_google([single_row], logger)
 
