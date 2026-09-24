@@ -198,7 +198,7 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 
 #text(size: 14pt, weight: "bold", fill: rgb("#0f172a"))[Практическая ценность отчета]
 #v(0.5em)
-Отчет вскрывает скрытые программные фильтры Яндекс Карт, из-за которых горячие клиенты вашего района уходят к ближайшим конкурентам. В документе нет общих советов по SMM или платной рекламе: здесь зафиксированы конкретные алгоритмические уязвимости профиля и рассчитана точная упущенная выручка бизнеса.
+Отчет вскрывает скрытые программные фильтры Яндекс Карт, из-за которых горячие клиенты вашего района уходят к ближайшим конкурентам. В документе нет общих советов по SMM или платной рекламе: здесь зафиксированы конкре কর্তৃপক্ষের алгоритмические уязвимости профиля и рассчитана точная упущенная выручка бизнеса.
 
 #pagebreak(weak: true)
 
@@ -360,17 +360,18 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 def escape_typst(text: Any) -> str:
     """Умное экранирование текста от спецсимволов Markdown и Typst"""
     if text is None: return ""
-    return str(text)\
-        .replace("\\", "\\\\")\
-        .replace("[", "\\[")\         .replace("]", "\\]")\
-        .replace("#", "\\#")\
-        .replace('"', '«')\
-        .replace('$', '\\$')\
-        .replace('*', '\\*')\
-        .replace('_', '\\_')\
-        .replace('@', '\\@')\
-        .replace('<', '\\<')\
-        .replace('>', '\\>')
+    # Обернули в круглые скобки, чтобы переносы строк не падали с ошибкой "unexpected character"
+    return (str(text)
+        .replace("\\", "\\\\")
+        .replace("[", "\\[")         .replace("]", "\\]")
+        .replace("#", "\\#")
+        .replace('"', '«')
+        .replace('$', '\\$')
+        .replace('*', '\\*')
+        .replace('_', '\\_')
+        .replace('@', '\\@')
+        .replace('<', '\\<')
+        .replace('>', '\\>'))
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
     R = 6371000
@@ -597,7 +598,6 @@ def calculate_client_potential(rating: float, score: float, lost_leads: int) -> 
         
     return stars, star_str, justification
 
-# 📌 ИСПРАВЛЕНИЕ: Восстановлена недостающая ИИ функция
 def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[str, Any]:
     api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key or not GEMINI_AVAILABLE: return {"score": 0, "pain_point": ""}
@@ -620,7 +620,7 @@ def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[st
         
         ПРАВИЛО ЯЗЫКА (СТРОГО):
         - Не используй слова: "мастера", "лид-магнит", "кликабельность", "промо-блок".
-        - Используй B2B термины: "врачи и специалисты", "точка первого контакта", "ценообразование".
+        - Используй B2B термины: "врачи и специалисты", "точка первого контакта", "ценообразование", "видимость".
         - Не указывай клиенту, что делать. Просто констатируй проблему.
         
         Выдай ответ СТРОГО в формате JSON с ключами:
@@ -1070,21 +1070,22 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
     else:
         logger.log(f"Сбой компиляции PDF для '{lead['title']}'.", "ERROR")
 
-    ib_txt = raw_template.replace("[[CLIENT_PLURAL]]", client_plural) \
-                         .replace("[[COMPANY_WORD]]", company_word) \
-                         .replace("[[TITLE]]", lead['title']) \
-                         .replace("[[LPR_NAME]]", lpr_name) \
-                         .replace("[[SEARCH_VOLUME]]", search_volume) \
-                         .replace("[[COMPETITORS_PHRASE]]", competitors_phrase) \
-                         .replace("[[TOTAL_PARAMS]]", str(total_params)) \
-                         .replace("[[FILLED_PARAMS]]", str(filled_params)) \
-                         .replace("[[FAILURES_TEXT]]", failures_text.strip()) \
-                         .replace("[[LOST_LEADS]]", str(mapping.get('[[LOST_LEADS]]', '0'))) \
-                         .replace("[[CLIENT_CHECK_FMT]]", mapping.get('[[CLIENT_CHECK_FMT]]', '')) \
-                         .replace("[[REV_LOSS_FMT]]", mapping.get('[[REV_LOSS_FMT]]', '')) \
-                         .replace("[[LTV_LOSS_FMT]]", mapping.get('[[LTV_LOSS_FMT]]', '')) \
-                         .replace("[[MISSING_PARAMS]]", str(missing_params)) \
-                         .replace("[[PDF_LINK]]", pdf_link if pdf_link else "Ссылка генерируется...")
+    # Безопасное формирование текста в скобках
+    ib_txt = (raw_template.replace("[[CLIENT_PLURAL]]", client_plural)
+                         .replace("[[COMPANY_WORD]]", company_word)
+                         .replace("[[TITLE]]", lead['title'])
+                         .replace("[[LPR_NAME]]", lpr_name)
+                         .replace("[[SEARCH_VOLUME]]", search_volume)
+                         .replace("[[COMPETITORS_PHRASE]]", competitors_phrase)
+                         .replace("[[TOTAL_PARAMS]]", str(total_params))
+                         .replace("[[FILLED_PARAMS]]", str(filled_params))
+                         .replace("[[FAILURES_TEXT]]", failures_text.strip())
+                         .replace("[[LOST_LEADS]]", str(mapping.get('[[LOST_LEADS]]', '0')))
+                         .replace("[[CLIENT_CHECK_FMT]]", mapping.get('[[CLIENT_CHECK_FMT]]', ''))
+                         .replace("[[REV_LOSS_FMT]]", mapping.get('[[REV_LOSS_FMT]]', ''))
+                         .replace("[[LTV_LOSS_FMT]]", mapping.get('[[LTV_LOSS_FMT]]', ''))
+                         .replace("[[MISSING_PARAMS]]", str(missing_params))
+                         .replace("[[PDF_LINK]]", pdf_link if pdf_link else "Ссылка генерируется..."))
                          
     return pdf_link, ib_txt, str(p_pdf)
 
@@ -1421,7 +1422,8 @@ def app():
             else:
                 st.info("👤 ЛПР не найден (ИНН отсутствует или не зарегистрирован в базе)")
                 
-            st.text_area("Текст для рассылки:", value=st.session_state.get("current_icebreaker", "Ошибка генерации текста"), height=500)
+            # Безопасный вызов памяти (защита от KeyError)
+            st.text_area("Текст для рассылки:", value=st.session_state.get("current_icebreaker", "Текст не сгенерирован из-за ошибки."), height=500)
 
         with c2:
             st.subheader("🎯 Квалификация лида (PIN100)")
@@ -1430,15 +1432,15 @@ def app():
             
             st.subheader(f"📊 Экономика потерь «{aud['title']}»")
             m1, m2 = st.columns(2)
-            m1.metric("Балл", f"{map_d['[[SCORE]]']} / 100")
-            m2.metric("Потери", f"~{map_d['[[LOST_LEADS]]']} чел/мес")
+            m1.metric("Балл", f"{map_d.get('[[SCORE]]', '0')} / 100")
+            m2.metric("Потери", f"~{map_d.get('[[LOST_LEADS]]', '0')} чел/мес")
             m3, m4 = st.columns(2)
-            m3.metric("Упущенная выручка", f"{map_d['[[REV_LOSS_FMT]]']} ₽/мес")
+            m3.metric("Упущенная выручка", f"{map_d.get('[[REV_LOSS_FMT]]', '0')} ₽/мес")
             
             if aud.get("ai_score"):
                  m4.metric("🧠 ИИ-Скоринг (Вероятность)", f"{aud['ai_score']}%")
             else:
-                 m4.metric("Потери за неделю", f"~{map_d['[[WEEKLY_LOSS_FMT]]']} ₽/нед")
+                 m4.metric("Потери за неделю", f"~{map_d.get('[[WEEKLY_LOSS_FMT]]', '0')} ₽/нед")
             
             st.divider()
             st.subheader("📄 PDF-отчет")
