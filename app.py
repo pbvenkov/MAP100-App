@@ -7,7 +7,7 @@ import subprocess
 import urllib.parse
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import requests
 import streamlit as st
@@ -49,7 +49,6 @@ st.set_page_config(page_title="PIN100 Analytics | CRM Matrix", page_icon="📍",
 # 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКОВ
 # ==========================================================
 
-# 📌 Защита ссылок и отключение Google Drive (Используем только Таблицы)
 g_api = "www.googleapis.com"
 GDRIVE_SCOPES = [f"https://{g_api}/auth/spreadsheets"]
 
@@ -136,9 +135,6 @@ FALLBACK_CRITERIA_REGISTRY = {
     "REP-27.1": {"title": "Базовый порог рейтинга (4.5+)", "group": "Репутация", "complexity": 4, "weight": 2.5, "descs": {"Обоснование_ОШИБКИ": "Рейтинг ниже 4.5 приводит к отсечению фильтрами."}}
 }
 
-# ==========================================================
-# ПРЕМИАЛЬНЫЙ ШАБЛОН PDF
-# ==========================================================
 DEFAULT_TYPST_TEMPLATE = r"""#set page(
   paper: "a4",
   margin: (x: 2cm, y: 2.5cm, top: 2.5cm, bottom: 2.5cm),
@@ -361,7 +357,7 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 """
 
 # ==========================================
-# УТИЛИТЫ, ЭКРАНИРОВАНИЕ И ПАРСИНГ ССЫЛОК
+# УТИЛИТЫ И ОЧИСТКА ССЫЛОК
 # ==========================================
 
 def clean_and_expand_url(raw_url: str) -> str:
@@ -435,7 +431,7 @@ def ensure_templates_exist():
 **Откуда берется цифра потерь:**
 Теряя всего ~[[LOST_LEADS]] первичных обращений в месяц (при минимальном чеке [[CLIENT_CHECK_FMT]] ₽), вы ежемесячно недополучаете [[REV_LOSS_FMT]] рублей прямого приема. С учетом LTV (повторных визитов) это скрытая потеря до [[LTV_LOSS_FMT]] рублей годового оборота, который просто перетекает вашим соседям.
 
-Детальный аудит и разбор всех [[MISSING_PARAMS]] незаполненных параметров мы оформили в наглядный 4-страничный PDF-отчет (ссылка: [[PDF_LINK]]). Если вам интересно взглянуть на цифры и узнать, как перехватить трафик — ответьте на это письмо словом «Да».
+Детальный аудит и разбор всех [[MISSING_PARAMS]] незаполненных параметров мы оформили в наглядный 4-страничный PDF-отчет (прикрепил к сообщению). Если вам интересно взглянуть на цифры и узнать, как перехватить трафик — ответьте на это письмо словом «Да».
 
 --
 Павел Венков
@@ -1011,7 +1007,7 @@ def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: Termin
     finally:
         if temp_typ.exists(): temp_typ.unlink()
 
-def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger) -> Tuple[str, str, str]:
+def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger) -> Tuple[str, str]:
     n_info = NICHE_CONFIG.get(lead["niche"], NICHE_CONFIG["OTHER"])
     client_plural = n_info.get("client_word_plural", "клиенты")
     company_word = n_info.get("company_word", "организации")
@@ -1056,12 +1052,10 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
         else:
             content = content.replace(k, escape_typst(v))
             
-    pdf_link = "Скачано из интерфейса PIN100"
     if compile_pdf(content, p_pdf, out_dir, logger):
-        logger.log(f"PDF для '{lead['title']}' скомпилирован успешно и доступен для скачивания.", "SUCCESS")
+        logger.log(f"PDF для '{lead['title']}' скомпилирован успешно.", "SUCCESS")
     else:
         logger.log(f"Сбой компиляции PDF для '{lead['title']}'.", "ERROR")
-        pdf_link = "Ошибка генерации"
 
     ib_txt = (raw_template.replace("[[CLIENT_PLURAL]]", client_plural)
                          .replace("[[COMPANY_WORD]]", company_word)
@@ -1076,10 +1070,9 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
                          .replace("[[CLIENT_CHECK_FMT]]", mapping.get('[[CLIENT_CHECK_FMT]]', ''))
                          .replace("[[REV_LOSS_FMT]]", mapping.get('[[REV_LOSS_FMT]]', ''))
                          .replace("[[LTV_LOSS_FMT]]", mapping.get('[[LTV_LOSS_FMT]]', ''))
-                         .replace("[[MISSING_PARAMS]]", str(missing_params))
-                         .replace("[[PDF_LINK]]", pdf_link))
+                         .replace("[[MISSING_PARAMS]]", str(missing_params)))
                          
-    return pdf_link, ib_txt, str(p_pdf)
+    return ib_txt, str(p_pdf)
 
 def sync_batch_to_google(rows: List[List[Any]], logger: TerminalLogger) -> bool:
     creds, status = get_google_credentials()
@@ -1153,7 +1146,7 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
             scenario = f"Соседей-лидеров в радиусе 2 км нет. Дави на то, что локация свободна и можно легко забрать весь трафик, исправив '{vuln}'."
 
         mapping = build_metrics(lead, criteria_registry)
-        pdf_link, ib_txt, p_pdf = generate_lead_collaterals(lead, mapping, logger)
+        ib_txt, p_pdf = generate_lead_collaterals(lead, mapping, logger)
         
         if p_pdf and os.path.exists(p_pdf):
             pdf_paths.append(p_pdf)
@@ -1163,7 +1156,7 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
             lead['title'],                              
             NICHE_CONFIG[lead['niche']]['niche_name'],  
             lead['canonical_url'],                      
-            lead['lpr_name_raw'],                       
+            format_lpr_name(lead.get('lpr_name_raw', '')), # 📌 ИСПРАВЛЕНИЕ: Форматируем имя для CRM
             lead['lpr_post'],                           
             lead['phone'],                              
             "",                                         
@@ -1176,14 +1169,13 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
             "Найти контакты / Квалификация",            
             "",                                         
             "",                                         
-            pdf_link,                                   
+            "Скачан локально (в ZIP-архиве)",           
             ib_txt                                      
         ]
         rows_to_export.append(row)
         
     sync_batch_to_google(rows_to_export, logger)
     
-    # Сборка ZIP архива
     if pdf_paths:
         logger.log("Упаковка всех отчетов в единый ZIP-архив...", "STEP")
         zip_path = Path("output") / "PIN100_Batch_Reports.zip"
@@ -1219,7 +1211,7 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
 
         logger.log("Генерация B2B-письма и PDF-отчета...", "STEP")
         
-        pdf_link, ib_txt, p_pdf_path = generate_lead_collaterals(audit, mapping, logger)
+        ib_txt, p_pdf_path = generate_lead_collaterals(audit, mapping, logger)
         
         st.session_state.current_icebreaker = ib_txt
         st.session_state.pdf_path = p_pdf_path
@@ -1231,7 +1223,7 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             audit['title'],                              
             NICHE_CONFIG[audit['niche']]['niche_name'],  
             audit['canonical_url'],                      
-            audit['lpr_name_raw'],                       
+            format_lpr_name(audit.get('lpr_name_raw', '')), # 📌 ИСПРАВЛЕНИЕ: Форматируем имя для CRM
             audit['lpr_post'],                           
             audit['phone'],                              
             "",                                         
@@ -1244,7 +1236,7 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             "Связаться / Отправить Teardown",           
             "",                                         
             "",                                         
-            pdf_link,                                   
+            "Скачан локально",                           
             ib_txt                                      
         ]
         sync_batch_to_google([single_row], logger)
@@ -1254,8 +1246,98 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         send_telegram_error(str(ex), "Pipeline Run")
 
 # ==========================================================
-# 8. ЗАПУСК STREAMLIT
+# 8. APIFY И ЗАПУСК STREAMLIT
 # ==========================================================
+
+def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, Any]]:
+    token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
+    actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
+    
+    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
+
+    apify_host = "api.apify.com"
+    run_url = f"https://{apify_host}/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    
+    plain_urls = []
+    for u in urls:
+        if not u.strip(): continue
+        expanded = clean_and_expand_url(u)
+        plain_urls.append(expanded)
+        
+    logger.log(f"Отправка {len(plain_urls)} прямых ссылок в Apify (Базовый режим)...", "STEP")
+    
+    payload = {
+        "startUrls": [{"url": u} for u in plain_urls]
+    }
+    
+    resp = requests.post(run_url, json=payload, timeout=310)
+    
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {}
+        
+    if resp.status_code not in [200, 201]: 
+        error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
+        raise RuntimeError(f"Сбой сервера Apify API (HTTP {resp.status_code}): {error_msg}")
+    
+    if isinstance(resp_json, dict) and "error" in resp_json:
+        error_msg = resp_json["error"].get("message", str(resp_json))
+        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}")
+        
+    items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
+    
+    if not items:
+        raise ValueError("Apify вернул пустой массив. Возможно, парсер не смог загрузить эти ссылки.")
+        
+    logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
+    return items
+
+def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> List[Dict[str, Any]]:
+    token = st.secrets.get("APIFY_API_TOKEN") or os.getenv("APIFY_API_TOKEN", "").strip()
+    actor = st.secrets.get("APIFY_ACTOR_ID") or os.getenv("APIFY_ACTOR_ID", "").strip()
+    
+    if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
+
+    apify_host = "api.apify.com"
+    run_url = f"https://{apify_host}/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    
+    logger.log(f"Тестируем поисковый запрос в Apify: «{query}»...", "STEP")
+    
+    query_encoded = urllib.parse.quote_plus(query)
+    y_host = "yandex.ru"
+    search_url = f"https://{y_host}/maps/?text={query_encoded}"
+    
+    payload = {
+        "startUrls": [{"url": search_url}],
+        "searchStrings": [query],
+        "searchStringsArray": [query],
+        "maxItems": max_items,
+        "includeReviews": True
+    }
+    
+    resp = requests.post(run_url, json=payload, timeout=310)
+    
+    try:
+        resp_json = resp.json()
+    except Exception:
+        resp_json = {}
+        
+    if resp.status_code not in [200, 201]: 
+        error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
+        raise RuntimeError(f"Сбой Apify API (HTTP {resp.status_code}): {error_msg}")
+    
+    if isinstance(resp_json, dict) and "error" in resp_json:
+        error_msg = resp_json["error"].get("message", str(resp_json))
+        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего ваш парсер не поддерживает поисковые ссылки, используйте вкладку 'Парсинг по ссылкам'.")
+        
+    items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
+    
+    if not items:
+        raise ValueError("Apify вернул пустой массив. По вашему запросу ничего не найдено.")
+        
+    logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
+    return items
 
 def app():
     criteria_registry, sync_status = fetch_criteria_from_google()
@@ -1302,8 +1384,11 @@ def app():
     logger = TerminalLogger(st.empty())
 
     if btn_urls or btn_apify_search or btn_json:
+        # 📌 ИСПРАВЛЕНИЕ: Очищаем старые результаты перед новым запуском
         st.session_state.batch_done = False
         st.session_state.batch_zip_path = None
+        st.session_state.pop("current_audit", None)
+        st.session_state.pop("current_mapping", None)
 
     if btn_urls:
         urls = [u.strip() for u in text_urls.split('\n') if u.strip()]
@@ -1340,7 +1425,6 @@ def app():
         else: 
             logger.log("Нет данных для анализа.", "ERROR")
 
-    # Отображение результатов одиночного аудита
     if not st.session_state.get("batch_done") and st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
         st.divider()
         c1, c2 = st.columns([1.1, 0.9])
@@ -1387,7 +1471,6 @@ def app():
                     with st.expander("Показать сломанный код шаблона"):
                         st.code(st.session_state.broken_typst, language="typst")
 
-    # Отображение архива при массовом парсинге
     if st.session_state.get("batch_done") and st.session_state.get("batch_zip_path"):
         st.divider()
         st.subheader("📦 Пакетная генерация завершена")
