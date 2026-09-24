@@ -164,6 +164,7 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 #set text(font: ("Roboto", "Arial", "PT Sans", "Helvetica"), size: 11pt, lang: "ru")
 #set par(justify: true, leading: 0.65em)
 
+// Этот массив Python подставит сам (не трогаем!)
 #let gaps = (
   [[GAPS_ARRAY]]
 )
@@ -217,7 +218,7 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 #grid(
   columns: (1fr, 1fr),
   column-gutter: 1.5em,
-  rect(width: 100%, fill: rgb("#[[SCORE_COLOR]]").lighten(85%), stroke: 1pt + rgb("#[[SCORE_COLOR]]"), radius: 6pt, inset: 15pt)[
+  rect(width: 100%, fill: rgb("#[[SCORE_BG_COLOR]]"), stroke: 1pt + rgb("#[[SCORE_COLOR]]"), radius: 6pt, inset: 15pt)[
     #text(size: 10pt, fill: rgb("#475569"))[ГОТОВНОСТЬ К ПРИЕМУ ТРАФИКА]\
     #v(0.5em)
     #text(size: 26pt, weight: "bold", fill: rgb("#[[SCORE_COLOR]]"))[[[SCORE]] / 100]\
@@ -373,8 +374,20 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 # УТИЛИТЫ
 # ==========================================
 def escape_typst(text: Any) -> str:
+    """Умное экранирование текста от символов Markdown и Typst"""
     if text is None: return ""
-    return str(text).replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]").replace("#", "\\#").replace('"', '«').replace('$', '\\$')
+    return str(text)\
+        .replace("\\", "\\\\")\
+        .replace("[", "\\[")\
+        .replace("]", "\\]")\
+        .replace("#", "\\#")\
+        .replace('"', '«')\
+        .replace('$', '\\$')\
+        .replace('*', '\\*')\
+        .replace('_', '\\_')\
+        .replace('@', '\\@')\
+        .replace('<', '\\<')\
+        .replace('>', '\\>')
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
     R = 6371000
@@ -398,10 +411,8 @@ def format_lpr_name(raw_name: str) -> str:
         
     parts = name_str.split()
     if len(parts) >= 3:
-        # Для Dadata обычно: Фамилия Имя Отчество -> берем Имя Отчество
         return f"{parts[1].capitalize()} {parts[2].capitalize()}"
     elif len(parts) == 2:
-        # Фамилия Имя -> берем Имя
         return parts[1].capitalize()
         
     return name_str.title()
@@ -1026,16 +1037,18 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
                          
     competitor_score = min(98.5, round(score + max(12.0, (100.0 - score) * 0.6), 1))
     
-    # ГЕНЕРАЦИЯ МАССИВА ДЛЯ ТИПСТА
+    # 📌 ИСПРАВЛЕНИЕ: ГЕНЕРАЦИЯ МАССИВА ОШИБОК ДЛЯ TYPST БЕЗ ЁЛОЧЕК И С ЗАПЯТОЙ
     gaps_typst_lines = []
     for f in failures:
-        t = str(f['title']).replace('"', '\\"').replace('\n', ' ')
-        d = str(f['desc']).replace('"', '\\"').replace('\n', ' ')
+        t = str(f['title']).replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
+        d = str(f['desc']).replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
         gaps_typst_lines.append(f'(title: "{t}", desc: "{d}")')
     
     gaps_array_str = ",\n  ".join(gaps_typst_lines)
-    if not gaps_array_str:
-        gaps_array_str = '(title: "Ошибок не найдено", desc: "Карточка оптимизирована.")'
+    if gaps_array_str:
+        gaps_array_str += "," # Обязательная запятая, чтобы массив из 1 элемента не ломал Typst
+    else:
+        gaps_array_str = '(title: "Ошибок не найдено", desc: "Карточка полностью оптимизирована."),'
     
     return {
         "[[TITLE]]": audit["title"], "[[NICHE]]": n_info["niche_name"], "[[DATE]]": audit["date"],
@@ -1209,10 +1222,8 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         filled_params = int(round(total_params * (audit["score"] / 100.0)))
         missing_params = total_params - filled_params
         
-        # Интеллектуальный парсинг Имени-Отчества ЛПР (Внедрено)
         lpr_name = format_lpr_name(audit.get("lpr_info", ""))
 
-        # 🎯 ЗАГРУЗКА ШАБЛОНА ИЗ ПАПКИ TEMPLATES
         ensure_templates_exist()
         niche_template_path = Path(f"templates/email_{audit['niche'].lower()}.txt")
         if niche_template_path.exists():
@@ -1220,7 +1231,6 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         else:
             raw_template = Path("templates/email_default.txt").read_text(encoding="utf-8")
 
-        # Замена переменных-плейсхолдеров
         ib_txt = raw_template.replace("[[CLIENT_PLURAL]]", client_plural) \
                              .replace("[[COMPANY_WORD]]", company_word) \
                              .replace("[[TITLE]]", audit['title']) \
@@ -1254,9 +1264,13 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             
         with open(tpl, "r", encoding="utf-8") as f: content = f.read()
         
+        # 📌 ИСПРАВЛЕНИЕ: МАССИВ ОШИБОК НЕ ЭКРАНИРУЕТСЯ (ИЗБЕГАЕМ ЁЛОЧЕК « » В КОДЕ TYPST)
         for k, v in sorted(mapping.items(), key=lambda x: len(x[0]), reverse=True):
-            v_str = escape_typst(v)
-            content = content.replace(k, v_str)
+            if k == "[[GAPS_ARRAY]]":
+                content = content.replace(k, str(v))
+            else:
+                v_str = escape_typst(v)
+                content = content.replace(k, v_str)
             
         if compile_pdf(content, p_pdf, out_dir, logger):
             st.session_state.pdf_path = str(p_pdf)
