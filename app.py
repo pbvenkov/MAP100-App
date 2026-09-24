@@ -134,7 +134,7 @@ FALLBACK_CRITERIA_REGISTRY = {
 }
 
 # ==========================================================
-# НОВЫЙ ПРЕМИАЛЬНЫЙ ШАБЛОН PDF С ДИНАМИЧЕСКИМ МАССИВОМ
+# ПРЕМИАЛЬНЫЙ ШАБЛОН PDF С ДИНАМИЧЕСКИМ МАССИВОМ
 # ==========================================================
 DEFAULT_TYPST_TEMPLATE = r"""#set page(
   paper: "a4",
@@ -266,7 +266,7 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 #v(2em)
 #rect(width: 100%, fill: rgb("#F1F5F9"), stroke: none, radius: 4pt, inset: 10pt)[
   #text(size: 8.5pt, fill: rgb("#475569"))[
-    * Консервативный расчет первого визита (базовый чек [[CLIENT_CHECK_FMT]] ₽). С учетом повторных визитов и лояльности клиентов (LTV: [[CLIENT_LTV]] мес.) годовой отток районного бюджета составляет до *[[LTV_LOSS_FMT]] ₽*. Источник бенчмарков: [[BENCHMARK_SOURCE]].\
+    \* Консервативный расчет первого визита (базовый чек [[CLIENT_CHECK_FMT]] ₽). С учетом повторных визитов и лояльности клиентов (LTV: [[CLIENT_LTV]] мес.) годовой отток районного бюджета составляет до *[[LTV_LOSS_FMT]] ₽*. Источник бенчмарков: [[BENCHMARK_SOURCE]].\
     \
     *Важное примечание:* Оценка [[SCORE]]/100 фиксирует исключительно техническую готовность профиля в гео-выдаче Яндекса, а не реальное качество [[QUALITY_PHRASE]]. Это программные особенности поисковой системы, которые не зависят от работы администраторов и специалистов.
   ]
@@ -371,10 +371,10 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 """
 
 # ==========================================
-# УТИЛИТЫ
+# УТИЛИТЫ И ЭКРАНИРОВАНИЕ
 # ==========================================
 def escape_typst(text: Any) -> str:
-    """Умное экранирование текста от символов Markdown и Typst"""
+    """Умное экранирование текста от спецсимволов Markdown и Typst"""
     if text is None: return ""
     return str(text)\
         .replace("\\", "\\\\")\
@@ -397,12 +397,10 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
     a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
     return int(2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
 
-# НОВАЯ ФУНКЦИЯ УМНОГО ПАРСИНГА ИМЕНИ
 def format_lpr_name(raw_name: str) -> str:
     if not raw_name or str(raw_name).strip().lower() in ['nan', 'none', 'null', '']:
         return "Уважаемый руководитель"
     
-    # Отсекаем должность "(Генеральный директор)"
     name_str = str(raw_name).split(" (")[0].strip()
     
     stop_words = ['коллеги', 'руководитель', 'директор', 'менеджер', 'администратор', 'nan', 'none']
@@ -1037,7 +1035,6 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
                          
     competitor_score = min(98.5, round(score + max(12.0, (100.0 - score) * 0.6), 1))
     
-    # 📌 ИСПРАВЛЕНИЕ: ГЕНЕРАЦИЯ МАССИВА ОШИБОК ДЛЯ TYPST БЕЗ ЁЛОЧЕК И С ЗАПЯТОЙ
     gaps_typst_lines = []
     for f in failures:
         t = str(f['title']).replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
@@ -1046,7 +1043,7 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     
     gaps_array_str = ",\n  ".join(gaps_typst_lines)
     if gaps_array_str:
-        gaps_array_str += "," # Обязательная запятая, чтобы массив из 1 элемента не ломал Typst
+        gaps_array_str += ","
     else:
         gaps_array_str = '(title: "Ошибок не найдено", desc: "Карточка полностью оптимизирована."),'
     
@@ -1264,7 +1261,6 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             
         with open(tpl, "r", encoding="utf-8") as f: content = f.read()
         
-        # 📌 ИСПРАВЛЕНИЕ: МАССИВ ОШИБОК НЕ ЭКРАНИРУЕТСЯ (ИЗБЕГАЕМ ЁЛОЧЕК « » В КОДЕ TYPST)
         for k, v in sorted(mapping.items(), key=lambda x: len(x[0]), reverse=True):
             if k == "[[GAPS_ARRAY]]":
                 content = content.replace(k, str(v))
