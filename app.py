@@ -32,7 +32,7 @@ except ImportError:
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
-    from googleapiclient.http import MediaFileUpload # 📌 НОВОЕ: Для загрузки файлов
+    from googleapiclient.http import MediaFileUpload
     GOOGLE_LIBS_AVAILABLE = True
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
@@ -49,7 +49,6 @@ st.set_page_config(page_title="PIN100 Analytics | CRM Matrix", page_icon="📍",
 # 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКОВ
 # ==========================================================
 
-# 📌 НОВОЕ: Расширенные доступы для загрузки файлов на Диск
 GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
@@ -356,14 +355,14 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 """
 
 # ==========================================
-# УТИЛИТЫ И ЭКРАНИРОВАНИЕ
+# УТИЛИТЫ
 # ==========================================
 def escape_typst(text: Any) -> str:
+    """Умное экранирование текста от спецсимволов Markdown и Typst"""
     if text is None: return ""
     return str(text)\
         .replace("\\", "\\\\")\
-        .replace("[", "\\[")\
-        .replace("]", "\\]")\
+        .replace("[", "\\[")\         .replace("]", "\\]")\
         .replace("#", "\\#")\
         .replace('"', '«')\
         .replace('$', '\\$')\
@@ -395,9 +394,6 @@ def format_lpr_name(raw_name: str) -> str:
         return parts[1].capitalize()
     return name_str.title()
 
-# ==========================================
-# АВТОСОЗДАНИЕ ШАБЛОНОВ ПИСЕМ
-# ==========================================
 def ensure_templates_exist():
     tpl_dir = Path("templates")
     tpl_dir.mkdir(exist_ok=True)
@@ -426,11 +422,9 @@ def ensure_templates_exist():
 🌐 Сайт: pin100.ru
 📱 Telegram / WhatsApp: +7 (921) 966-26-89""", encoding="utf-8")
 
-ensure_templates_exist()
-
-# ==========================================
-# 2. УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE
-# ==========================================
+# ==========================================================
+# УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE
+# ==========================================================
 
 def get_google_credentials() -> Tuple[Any, str]:
     if not GOOGLE_LIBS_AVAILABLE:
@@ -507,7 +501,7 @@ def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
         return FALLBACK_CRITERIA_REGISTRY, f"Ошибка Google Sheets API: {str(e)}"
 
 # ==========================================================
-# 3. ТЕРМИНАЛ И УВЕДОМЛЕНИЯ
+# ТЕРМИНАЛ И УВЕДОМЛЕНИЯ
 # ==========================================================
 
 class TerminalLogger:
@@ -547,43 +541,8 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
     return "обращений"
 
 # ==========================================================
-# 4. АНАЛИЗАТОР ПЕРСПЕКТИВНОСТИ И ИНТЕГРАЦИИ
+# ИИ И ИНТЕГРАЦИИ
 # ==========================================================
-
-def calculate_client_potential(rating: float, score: float, lost_leads: int) -> Tuple[int, str, str]:
-    stars = 0
-    reasons = []
-
-    if rating >= 4.7:
-        stars += 2
-        reasons.append(f"отличная репутация ({rating})")
-    elif rating >= 4.3:
-        stars += 1
-        reasons.append(f"хороший рейтинг ({rating})")
-    else:
-        reasons.append(f"слабая репутация ({rating})")
-
-    if score <= 65:
-        stars += 2
-        reasons.append(f"критический балл ({score:.1f}/100)")
-    elif score <= 85:
-        stars += 1
-        reasons.append(f"средняя оптимизация ({score:.1f}/100)")
-    else:
-        reasons.append(f"карточка оптимизирована ({score:.1f}/100)")
-
-    if lost_leads >= 20:
-        stars += 1
-        reasons.append(f"потери -{lost_leads} лид/мес")
-
-    stars = min(5, max(1, stars))
-    star_str = "⭐" * stars
-    
-    if stars >= 4: justification = "Горячий лид: " + ", ".join(reasons) + "."
-    elif stars == 3: justification = "Средний потенциал: " + ", ".join(reasons) + "."
-    else: justification = "Сомнительный клиент: " + ", ".join(reasons) + "."
-        
-    return stars, star_str, justification
 
 def fetch_dadata_ceo(inn: str, logger: TerminalLogger) -> str:
     api_key = st.secrets.get("DADATA_API_KEY") or os.getenv("DADATA_API_KEY", "").strip()
@@ -615,6 +574,74 @@ def fetch_dadata_ceo(inn: str, logger: TerminalLogger) -> str:
     except Exception as e:
         logger.log(f"Ошибка API DaData: {e}", "ERROR")
         return ""
+
+def calculate_client_potential(rating: float, score: float, lost_leads: int) -> Tuple[int, str, str]:
+    stars = 0
+    reasons = []
+    if rating >= 4.7: stars += 2; reasons.append(f"отличная репутация ({rating})")
+    elif rating >= 4.3: stars += 1; reasons.append(f"хороший рейтинг ({rating})")
+    else: reasons.append(f"слабая репутация ({rating})")
+
+    if score <= 65: stars += 2; reasons.append(f"критический балл ({score:.1f}/100)")
+    elif score <= 85: stars += 1; reasons.append(f"средняя оптимизация ({score:.1f}/100)")
+    else: reasons.append(f"карточка оптимизирована ({score:.1f}/100)")
+
+    if lost_leads >= 20: stars += 1; reasons.append(f"потери -{lost_leads} лид/мес")
+
+    stars = min(5, max(1, stars))
+    star_str = "⭐" * stars
+    
+    if stars >= 4: justification = "Горячий лид: " + ", ".join(reasons) + "."
+    elif stars == 3: justification = "Средний потенциал: " + ", ".join(reasons) + "."
+    else: justification = "Сомнительный клиент: " + ", ".join(reasons) + "."
+        
+    return stars, star_str, justification
+
+# 📌 ИСПРАВЛЕНИЕ: Восстановлена недостающая ИИ функция
+def get_gemini_insights(data: Dict[str, Any], logger: TerminalLogger) -> Dict[str, Any]:
+    api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key or not GEMINI_AVAILABLE: return {"score": 0, "pain_point": ""}
+        
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-3.8-flash')
+        
+        safe_data = {
+            "title": data.get("title", ""),
+            "rating": data.get("rating", ""),
+            "reviews_count": data.get("reviewsCount", ""),
+            "features": data.get("features") or [],
+            "recent_reviews": [r.get("text", "") for r in (data.get("reviews") or [])[:5] if isinstance(r, dict)]
+        }
+        
+        prompt = f"""
+        Ты маркетолог-эксперт по B2B продажам. Анализируем профиль бизнеса:
+        {json.dumps(safe_data, ensure_ascii=False)}
+        
+        ПРАВИЛО ЯЗЫКА (СТРОГО):
+        - Не используй слова: "мастера", "лид-магнит", "кликабельность", "промо-блок".
+        - Используй B2B термины: "врачи и специалисты", "точка первого контакта", "ценообразование".
+        - Не указывай клиенту, что делать. Просто констатируй проблему.
+        
+        Выдай ответ СТРОГО в формате JSON с ключами:
+        1. "score" (число 0-100).
+        2. "pain_point" (текст): Одно предложение с самой грубой ошибкой.
+        """
+        
+        resp = model.generate_content(prompt)
+        result_text = resp.text.strip()
+        if result_text.startswith("```"):
+            result_text = re.sub(r"^```(?:json)?\n?", "", result_text)
+            result_text = re.sub(r"\n?```$", "", result_text).strip()
+            
+        try:
+            return json.loads(result_text)
+        except Exception:
+            match = re.search(r'\{.*\}', result_text, re.DOTALL)
+            return json.loads(match.group(0)) if match else {"score": 0, "pain_point": ""}
+            
+    except Exception as e:
+        return {"score": 0, "pain_point": ""}
 
 # ==========================================================
 # 5. ПАРСИНГ И СКОРИНГ
@@ -959,7 +986,6 @@ def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: Termin
     finally:
         if temp_typ.exists(): temp_typ.unlink()
 
-# 📌 НОВОЕ: Функция загрузки PDF на Google Диск
 def upload_pdf_to_drive(pdf_path: Path, title: str, logger: TerminalLogger) -> str:
     creds, status = get_google_credentials()
     if not creds:
@@ -979,11 +1005,9 @@ def upload_pdf_to_drive(pdf_path: Path, title: str, logger: TerminalLogger) -> s
         }
         media = MediaFileUpload(str(pdf_path), mimetype='application/pdf', resumable=True)
         
-        # Загружаем файл
         file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
         file_id = file.get('id')
         
-        # Делаем файл доступным всем по ссылке
         permission = {'type': 'anyone', 'role': 'reader'}
         drive_service.permissions().create(fileId=file_id, body=permission).execute()
         
@@ -994,7 +1018,6 @@ def upload_pdf_to_drive(pdf_path: Path, title: str, logger: TerminalLogger) -> s
         logger.log(f"Ошибка загрузки PDF на Диск: {e}", "ERROR")
         return ""
 
-# 📌 НОВОЕ: Единая функция генерации PDF и писем (чтобы использовать и массово, и точечно)
 def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger) -> Tuple[str, str, str]:
     n_info = NICHE_CONFIG.get(lead["niche"], NICHE_CONFIG["OTHER"])
     client_plural = n_info.get("client_word_plural", "клиенты")
@@ -1023,7 +1046,6 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
     else:
         raw_template = Path("templates/email_default.txt").read_text(encoding="utf-8")
 
-    # Сначала генерируем PDF, чтобы получить на него ссылку
     out_dir = Path("output")
     out_dir.mkdir(exist_ok=True)
     prefix = f"{re.sub(r'[^a-zA-Z0-9а-яА-Я]', '_', lead['title'])}_{lead['org_id']}"
@@ -1044,12 +1066,10 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
     pdf_link = ""
     if compile_pdf(content, p_pdf, out_dir, logger):
         logger.log(f"PDF для '{lead['title']}' скомпилирован успешно.", "SUCCESS")
-        # Загружаем на Диск
         pdf_link = upload_pdf_to_drive(p_pdf, lead['title'], logger)
     else:
         logger.log(f"Сбой компиляции PDF для '{lead['title']}'.", "ERROR")
 
-    # Подставляем всё в текст письма, включая новую ссылку
     ib_txt = raw_template.replace("[[CLIENT_PLURAL]]", client_plural) \
                          .replace("[[COMPANY_WORD]]", company_word) \
                          .replace("[[TITLE]]", lead['title']) \
@@ -1138,30 +1158,29 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
         else:
             scenario = f"Соседей-лидеров в радиусе 2 км нет. Дави на то, что локация свободна и можно легко забрать весь трафик, исправив '{vuln}'."
 
-        # 📌 НОВОЕ: В пакетном режиме мы теперь тоже генерируем PDF и письма!
         mapping = build_metrics(lead, criteria_registry)
         pdf_link, ib_txt, _ = generate_lead_collaterals(lead, mapping, logger)
 
         row = [
-            datetime.date.today().strftime("%d.%m.%Y"), # 1. Дата
-            lead['title'],                              # 2. Компания
-            NICHE_CONFIG[lead['niche']]['niche_name'],  # 3. Ниша
-            lead['canonical_url'],                      # 4. Ссылка на Карты
-            lead['lpr_name_raw'],                       # 5. ФИО ЛПР
-            lead['lpr_post'],                           # 6. Должность
-            lead['phone'],                              # 7. Телефон
-            "",                                         # 8. Мессенджер (для менеджера)
-            lead['email'],                              # 9. Email
-            f"{lead['score']:.1f}",                     # 10. Балл
-            f"{int(lead['rev_loss']):,} ₽".replace(',', ' '), # 11. Потери
-            vuln,                                       # 12. Главная боль
-            scenario,                                   # 13. Сценарий продаж
-            "Новый",                                    # 14. Статус лида
-            "Найти контакты / Квалификация",            # 15. Следующий шаг
-            "",                                         # 16. Дедлайн
-            "",                                         # 17. Комментарий
-            pdf_link,                                   # 18. Ссылка на PDF
-            ib_txt                                      # 19. Текст письма
+            datetime.date.today().strftime("%d.%m.%Y"), 
+            lead['title'],                              
+            NICHE_CONFIG[lead['niche']]['niche_name'],  
+            lead['canonical_url'],                      
+            lead['lpr_name_raw'],                       
+            lead['lpr_post'],                           
+            lead['phone'],                              
+            "",                                         
+            lead['email'],                              
+            f"{lead['score']:.1f}",                     
+            f"{int(lead['rev_loss']):,} ₽".replace(',', ' '), 
+            vuln,                                       
+            scenario,                                   
+            "Новый",                                    
+            "Найти контакты / Квалификация",            
+            "",                                         
+            "",                                         
+            pdf_link,                                   
+            ib_txt                                      
         ]
         rows_to_export.append(row)
         
@@ -1192,35 +1211,33 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
 
         logger.log("Генерация B2B-письма и PDF-отчета...", "STEP")
         
-        # Вызываем единую функцию генерации
         pdf_link, ib_txt, p_pdf_path = generate_lead_collaterals(audit, mapping, logger)
         
-        # Обновляем интерфейс
         st.session_state.current_icebreaker = ib_txt
         st.session_state.pdf_path = p_pdf_path
 
         vuln = audit['top_failures'][0]['title'] if audit['top_failures'] else "Слабое заполнение"
         
         single_row = [
-            datetime.date.today().strftime("%d.%m.%Y"), # 1. Дата
-            audit['title'],                              # 2. Компания
-            NICHE_CONFIG[audit['niche']]['niche_name'],  # 3. Ниша
-            audit['canonical_url'],                      # 4. Ссылка на Карты
-            audit['lpr_name_raw'],                       # 5. ФИО ЛПР
-            audit['lpr_post'],                           # 6. Должность
-            audit['phone'],                              # 7. Телефон
-            "",                                         # 8. Мессенджер
-            audit['email'],                              # 9. Email
-            f"{audit['score']:.1f}",                     # 10. Балл
-            f"{int(audit['rev_loss']):,} ₽".replace(',', ' '), # 11. Потери
-            vuln,                                       # 12. Главная боль
-            "Взят в работу точечно. Дави на ошибку: " + vuln, # 13. Сценарий продаж
-            "Новый",                                    # 14. Статус лида
-            "Связаться / Отправить Teardown",           # 15. Следующий шаг
-            "",                                         # 16. Дедлайн
-            "",                                         # 17. Комментарий
-            pdf_link,                                   # 18. Ссылка на PDF
-            ib_txt                                      # 19. Текст письма
+            datetime.date.today().strftime("%d.%m.%Y"), 
+            audit['title'],                              
+            NICHE_CONFIG[audit['niche']]['niche_name'],  
+            audit['canonical_url'],                      
+            audit['lpr_name_raw'],                       
+            audit['lpr_post'],                           
+            audit['phone'],                              
+            "",                                         
+            audit['email'],                              
+            f"{audit['score']:.1f}",                     
+            f"{int(audit['rev_loss']):,} ₽".replace(',', ' '), 
+            vuln,                                       
+            "Взят в работу точечно. Дави на ошибку: " + vuln, 
+            "Новый",                                    
+            "Связаться / Отправить Teardown",           
+            "",                                         
+            "",                                         
+            pdf_link,                                   
+            ib_txt                                      
         ]
         sync_batch_to_google([single_row], logger)
 
@@ -1237,7 +1254,7 @@ def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, 
     
     if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
 
-    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    run_url = f"[https://api.apify.com/v2/acts/](https://api.apify.com/v2/acts/){actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
     
     plain_urls = [u.strip() for u in urls if u.strip()]
     logger.log(f"Отправка {len(plain_urls)} прямых ссылок в Apify (Базовый режим)...", "STEP")
@@ -1275,11 +1292,11 @@ def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> Li
     
     if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
 
-    run_url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    run_url = f"[https://api.apify.com/v2/acts/](https://api.apify.com/v2/acts/){actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
     logger.log(f"Тестируем поисковый запрос в Apify: «{query}»...", "STEP")
     
     query_encoded = urllib.parse.quote_plus(query)
-    search_url = f"https://yandex.ru/maps/?text={query_encoded}"
+    search_url = f"[https://yandex.ru/maps/?text=](https://yandex.ru/maps/?text=){query_encoded}"
     
     payload = {
         "startUrls": [{"url": search_url}],
@@ -1311,21 +1328,6 @@ def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> Li
         
     logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
     return items
-
-def escape_typst(text: Any) -> str:
-    if text is None: return ""
-    return str(text)\
-        .replace("\\", "\\\\")\
-        .replace("[", "\\[")\
-        .replace("]", "\\]")\
-        .replace("#", "\\#")\
-        .replace('"', '«')\
-        .replace('$', '\\$')\
-        .replace('*', '\\*')\
-        .replace('_', '\\_')\
-        .replace('@', '\\@')\
-        .replace('<', '\\<')\
-        .replace('>', '\\>')
 
 def app():
     criteria_registry, sync_status = fetch_criteria_from_google()
@@ -1419,7 +1421,7 @@ def app():
             else:
                 st.info("👤 ЛПР не найден (ИНН отсутствует или не зарегистрирован в базе)")
                 
-            st.text_area("Текст для рассылки:", value=st.session_state.current_icebreaker, height=500)
+            st.text_area("Текст для рассылки:", value=st.session_state.get("current_icebreaker", "Ошибка генерации текста"), height=500)
 
         with c2:
             st.subheader("🎯 Квалификация лида (PIN100)")
