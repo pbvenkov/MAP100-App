@@ -49,7 +49,7 @@ st.set_page_config(page_title="PIN100 Analytics | CRM Matrix", page_icon="📍",
 # 1. КОНФИГУРАЦИЯ СИСТЕМЫ И БЕНЧМАРКОВ
 # ==========================================================
 
-GDRIVE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+GDRIVE_SCOPES = ["https://" + "www.googleapis.com/auth/spreadsheets", "https://" + "www.googleapis.com/auth/drive"]
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
 CRM_SHEET_RANGE = "Lead!A:S"
@@ -198,7 +198,7 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 
 #text(size: 14pt, weight: "bold", fill: rgb("#0f172a"))[Практическая ценность отчета]
 #v(0.5em)
-Отчет вскрывает скрытые программные фильтры Яндекс Карт, из-за которых горячие клиенты вашего района уходят к ближайшим конкурентам. В документе нет общих советов по SMM или платной рекламе: здесь зафиксированы конкре কর্তৃপক্ষের алгоритмические уязвимости профиля и рассчитана точная упущенная выручка бизнеса.
+Отчет вскрывает скрытые программные фильтры Яндекс Карт, из-за которых горячие клиенты вашего района уходят к ближайшим конкурентам. В документе нет общих советов по SMM или платной рекламе: здесь зафиксированы конкретные алгоритмические уязвимости профиля и рассчитана точная упущенная выручка бизнеса.
 
 #pagebreak(weak: true)
 
@@ -355,12 +355,10 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 """
 
 # ==========================================
-# УТИЛИТЫ
+# УТИЛИТЫ И ЭКРАНИРОВАНИЕ
 # ==========================================
 def escape_typst(text: Any) -> str:
-    """Умное экранирование текста от спецсимволов Markdown и Typst"""
     if text is None: return ""
-    # Обернули в круглые скобки, чтобы переносы строк не падали с ошибкой "unexpected character"
     return (str(text)
         .replace("\\", "\\\\")
         .replace("[", "\\[")         .replace("]", "\\]")
@@ -524,7 +522,7 @@ def send_telegram_error(error_message: str, context: str = "") -> bool:
     bot_token = st.secrets.get("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = st.secrets.get("TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not bot_token or not chat_id: return False
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    url = "https://" + f"api.telegram.org/bot{bot_token}/sendMessage"
     text = f"🚨 <b>PIN100 Ошибка</b>\n<b>Контекст:</b> {context}\n<code>{error_message}</code>"
     try:
         requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=3)
@@ -549,7 +547,7 @@ def fetch_dadata_ceo(inn: str, logger: TerminalLogger) -> str:
     api_key = st.secrets.get("DADATA_API_KEY") or os.getenv("DADATA_API_KEY", "").strip()
     if not api_key: return ""
         
-    url = "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
+    url = "https://" + "suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
     headers = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": f"Token {api_key}"}
     
     try:
@@ -1070,7 +1068,7 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
     else:
         logger.log(f"Сбой компиляции PDF для '{lead['title']}'.", "ERROR")
 
-    # Безопасное формирование текста в скобках
+    # Безопасное формирование текста
     ib_txt = (raw_template.replace("[[CLIENT_PLURAL]]", client_plural)
                          .replace("[[COMPANY_WORD]]", company_word)
                          .replace("[[TITLE]]", lead['title'])
@@ -1255,7 +1253,9 @@ def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, 
     
     if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
 
-    run_url = f"[https://api.apify.com/v2/acts/](https://api.apify.com/v2/acts/){actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    # Защита от авто-форматирования ссылок при копировании
+    apify_base = "https://" + "[api.apify.com/v2/acts/](https://api.apify.com/v2/acts/)"
+    run_url = f"{apify_base}{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
     
     plain_urls = [u.strip() for u in urls if u.strip()]
     logger.log(f"Отправка {len(plain_urls)} прямых ссылок в Apify (Базовый режим)...", "STEP")
@@ -1293,11 +1293,14 @@ def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> Li
     
     if not token or not actor: raise ValueError("Не настроены ключи APIFY_API_TOKEN и APIFY_ACTOR_ID.")
 
-    run_url = f"[https://api.apify.com/v2/acts/](https://api.apify.com/v2/acts/){actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    apify_base = "https://" + "[api.apify.com/v2/acts/](https://api.apify.com/v2/acts/)"
+    run_url = f"{apify_base}{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}&timeout=300"
+    
     logger.log(f"Тестируем поисковый запрос в Apify: «{query}»...", "STEP")
     
     query_encoded = urllib.parse.quote_plus(query)
-    search_url = f"[https://yandex.ru/maps/?text=](https://yandex.ru/maps/?text=){query_encoded}"
+    search_base = "https://" + "yandex.ru/maps/?text="
+    search_url = f"{search_base}{query_encoded}"
     
     payload = {
         "startUrls": [{"url": search_url}],
@@ -1422,7 +1425,6 @@ def app():
             else:
                 st.info("👤 ЛПР не найден (ИНН отсутствует или не зарегистрирован в базе)")
                 
-            # Безопасный вызов памяти (защита от KeyError)
             st.text_area("Текст для рассылки:", value=st.session_state.get("current_icebreaker", "Текст не сгенерирован из-за ошибки."), height=500)
 
         with c2:
