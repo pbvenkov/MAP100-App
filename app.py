@@ -361,7 +361,6 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 # ==========================================
 
 def clean_and_expand_url(raw_url: str) -> str:
-    """Очищает ссылку от скобок Markdown и раскрывает короткие ссылки Яндекса"""
     match = re.search(r'(https?://[^\s\]\)]+)', raw_url)
     clean_u = match.group(1) if match else raw_url.strip()
     
@@ -490,7 +489,15 @@ def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
         idx_title = headers.index("Критерий")
         idx_group = headers.index("Группа метрик")
         idx_weight = headers.index("Балл")
+        idx_complexity = headers.index("Сложность") if "Сложность" in headers else -1
         
+        niche_cols = {
+            "DENTISTRY": headers.index("DENTISTRY") if "DENTISTRY" in headers else -1,
+            "COSMETOLOGY": headers.index("BEAUTY_MEDICAL") if "BEAUTY_MEDICAL" in headers else -1,
+            "BEAUTY": headers.index("BEAUTY_MEDICAL") if "BEAUTY_MEDICAL" in headers else -1,
+            "AUTOSERVICES": headers.index("AUTOSERVICES") if "AUTOSERVICES" in headers else -1,
+        }
+
         desc_cols = {h: i for i, h in enumerate(headers) if h.startswith("Обоснование_ОШИБКИ")}
         registry = {}
 
@@ -502,6 +509,17 @@ def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
                 try: weight = float(str(row[idx_weight]).replace(',', '.'))
                 except ValueError: weight = 0.0
 
+                try: 
+                    comp_val = float(str(row[idx_complexity]).replace(',', '.')) if idx_complexity != -1 else 2.0
+                except ValueError: 
+                    comp_val = 2.0
+
+                niche_weights = {}
+                for n_key, n_idx in niche_cols.items():
+                    if n_idx != -1 and len(row) > n_idx and str(row[n_idx]).strip():
+                        try: niche_weights[n_key] = float(str(row[n_idx]).replace(',', '.'))
+                        except ValueError: niche_weights[n_key] = weight
+
                 descs = {}
                 for col_name, col_idx in desc_cols.items():
                     if len(row) > col_idx and str(row[col_idx]).strip():
@@ -510,8 +528,9 @@ def fetch_criteria_from_google() -> Tuple[Dict[str, Dict[str, Any]], str]:
                 registry[code] = {
                     "title": str(row[idx_title]).strip() if len(row) > idx_title else code,
                     "group": str(row[idx_group]).strip() if len(row) > idx_group else "Анализ",
-                    "complexity": 2,
+                    "complexity": comp_val,
                     "weight": weight,
+                    "niche_weights": niche_weights,
                     "descs": descs
                 }
         return registry, "OK"
@@ -703,7 +722,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     struct_str = json.dumps(data_no_reviews, ensure_ascii=False).lower()
 
     for c_code, c_meta in criteria_registry.items():
-        raw_scores[c_code] = float(c_meta["weight"])
+        raw_scores[c_code] = c_meta.get("niche_weights", {}).get(niche, c_meta["weight"])
 
     if "CONV-48.1" in raw_scores and not any(w in struct_str for w in ["yclients", "medflex", "infoclinica", "prodoctorov", "dikidi", "записаться", "онлайн-запис", "bookingurl", "actionbuttons"]):
         raw_scores["CONV-48.1"] = 0.0
@@ -724,7 +743,8 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     if "PROF-01.1" in raw_scores and not (is_verified or len(title) > 2): raw_scores["PROF-01.1"] = 0.0
     if "PROF-12.1" in raw_scores and not is_verified: raw_scores["PROF-12.1"] = 0.0
     if "PROF-03.1" in raw_scores and not categories: raw_scores["PROF-03.1"] = 0.0
-    if "PROF-03.2" in raw_scores and len(categories) < 3: raw_scores["PROF-03.2"] = 0.75 if len(categories) == 2 else 0.0
+    if "PROF-03.2" in raw_scores and len(categories) < 3: 
+        raw_scores["PROF-03.2"] = raw_scores["PROF-03.2"] * 0.5 if len(categories) == 2 else 0.0
 
     if not website: 
         if "PROF-04.1" in raw_scores: raw_scores["PROF-04.1"] = 0.0
@@ -733,7 +753,8 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
         raw_scores["PROF-04.2"] = 0.0
 
     if "PROF-05.1" in raw_scores and not data.get("phones"): raw_scores["PROF-05.1"] = 0.0
-    if "PROF-07.1" in raw_scores and len(working_hours) < 7: raw_scores["PROF-07.1"] = 1.0 if len(working_hours) > 0 else 0.0
+    if "PROF-07.1" in raw_scores and len(working_hours) < 7: 
+        raw_scores["PROF-07.1"] = raw_scores["PROF-07.1"] * 0.5 if len(working_hours) > 0 else 0.0
     if "PROF-13.1" in raw_scores and not any(w in struct_str for w in ["wa.me", "t.me", "whatsapp"]): raw_scores["PROF-13.1"] = 0.0
     if "PROF-10.3" in raw_scores and not any(kw in full_description for kw in ["лечение", "прием", "услуг", "диагностик", "терапи", "консультац"]):
         raw_scores["PROF-10.3"] = 0.0
@@ -745,7 +766,8 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
 
     if isinstance(items, list) and len(items) > 0:
         total_items = len(items)
-        if "PROF-11.1" in raw_scores and total_items < 10: raw_scores["PROF-11.1"] = 2.0 if total_items >= 3 else 0.0
+        if "PROF-11.1" in raw_scores and total_items < 10: 
+            raw_scores["PROF-11.1"] = raw_scores["PROF-11.1"] * 0.5 if total_items >= 3 else 0.0
         
         has_photo = sum(1 for i in items if isinstance(i, dict) and (i.get("image") or i.get("imageUrl") or i.get("image_url") or i.get("photoUrl") or i.get("picture")))
         has_price = sum(1 for i in items if isinstance(i, dict) and (i.get("price") or i.get("cost") or i.get("priceValue")))
@@ -766,7 +788,8 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
 
     features_str = str(features).lower()
     if "PROF-08.2" in raw_scores and "дмс" not in features_str and "рассрочка" not in features_str: raw_scores["PROF-08.2"] = 0.0
-    if "CONT-38.1" in raw_scores and photos_count < 10: raw_scores["CONT-38.1"] = 0.5 if photos_count >= 5 else 0.0
+    if "CONT-38.1" in raw_scores and photos_count < 10: 
+        raw_scores["CONT-38.1"] = raw_scores["CONT-38.1"] * 0.5 if photos_count >= 5 else 0.0
     if "CONT-42.1" in raw_scores and not any(kw in struct_str for kw in ["видео", "video", "youtube", "тур", "панорам", "videos"]): raw_scores["CONT-42.1"] = 0.0
         
     has_news = bool(data.get("posts") or data.get("news") or data.get("updates") or "story" in struct_str or "новост" in struct_str)
@@ -774,7 +797,8 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
 
     if "REP-27.2" in raw_scores and rating < 4.8: raw_scores["REP-27.2"] = 0.0
     if "REP-27.1" in raw_scores and rating < 4.5: raw_scores["REP-27.1"] = 0.0
-    if "REP-28.1" in raw_scores and rev_count < 50: raw_scores["REP-28.1"] = 1.0 if rev_count >= 15 else 0.0
+    if "REP-28.1" in raw_scores and rev_count < 50: 
+        raw_scores["REP-28.1"] = raw_scores["REP-28.1"] * 0.5 if rev_count >= 15 else 0.0
 
     if reviews and isinstance(reviews, list) and len(reviews) > 0:
         replied_count = 0
@@ -796,7 +820,8 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
                         if not most_recent_date or r_date > most_recent_date: most_recent_date = r_date
                     except Exception: pass
 
-        if "REP-30.1" in raw_scores and (replied_count / total_revs) < 0.9: raw_scores["REP-30.1"] = 1.5 if (replied_count / total_revs) >= 0.5 else 0.0
+        if "REP-30.1" in raw_scores and (replied_count / total_revs) < 0.9: 
+            raw_scores["REP-30.1"] = raw_scores["REP-30.1"] * 0.5 if (replied_count / total_revs) >= 0.5 else 0.0
         if "SEO-19.2" in raw_scores and not seo_in_reviews: raw_scores["SEO-19.2"] = 0.0
 
         if "REP-29.1" in raw_scores:
@@ -821,7 +846,7 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     gap_list = []
     
     for code, meta in criteria_registry.items():
-        max_w = meta["weight"]
+        max_w = meta.get("niche_weights", {}).get(niche, meta["weight"])
         cur_w = raw_scores.get(code, max_w)
         total_score += cur_w
         lost = max_w - cur_w
@@ -1156,7 +1181,7 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
             lead['title'],                              
             NICHE_CONFIG[lead['niche']]['niche_name'],  
             lead['canonical_url'],                      
-            format_lpr_name(lead.get('lpr_name_raw', '')), # 📌 ИСПРАВЛЕНИЕ: Форматируем имя для CRM
+            format_lpr_name(lead.get('lpr_name_raw', '')),
             lead['lpr_post'],                           
             lead['phone'],                              
             "",                                         
@@ -1223,7 +1248,7 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             audit['title'],                              
             NICHE_CONFIG[audit['niche']]['niche_name'],  
             audit['canonical_url'],                      
-            format_lpr_name(audit.get('lpr_name_raw', '')), # 📌 ИСПРАВЛЕНИЕ: Форматируем имя для CRM
+            format_lpr_name(audit.get('lpr_name_raw', '')),
             audit['lpr_post'],                           
             audit['phone'],                              
             "",                                         
@@ -1384,7 +1409,6 @@ def app():
     logger = TerminalLogger(st.empty())
 
     if btn_urls or btn_apify_search or btn_json:
-        # 📌 ИСПРАВЛЕНИЕ: Очищаем старые результаты перед новым запуском
         st.session_state.batch_done = False
         st.session_state.batch_zip_path = None
         st.session_state.pop("current_audit", None)
