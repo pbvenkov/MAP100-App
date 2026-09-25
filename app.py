@@ -70,6 +70,9 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "ltv_months": 12,
         "benchmark_source": "BusinesStat («Анализ рынка стоматологии РФ») и РБК",
         "search_volume": "более 10 000 поисков стоматологических услуг",
+        "margin_queries": "маржинальным стоматологическим запросам (имплантация, ортодонтия, тотальное протезирование)",
+        "ltv_phrase": "комплексных планов лечения и повторных визитов",
+        "consult_phrase": "первичную консультацию",
     },
     "COSMETOLOGY": {
         "niche_name": "Косметологическая клиника",
@@ -84,6 +87,9 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "ltv_months": 10,
         "benchmark_source": "РБК («Российский рынок эстетической медицины»)",
         "search_volume": "более 15 000 поисков косметологических услуг",
+        "margin_queries": "запросам эстетической медицины (аппаратная косметология, инъекции, SMAS-лифтинг)",
+        "ltv_phrase": "курсовых процедур и регулярных визитов",
+        "consult_phrase": "первичную процедуру",
     },
     "BEAUTY": {
         "niche_name": "Парикмахерская / Барбершоп",
@@ -98,6 +104,9 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "ltv_months": 6,
         "benchmark_source": "РБК («Российский рынок бьюти-услуг»)",
         "search_volume": "более 25 000 поисков бьюти-услуг",
+        "margin_queries": "самым целевым запросам (сложное окрашивание, блонд, комплексные уходы)",
+        "ltv_phrase": "регулярных записей и возврата клиентов",
+        "consult_phrase": "первичный визит",
     },
     "GENERAL_MEDICINE": {
         "niche_name": "Многопрофильный медицинский центр",
@@ -112,6 +121,26 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "ltv_months": 12,
         "benchmark_source": "BusinesStat и НАФИ",
         "search_volume": "более 20 000 поисков медицинских услуг",
+        "margin_queries": "профильным медицинским запросам (прием узких специалистов, комплексная диагностика, УЗИ)",
+        "ltv_phrase": "повторных приемов и сдачи анализов",
+        "consult_phrase": "первичный прием",
+    },
+    "AUTOSERVICES": {
+        "niche_name": "Автосервис",
+        "niche_genitive": "автосервисов",
+        "company_word": "СТО",
+        "client_word": "клиент",
+        "client_word_plural": "клиенты",
+        "client_word_genitive_plural": "клиентов",
+        "quality_phrase": "качества ремонта и квалификации механиков",
+        "benchmark_leads": 80,
+        "base_check": 8000,
+        "ltv_months": 12,
+        "benchmark_source": "АВТОСТАТ",
+        "search_volume": "более 12 000 поисков автоуслуг",
+        "margin_queries": "маржинальным услугам (капитальный ремонт, кузовные работы, сложное ТО)",
+        "ltv_phrase": "сезонных шиномонтажей и плановых ТО",
+        "consult_phrase": "диагностику",
     },
     "OTHER": {
         "niche_name": "Локальный бизнес",
@@ -126,6 +155,9 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "ltv_months": 3,
         "benchmark_source": "Усредненные данные локального поиска",
         "search_volume": "тысячи локальных поисков",
+        "margin_queries": "вашим ключевым коммерческим запросам",
+        "ltv_phrase": "повторных продаж и лояльности",
+        "consult_phrase": "первое обращение",
     }
 }
 
@@ -258,7 +290,7 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 #v(2em)
 #rect(width: 100%, fill: rgb("#F1F5F9"), stroke: none, radius: 4pt, inset: 10pt)[
   #text(size: 8.5pt, fill: rgb("#475569"))[
-    \* Консервативный расчет первого визита (базовый чек [[CLIENT_CHECK_FMT]] ₽). С учетом повторных визитов и лояльности клиентов (LTV: [[CLIENT_LTV]] мес.) годовой отток районного бюджета составляет до *[[LTV_LOSS_FMT]] ₽*. Источник бенчмарков: [[BENCHMARK_SOURCE]].\
+    \* Консервативный расчет первого визита (базовый чек [[CLIENT_CHECK_FMT]] ₽). С учетом [[LTV_PHRASE]] (цикл: [[CLIENT_LTV]] мес.) годовой отток районного бюджета составляет до *[[LTV_LOSS_FMT]] ₽*. Источник бенчмарков: [[BENCHMARK_SOURCE]].\
     \
     *Важное примечание:* Оценка [[SCORE]]/100 фиксирует исключительно техническую готовность профиля в гео-выдаче Яндекса, а не реальное качество [[QUALITY_PHRASE]]. Это программные особенности поисковой системы, которые не зависят от работы администраторов и специалистов.
   ]
@@ -399,11 +431,11 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
 
 def format_lpr_name(raw_name: str) -> str:
     if not raw_name or str(raw_name).strip().lower() in ['nan', 'none', 'null', '']:
-        return "Уважаемый руководитель"
+        return "[ИМЯ РУКОВОДИТЕЛЯ]"
     name_str = str(raw_name).split(" (")[0].strip()
     stop_words = ['коллеги', 'руководитель', 'директор', 'менеджер', 'администратор', 'nan', 'none']
     if name_str.lower() in stop_words or not name_str:
-        return "Уважаемый руководитель"
+        return "[ИМЯ РУКОВОДИТЕЛЯ]"
     parts = name_str.split()
     if len(parts) >= 3:
         return f"{parts[1].capitalize()} {parts[2].capitalize()}"
@@ -422,13 +454,14 @@ def ensure_templates_exist():
 
 В вашей локации ежемесячно фиксируется [[SEARCH_VOLUME]], однако часть этого первичного потока проходит мимо «[[TITLE]]» и уходит к ближайшим конкурентам[[COMPETITORS_PHRASE]].
 
-Наш аналитический центр провел независимую проверку вашего профиля по алгоритмам Яндекса 2026 года. Алгоритм оценивает карточку по [[TOTAL_PARAMS]] факторам ранжирования. Ваш профиль выглядит неплохо ([[FILLED_PARAMS]] базовых настроек), но в нем пропущено несколько критических уязвимостей, из-за которых система урезает вам показы.
+Наш аналитический центр провел независимую проверку вашего профиля по алгоритмам Яндекса 2026 года. Алгоритм оценивает карточку по [[TOTAL_PARAMS]] фактору ранжирования. Ваш профиль выглядит неплохо ([[FILLED_PARAMS]] базовых настроек), но в нем пропущено несколько критических уязвимостей, из-за которых система урезает вам показы именно по [[MARGIN_QUERIES]].
 
-Вот 3 главные причины, почему теряются записи:
+Вот 3 главные причины, почему теряются записи на [[CONSULT_PHRASE]]:
 
 [[FAILURES_TEXT]]
+
 **Откуда берется цифра потерь:**
-Теряя всего ~[[LOST_LEADS]] первичных обращений в месяц (при минимальном чеке [[CLIENT_CHECK_FMT]] ₽), вы ежемесячно недополучаете [[REV_LOSS_FMT]] рублей прямого приема. С учетом LTV (повторных визитов) это скрытая потеря до [[LTV_LOSS_FMT]] рублей годового оборота, который просто перетекает вашим соседям.
+Теряя всего ~[[LOST_LEADS]] первичных обращений в месяц (при минимальном чеке [[CLIENT_CHECK_FMT]] ₽), вы ежемесячно недополучаете [[REV_LOSS_FMT]] рублей прямого приема. С учетом [[LTV_PHRASE]] это скрытая потеря до [[LTV_LOSS_FMT]] рублей годового оборота, который просто перетекает вашим соседям.
 
 Детальный аудит и разбор всех [[MISSING_PARAMS]] незаполненных параметров мы оформили в наглядный 4-страничный PDF-отчет (прикрепил к сообщению). Если вам интересно взглянуть на цифры и узнать, как перехватить трафик — ответьте на это письмо словом «Да».
 
@@ -1001,7 +1034,8 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
         "[[LTV_LOSS_FMT]]": f"{int(ltv_loss):,}".replace(",", " "), "[[BENCHMARK_SOURCE]]": audit["benchmark_source"],
         "[[QUALITY_PHRASE]]": n_info["quality_phrase"], "[[EXECUTIVE_SUMMARY]]": executive_summary,
         "[[GAPS_ARRAY]]": gaps_array_str,
-        "[[WEEKLY_LOSS_FMT]]": f"{int(weekly_loss):,}".replace(",", " ")
+        "[[WEEKLY_LOSS_FMT]]": f"{int(weekly_loss):,}".replace(",", " "),
+        "[[LTV_PHRASE]]": n_info.get("ltv_phrase", "повторных продаж и лояльности")
     }
 
 # ==========================================================
@@ -1037,6 +1071,9 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
     client_plural = n_info.get("client_word_plural", "клиенты")
     company_word = n_info.get("company_word", "организации")
     search_volume = n_info.get("search_volume", "тысячи локальных поисков")
+    margin_queries = n_info.get("margin_queries", "вашим ключевым коммерческим запросам")
+    ltv_phrase = n_info.get("ltv_phrase", "повторных продаж и лояльности")
+    consult_phrase = n_info.get("consult_phrase", "первое обращение")
     
     if "сосед" not in lead['competitors'][0].lower():
         competitors_phrase = f" (в частности, в «{lead['competitors'][0]}» и «{lead['competitors'][1]}»)"
@@ -1090,10 +1127,13 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
                          .replace("[[COMPETITORS_PHRASE]]", competitors_phrase)
                          .replace("[[TOTAL_PARAMS]]", str(total_params))
                          .replace("[[FILLED_PARAMS]]", str(filled_params))
+                         .replace("[[MARGIN_QUERIES]]", margin_queries)
+                         .replace("[[CONSULT_PHRASE]]", consult_phrase)
                          .replace("[[FAILURES_TEXT]]", failures_text.strip())
                          .replace("[[LOST_LEADS]]", str(mapping.get('[[LOST_LEADS]]', '0')))
                          .replace("[[CLIENT_CHECK_FMT]]", mapping.get('[[CLIENT_CHECK_FMT]]', ''))
                          .replace("[[REV_LOSS_FMT]]", mapping.get('[[REV_LOSS_FMT]]', ''))
+                         .replace("[[LTV_PHRASE]]", ltv_phrase)
                          .replace("[[LTV_LOSS_FMT]]", mapping.get('[[LTV_LOSS_FMT]]', ''))
                          .replace("[[MISSING_PARAMS]]", str(missing_params)))
                          
