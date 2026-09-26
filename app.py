@@ -463,23 +463,19 @@ def ensure_templates_exist():
     tpl_dir.mkdir(exist_ok=True)
     default_path = tpl_dir / "email_default.txt"
     
-    # ПРИНУДИТЕЛЬНАЯ ЗАПИСЬ ШАБЛОНА БЕЗ УСЛОВИЙ (Защита от кэша)
+    # ПРИНУДИТЕЛЬНАЯ ЗАПИСЬ ОБНОВЛЕННОГО ШАБЛОНА
     default_path.write_text("""Тема: Почему [[CLIENT_PLURAL]] на Яндекс Картах не доходят до [[COMPANY_WORD]] «[[TITLE]]»?
 
 [[LPR_NAME]], добрый день.
 
 В вашей локации ежемесячно фиксируется [[SEARCH_VOLUME]], однако часть этого первичного потока проходит мимо «[[TITLE]]» и уходит к ближайшим конкурентам[[COMPETITORS_PHRASE]].
 
-Наш аналитический центр провел независимую проверку вашего профиля по алгоритмам Яндекса 2026 года. Алгоритм оценивает карточку по [[TOTAL_PARAMS]] фактору ранжирования. Ваш профиль выглядит неплохо ([[FILLED_PARAMS]] базовых настроек), но в нем пропущено несколько критических уязвимостей, из-за которых система урезает вам показы именно по [[MARGIN_QUERIES]].
-
-Вот 3 главные причины, почему теряются записи на [[CONSULT_PHRASE]]:
-
-[[FAILURES_TEXT]]
+Наш аналитический центр провел независимую проверку вашего профиля. Сегодня алгоритмы Яндекса оценивают карточку компании по [[TOTAL_PARAMS]] критерию качества. Ваш профиль выглядит неплохо ([[FILLED_PARAMS]] базовых настроек), но в нем пропущено несколько критических уязвимостей (например, **[[FAILURES_INLINE]]**). Из-за этого система урезает вам показы именно по [[MARGIN_QUERIES]].
 
 **Откуда берется цифра потерь:**
-Теряя всего ~[[LOST_LEADS]] первичных [[LEADS_DECLENSION]] в месяц (при минимальном чеке [[CLIENT_CHECK_FMT]] ₽), вы ежемесячно недополучаете [[REV_LOSS_FMT]] рублей прямого приема. С учетом [[LTV_PHRASE]] это скрытая потеря до [[LTV_LOSS_FMT]] рублей годового оборота, который просто перетекает вашим соседям.
+Теряя из-за этих недочетов всего ~[[LOST_LEADS]] первичных [[LEADS_DECLENSION]] в месяц (при минимальном чеке [[CLIENT_CHECK_FMT]] ₽), вы ежемесячно недополучаете [[REV_LOSS_FMT]] рублей первичной выручки. С учетом [[LTV_PHRASE]] это скрытая потеря до [[LTV_LOSS_FMT]] рублей годового оборота, который просто перетекает к соседним конкурентам.
 
-Детальный аудит и разбор всех [[MISSING_PARAMS]] незаполненных параметров мы оформили в наглядный 4-страничный PDF-отчет (прикрепил к сообщению). Если вам интересно взглянуть на цифры и узнать, как перехватить трафик — ответьте на это письмо словом «Да».
+Детальный аудит и разбор всех [[MISSING_PARAMS]] незаполненных параметров мы оформили в короткий PDF-отчет (прикрепил к сообщению). Если вам интересно взглянуть на цифры и узнать, как перехватить трафик — ответьте на это письмо словом «Да».
 
 --
 Павел Венков
@@ -1114,16 +1110,17 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
     search_volume = n_info.get("search_volume", "тысячи локальных поисков")
     margin_queries = n_info.get("margin_queries", "вашим ключевым коммерческим запросам")
     ltv_phrase = n_info.get("ltv_phrase", "повторных продаж и лояльности")
-    consult_phrase = n_info.get("consult_phrase", "первое обращение")
     
     if "сосед" not in lead['competitors'][0].lower():
         competitors_phrase = f" (в частности, в «{lead['competitors'][0]}» и «{lead['competitors'][1]}»)"
     else:
         competitors_phrase = ""
         
-    failures_text = ""
-    for f in lead["top_failures"][:3]:
-        failures_text += f"• **{f['title']}**. {f['desc']}\n\n"
+    # Формируем строку с 2 главными ошибками (с маленькой буквы)
+    inline_failures = []
+    for f in lead["top_failures"][:2]:
+        inline_failures.append(str(f['title']).lower())
+    failures_inline_text = " и ".join(inline_failures)
 
     total_params = 41
     filled_params = int(round(total_params * (lead["score"] / 100.0)))
@@ -1169,8 +1166,7 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
                          .replace("[[TOTAL_PARAMS]]", str(total_params))
                          .replace("[[FILLED_PARAMS]]", str(filled_params))
                          .replace("[[MARGIN_QUERIES]]", margin_queries)
-                         .replace("[[CONSULT_PHRASE]]", consult_phrase)
-                         .replace("[[FAILURES_TEXT]]", failures_text.strip())
+                         .replace("[[FAILURES_INLINE]]", failures_inline_text)
                          .replace("[[LOST_LEADS]]", str(mapping.get('[[LOST_LEADS]]', '0')))
                          .replace("[[CLIENT_CHECK_FMT]]", mapping.get('[[CLIENT_CHECK_FMT]]', ''))
                          .replace("[[REV_LOSS_FMT]]", mapping.get('[[REV_LOSS_FMT]]', ''))
