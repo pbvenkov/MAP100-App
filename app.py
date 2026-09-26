@@ -463,7 +463,7 @@ def ensure_templates_exist():
     tpl_dir.mkdir(exist_ok=True)
     default_path = tpl_dir / "email_default.txt"
     
-    # ПРИНУДИТЕЛЬНАЯ ЗАПИСЬ ШАБЛОНА БЕЗ УСЛОВИЙ
+    # ПРИНУДИТЕЛЬНАЯ ЗАПИСЬ ШАБЛОНА БЕЗ УСЛОВИЙ (Защита от кэша)
     default_path.write_text("""Тема: Почему [[CLIENT_PLURAL]] на Яндекс Картах не доходят до [[COMPANY_WORD]] «[[TITLE]]»?
 
 [[LPR_NAME]], добрый день.
@@ -477,7 +477,7 @@ def ensure_templates_exist():
 [[FAILURES_TEXT]]
 
 **Откуда берется цифра потерь:**
-Теряя всего ~[[LOST_LEADS]] первичных обращений в месяц (при минимальном чеке [[CLIENT_CHECK_FMT]] ₽), вы ежемесячно недополучаете [[REV_LOSS_FMT]] рублей прямого приема. С учетом [[LTV_PHRASE]] это скрытая потеря до [[LTV_LOSS_FMT]] рублей годового оборота, который просто перетекает вашим соседям.
+Теряя всего ~[[LOST_LEADS]] первичных [[LEADS_DECLENSION]] в месяц (при минимальном чеке [[CLIENT_CHECK_FMT]] ₽), вы ежемесячно недополучаете [[REV_LOSS_FMT]] рублей прямого приема. С учетом [[LTV_PHRASE]] это скрытая потеря до [[LTV_LOSS_FMT]] рублей годового оборота, который просто перетекает вашим соседям.
 
 Детальный аудит и разбор всех [[MISSING_PARAMS]] незаполненных параметров мы оформили в наглядный 4-страничный PDF-отчет (прикрепил к сообщению). Если вам интересно взглянуть на цифры и узнать, как перехватить трафик — ответьте на это письмо словом «Да».
 
@@ -627,6 +627,11 @@ def get_declension(number: int, word_type: str = "пациент") -> str:
         if n1 == 1: return word_type
         if 2 <= n1 <= 4: return f"{word_type}а"
         return f"{word_type}ов"
+    
+    # Умные склонения для слова "обращение"
+    if 11 <= n <= 19: return "обращений"
+    if n1 == 1: return "обращение"
+    if 2 <= n1 <= 4: return "обращения"
     return "обращений"
 
 # ==========================================================
@@ -907,9 +912,24 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
             gap_list.append({"code": code, "title": meta["title"], "desc": final_desc, "impact": impact})
 
     gap_list.sort(key=lambda x: x["impact"], reverse=True)
-    top_n = gap_list[:5]
+    
+    # --- УМНЫЙ ФИЛЬТР ДУБЛЕЙ СМЫСЛОВ ---
+    top_n = []
+    has_text_error = False # Флажок: брали ли мы уже ошибку про текст
+    
+    for gap in gap_list:
+        # Если это текстовая ошибка (CONV-49.1, PROF-10.3 или SEO-18.3)
+        if gap["code"] in ["PROF-10.3", "CONV-49.1", "SEO-18.3"]:
+            if has_text_error:
+                continue # Пропускаем, если про текст уже писали!
+            has_text_error = True
+            
+        top_n.append(gap)
+        if len(top_n) == 3:
+            break
+
     while len(top_n) < 3:
-        top_n.append({"title": "Техническая оптимизация", "desc": "Поддерживайте актуальность данных.", "impact": 0})
+        top_n.append({"code": "TECH-01", "title": "Техническая оптимизация", "desc": "Поддерживайте актуальность данных.", "impact": 0})
 
     return round(total_score, 1), top_n, raw_scores
 
@@ -1011,6 +1031,10 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     ltv_loss = rev_loss * audit["ltv_months"]
 
     table_declension = get_declension(lost_leads, n_info["client_word"])
+    
+    # Новое склонение специально для письма (слово "обращение")
+    leads_declension = get_declension(lost_leads, "обращение")
+
     failures = audit.get("top_failures", [])
 
     if score >= 80:
@@ -1046,6 +1070,7 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
         "[[CLIENT_LEADS]]": str(audit["benchmark_leads"]), "[[CURRENT_LEADS]]": str(current_leads),
         "[[POTENTIAL_LEADS]]": str(audit["benchmark_leads"]), "[[DEV]]": f"{dev:.1f}", 
         "[[LOST_LEADS]]": str(lost_leads), "[[TABLE_DECLENSION]]": table_declension,
+        "[[LEADS_DECLENSION]]": leads_declension,
         "[[CLIENT_CHECK_FMT]]": f"{int(audit['base_check']):,}".replace(",", " "), "[[CLIENT_LTV]]": str(audit["ltv_months"]),
         "[[LTV_LOSS_FMT]]": f"{int(ltv_loss):,}".replace(",", " "), "[[BENCHMARK_SOURCE]]": audit["benchmark_source"],
         "[[QUALITY_PHRASE]]": n_info["quality_phrase"], "[[EXECUTIVE_SUMMARY]]": executive_summary,
@@ -1151,7 +1176,8 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
                          .replace("[[REV_LOSS_FMT]]", mapping.get('[[REV_LOSS_FMT]]', ''))
                          .replace("[[LTV_PHRASE]]", ltv_phrase)
                          .replace("[[LTV_LOSS_FMT]]", mapping.get('[[LTV_LOSS_FMT]]', ''))
-                         .replace("[[MISSING_PARAMS]]", str(missing_params)))
+                         .replace("[[MISSING_PARAMS]]", str(missing_params))
+                         .replace("[[LEADS_DECLENSION]]", mapping.get('[[LEADS_DECLENSION]]', 'обращений')))
                          
     return ib_txt, str(p_pdf)
 
