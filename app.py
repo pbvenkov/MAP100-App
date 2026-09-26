@@ -393,6 +393,10 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 # ==========================================
 
 def clean_and_expand_url(raw_url: str) -> str:
+    """
+    Очищает ссылку от скобок Markdown, раскрывает короткие ссылки (yandex.ru/-/) 
+    и приводит любые ссылки к строгому каноническому формату Яндекса для парсеров.
+    """
     match = re.search(r'(https?://[^\s\]\)]+)', raw_url)
     clean_u = match.group(1) if match else raw_url.strip()
     
@@ -405,6 +409,17 @@ def clean_and_expand_url(raw_url: str) -> str:
         except Exception:
             pass
             
+    parsed = urllib.parse.urlparse(clean_u)
+    
+    if "oid=" in parsed.query:
+        query_params = urllib.parse.parse_qs(parsed.query)
+        org_id = query_params.get("oid", [""])[0]
+        if org_id:
+            return f"https://yandex.ru/maps/org/{org_id}/"
+            
+    if "yandex" in parsed.netloc and ("/maps/org/" in parsed.path or "/profile/" in parsed.path):
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        
     return clean_u
 
 def escape_typst(text: Any) -> str:
