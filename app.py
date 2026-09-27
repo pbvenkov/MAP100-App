@@ -1384,7 +1384,10 @@ def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, 
     
     if isinstance(resp_json, dict) and "error" in resp_json:
         error_msg = resp_json["error"].get("message", str(resp_json))
-        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}")
+        raise RuntimeError(
+            f"Парсер завершил работу аварийно: {error_msg}. "
+            "Скорее всего ваш парсер не поддерживает поисковые ссылки, используйте вкладку 'Парсинг по ссылкам'."
+        )
         
     items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
     
