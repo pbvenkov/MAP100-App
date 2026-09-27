@@ -393,10 +393,7 @@ DEFAULT_TYPST_TEMPLATE = r"""#set page(
 # ==========================================
 
 def clean_and_expand_url(raw_url: str) -> str:
-    """
-    Очищает ссылку от скобок Markdown, раскрывает короткие ссылки (yandex.ru/-/) 
-    и приводит любые ссылки к строгому каноническому формату Яндекса для парсеров.
-    """
+    """Очищает ссылку и раскрывает короткие ссылки Яндекса."""
     match = re.search(r'(https?://[^\s\]\)]+)', raw_url)
     clean_u = match.group(1) if match else raw_url.strip()
     
@@ -426,8 +423,7 @@ def escape_typst(text: Any) -> str:
     if text is None: return ""
     return (str(text)
         .replace("\\", "\\\\")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
+        .replace("[", "\\[")         .replace("]", "\\]")
         .replace("#", "\\#")
         .replace('"', '«')
         .replace('$', '\\$')
@@ -914,13 +910,12 @@ def perform_deep_scoring(data: Dict[str, Any], logger: TerminalLogger, criteria_
     
     # --- УМНЫЙ ФИЛЬТР ДУБЛЕЙ СМЫСЛОВ ---
     top_n = []
-    has_text_error = False # Флажок: брали ли мы уже ошибку про текст
+    has_text_error = False
     
     for gap in gap_list:
-        # Если это текстовая ошибка (CONV-49.1, PROF-10.3 или SEO-18.3)
         if gap["code"] in ["PROF-10.3", "CONV-49.1", "SEO-18.3"]:
             if has_text_error:
-                continue # Пропускаем, если про текст уже писали!
+                continue 
             has_text_error = True
             
         top_n.append(gap)
@@ -1020,7 +1015,7 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     
     total_params = 41
     filled_params = int(round(total_params * (score / 100.0)))
-    missing_params = max(1, total_params - filled_params)
+    missing_params = total_params - filled_params
     
     dev = max(0.0, 100.0 - score)
     lost_leads = int(round(audit["benchmark_leads"] * (dev / 100.0)))
@@ -1031,8 +1026,6 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     ltv_loss = rev_loss * audit["ltv_months"]
 
     table_declension = get_declension(lost_leads, n_info["client_word"])
-    
-    # Новое склонение специально для письма (слово "обращение")
     leads_declension = get_declension(lost_leads, "обращение")
 
     failures = audit.get("top_failures", [])
@@ -1077,9 +1070,9 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
         "[[GAPS_ARRAY]]": gaps_array_str,
         "[[WEEKLY_LOSS_FMT]]": f"{int(weekly_loss):,}".replace(",", " "),
         "[[LTV_PHRASE]]": n_info.get("ltv_phrase", "повторных продаж и лояльности"),
-        "[[MISSING_PARAMS]]": str(missing_params),
         "[[TOTAL_PARAMS]]": str(total_params),
-        "[[FILLED_PARAMS]]": str(filled_params)
+        "[[FILLED_PARAMS]]": str(filled_params),
+        "[[MISSING_PARAMS]]": str(missing_params)
     }
 
 # ==========================================================
@@ -1118,16 +1111,15 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
     margin_queries = n_info.get("margin_queries", "вашим ключевым коммерческим запросам")
     
     if "сосед" not in lead['competitors'][0].lower():
-        competitors_phrase = f" (в частности, в «{lead['competitors'][0]}» и «{lead['competitors'][1]}»)"
+        competitors_phrase = f" (в частности, к «{lead['competitors'][0]}» и «{lead['competitors'][1]}»)"
     else:
         competitors_phrase = ""
         
-    # Формируем строку с 2 главными ошибками (с маленькой буквы)
     inline_failures = []
     for f in lead["top_failures"][:2]:
         inline_failures.append(str(f['title']).lower())
     failures_inline_text = " и ".join(inline_failures)
-    
+
     lpr_name = format_lpr_name(lead.get("lpr_name_raw", ""))
 
     ensure_templates_exist()
@@ -1142,11 +1134,8 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
     prefix = f"{re.sub(r'[^a-zA-Z0-9а-яА-Я]', '_', lead['title'])}_{lead['org_id']}"
     p_pdf = out_dir / f"{prefix}.pdf"
     
-    tpl = Path("report_template.typ")
-    with open(tpl, "w", encoding="utf-8") as f:
-        f.write(DEFAULT_TYPST_TEMPLATE)
-        
-    with open(tpl, "r", encoding="utf-8") as f: content = f.read()
+    # Больше не пишем/читаем промежуточный файл report_template.typ
+    content = DEFAULT_TYPST_TEMPLATE
     
     for k, v in sorted(mapping.items(), key=lambda x: len(x[0]), reverse=True):
         if k == "[[GAPS_ARRAY]]":
@@ -1159,19 +1148,19 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
     else:
         logger.log(f"Сбой компиляции PDF для '{lead['title']}'.", "ERROR")
 
-    ib_txt = (raw_template.replace("[[CLIENT_PLURAL]]", client_plural)
-                         .replace("[[COMPANY_WORD]]", company_word)
-                         .replace("[[TITLE]]", lead['title'])
-                         .replace("[[LPR_NAME]]", lpr_name)
-                         .replace("[[SEARCH_VOLUME]]", search_volume)
-                         .replace("[[COMPETITORS_PHRASE]]", competitors_phrase)
-                         .replace("[[MARGIN_QUERIES]]", margin_queries)
-                         .replace("[[FAILURES_INLINE]]", failures_inline_text))
-    
-    # Дополнительная замена макросов, которые могут оставаться
+    # Сборка письма из единого словаря
+    ib_txt = raw_template
     for k, v in mapping.items():
-        if k not in ["[[GAPS_ARRAY]]"]:
-            ib_txt = ib_txt.replace(k, str(v))
+        ib_txt = ib_txt.replace(k, str(v))
+
+    ib_txt = (ib_txt.replace("[[CLIENT_PLURAL]]", client_plural)
+                    .replace("[[COMPANY_WORD]]", company_word)
+                    .replace("[[TITLE]]", lead['title'])
+                    .replace("[[LPR_NAME]]", lpr_name)
+                    .replace("[[SEARCH_VOLUME]]", search_volume)
+                    .replace("[[COMPETITORS_PHRASE]]", competitors_phrase)
+                    .replace("[[MARGIN_QUERIES]]", margin_queries)
+                    .replace("[[FAILURES_INLINE]]", failures_inline_text))
                          
     return ib_txt, str(p_pdf)
 
@@ -1380,13 +1369,14 @@ def fetch_apify_urls(urls: List[str], logger: TerminalLogger) -> List[Dict[str, 
         
     if resp.status_code not in [200, 201]: 
         error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
-        raise RuntimeError(f"Сбой сервера Apify API (HTTP {resp.status_code}): {error_msg}")
+        raise RuntimeError(
+            f"Сбой сервера Apify API (HTTP {resp.status_code}): {error_msg}"
+        )
     
     if isinstance(resp_json, dict) and "error" in resp_json:
         error_msg = resp_json["error"].get("message", str(resp_json))
         raise RuntimeError(
-            f"Парсер завершил работу аварийно: {error_msg}. "
-            "Скорее всего ваш парсер не поддерживает поисковые ссылки, используйте вкладку 'Парсинг по ссылкам'."
+            f"Парсер завершил работу аварийно: {error_msg}"
         )
         
     items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
@@ -1429,8 +1419,171 @@ def fetch_apify_search(query: str, max_items: int, logger: TerminalLogger) -> Li
         
     if resp.status_code not in [200, 201]: 
         error_msg = resp_json.get("error", {}).get("message", resp.text[:200])
-        raise RuntimeError(f"Сбой Apify API (HTTP {resp.status_code}): {error_msg}")
+        raise RuntimeError(
+            f"Сбой Apify API (HTTP {resp.status_code}): {error_msg}"
+        )
     
     if isinstance(resp_json, dict) and "error" in resp_json:
         error_msg = resp_json["error"].get("message", str(resp_json))
-        raise RuntimeError(f"Парсер завершил работу аварийно: {error_msg}. Скорее всего ваш парсер не поддерживает поиско
+        raise RuntimeError(
+            f"Парсер завершил работу аварийно: {error_msg}. "
+            "Скорее всего парсер не поддерживает поисковые ссылки, используйте вкладку 'по ссылкам'."
+        )
+        
+    items = [i for i in resp_json if isinstance(i, dict) and i.get("title")]
+    
+    if not items:
+        raise ValueError("Apify вернул пустой массив. По вашему запросу ничего не найдено.")
+        
+    logger.log(f"Сырые данные ({len(items)} карточек) успешно загружены.", "SUCCESS")
+    return items
+
+def app():
+    criteria_registry, sync_status = fetch_criteria_from_google()
+    
+    with st.sidebar:
+        st.header("⚙️ Настройки системы")
+        if st.button("🔄 Синхронизировать критерии", use_container_width=True):
+            _load_google_rules.clear()
+            st.rerun()
+            
+        st.caption(f"Загружено правил: {len(criteria_registry)}")
+        if sync_status != "OK":
+            st.error(f"⚠️ Сбой таблицы:\n{sync_status}")
+            
+    st.title("📍 PIN100 Analytics: CRM & Lead Gen")
+    
+    tab_urls, tab_search, tab_json = st.tabs([
+        "🔗 Парсинг по ссылкам (Точечно / Массово)", 
+        "🌍 Поиск по району (Apify)",
+        "📂 Загрузка JSON (Резерв)"
+    ])
+
+    with tab_urls:
+        st.info("💡 Вставьте одну или несколько **прямых ссылок** на Яндекс Карты (каждая с новой строки). Скрипт пройдется по всем!")
+        text_urls = st.text_area("Ссылки на карточки (например: [https://yandex.ru/maps/org/](https://yandex.ru/maps/org/)...):", height=150)
+        btn_urls = st.button("🚀 Запустить конвейер по ссылкам", type="primary", use_container_width=True)
+
+    with tab_search:
+        st.info("💡 Укажите город и нишу. Внимание: Ваш скрипт Apify может не поддерживать этот режим. В случае ошибки используйте парсинг по ссылкам.")
+        c1, c2 = st.columns(2)
+        search_city = c1.text_input("Город:", value="Санкт-Петербург")
+        search_district = c2.text_input("Район / Метро / Улица:", value="Васильевский остров")
+        search_niche = st.selectbox("Выберите нишу:", options=list(NICHE_CONFIG.keys()), format_func=lambda x: NICHE_CONFIG[x]["niche_name"])
+        search_max = st.slider("Лимит сбора карточек:", 5, 50, 10)
+        btn_apify_search = st.button("🗺️ Запустить автоматический поиск", type="primary", use_container_width=True)
+
+    with tab_json:
+        col1, col2 = st.columns([1, 2])
+        file = col1.file_uploader("Файл .json из Apify:", type=["json"], key="single_file")
+        txt = col2.text_area("Или код JSON:", height=100)
+        btn_json = st.button("🚀 Запустить конвейер по JSON", type="primary", use_container_width=True)
+
+    st.subheader("🖥️ Терминал выполнения конвейера (Live Diagnostics)")
+    logger = TerminalLogger(st.empty())
+
+    if btn_urls or btn_apify_search or btn_json:
+        st.session_state.batch_done = False
+        st.session_state.batch_zip_path = None
+        st.session_state.pop("current_audit", None)
+        st.session_state.pop("current_mapping", None)
+
+    if btn_urls:
+        urls = [u.strip() for u in text_urls.split('\n') if u.strip()]
+        if not urls:
+            logger.log("Вы не вставили ни одной ссылки.", "ERROR")
+        else:
+            try:
+                data = fetch_apify_urls(urls, logger)
+                if len(urls) == 1:
+                    run_pipeline(data, logger, criteria_registry)
+                else:
+                    process_batch(data, logger, criteria_registry)
+            except Exception as e:
+                logger.log(str(e), "ERROR")
+
+    if btn_apify_search:
+        if not search_city.strip() or not search_district.strip():
+            logger.log("Укажите город и район для поиска.", "ERROR")
+        else:
+            query = f"{search_city} {search_district} {NICHE_CONFIG[search_niche]['niche_name']}"
+            try:
+                data = fetch_apify_search(query, search_max, logger)
+                process_batch(data, logger, criteria_registry)
+            except Exception as e:
+                logger.log(str(e), "ERROR")
+
+    if btn_json:
+        data = json.load(file) if file else (json.loads(txt) if txt.strip() else None)
+        if data:
+            if isinstance(data, list) and len(data) > 1:
+                process_batch(data, logger, criteria_registry)
+            else:
+                run_pipeline(data, logger, criteria_registry)
+        else: 
+            logger.log("Нет данных для анализа.", "ERROR")
+
+    if not st.session_state.get("batch_done") and st.session_state.get("current_audit") and st.session_state.get("current_mapping"):
+        st.divider()
+        c1, c2 = st.columns([1.1, 0.9])
+        map_d = st.session_state.current_mapping
+        aud = st.session_state.current_audit
+
+        with c1:
+            st.subheader("✉️ Письмо для Аутрича (Teardown)")
+            if aud.get("lpr_info"):
+                st.success(f"👤 **Найден ЛПР:** {aud['lpr_info']}")
+            else:
+                st.info("👤 ЛПР не найден (ИНН отсутствует или не зарегистрирован в базе)")
+                
+            st.text_area("Текст для рассылки:", value=st.session_state.get("current_icebreaker", "Текст не сгенерирован из-за ошибки."), height=500)
+
+        with c2:
+            st.subheader("🎯 Квалификация лида (PIN100)")
+            st.markdown(f"**Оценка:** {aud.get('client_stars_str', '')}\n\n**Обоснование:** {aud.get('client_justification', '')}")
+            st.divider()
+            
+            st.subheader(f"📊 Экономика потерь «{aud['title']}»")
+            m1, m2 = st.columns(2)
+            m1.metric("Балл", f"{map_d.get('[[SCORE]]', '0')} / 100")
+            m2.metric("Потери", f"~{map_d.get('[[LOST_LEADS]]', '0')} чел/мес")
+            m3, m4 = st.columns(2)
+            m3.metric("Упущенная выручка", f"{map_d.get('[[REV_LOSS_FMT]]', '0')} ₽/мес")
+            
+            if aud.get("ai_score"):
+                 m4.metric("🧠 ИИ-Скоринг (Вероятность)", f"{aud['ai_score']}%")
+            else:
+                 m4.metric("Потери за неделю", f"~{map_d.get('[[WEEKLY_LOSS_FMT]]', '0')} ₽/нед")
+            
+            st.divider()
+            st.subheader("📄 PDF-отчет")
+            
+            pdf_path = st.session_state.get("pdf_path")
+            if pdf_path and os.path.exists(pdf_path):
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+                st.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
+            else:
+                st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован.")
+                if st.session_state.get("broken_typst"):
+                    with st.expander("Показать сломанный код шаблона"):
+                        st.code(st.session_state.broken_typst, language="typst")
+
+    if st.session_state.get("batch_done") and st.session_state.get("batch_zip_path"):
+        st.divider()
+        st.subheader("📦 Пакетная генерация завершена")
+        zip_path = st.session_state.get("batch_zip_path")
+        if os.path.exists(zip_path):
+            with open(zip_path, "rb") as f:
+                st.download_button(
+                    "📥 Скачать все PDF-отчеты одним архивом (ZIP)", 
+                    data=f.read(), 
+                    file_name=f"PIN100_Batch_Reports_{datetime.date.today().strftime('%d_%m_%Y')}.zip", 
+                    mime="application/zip", 
+                    type="primary", 
+                    use_container_width=True
+                )
+
+if __name__ == "__main__":
+    ensure_templates_exist()
+    app()
