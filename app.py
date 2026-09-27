@@ -61,6 +61,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "niche_name": "Стоматологическая клиника",
         "niche_genitive": "стоматологий",
         "company_word": "клиники",
+        "neighbors_dative": "клиникам",
         "client_word": "пациент",
         "client_word_plural": "пациенты",
         "client_word_genitive_plural": "пациентов",
@@ -78,6 +79,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "niche_name": "Косметологическая клиника",
         "niche_genitive": "клиник косметологии",
         "company_word": "клиники",
+        "neighbors_dative": "клиникам",
         "client_word": "клиент",
         "client_word_plural": "клиенты",
         "client_word_genitive_plural": "клиентов",
@@ -95,6 +97,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "niche_name": "Парикмахерская / Барбершоп",
         "niche_genitive": "салонов красоты",
         "company_word": "салона",
+        "neighbors_dative": "салонам",
         "client_word": "клиент",
         "client_word_plural": "клиенты",
         "client_word_genitive_plural": "клиентов",
@@ -112,6 +115,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "niche_name": "Многопрофильный медицинский центр",
         "niche_genitive": "медицинских центров",
         "company_word": "медцентра",
+        "neighbors_dative": "медцентрам",
         "client_word": "пациент",
         "client_word_plural": "пациенты",
         "client_word_genitive_plural": "пациентов",
@@ -129,6 +133,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "niche_name": "Автосервис",
         "niche_genitive": "автосервисов",
         "company_word": "СТО",
+        "neighbors_dative": "автосервисам",
         "client_word": "клиент",
         "client_word_plural": "клиенты",
         "client_word_genitive_plural": "клиентов",
@@ -146,6 +151,7 @@ NICHE_CONFIG: Dict[str, Dict[str, Any]] = {
         "niche_name": "Локальный бизнес",
         "niche_genitive": "конкурентов",
         "company_word": "организации",
+        "neighbors_dative": "компаниям",
         "client_word": "клиент",
         "client_word_plural": "клиенты",
         "client_word_genitive_plural": "клиентов",
@@ -465,12 +471,12 @@ def ensure_templates_exist():
 
 [[LPR_NAME]], добрый день.
 
-В вашей локации ежемесячно фиксируется [[SEARCH_VOLUME]], однако часть этого первичного потока проходит мимо «[[TITLE]]» и уходит к ближайшим конкурентам[[COMPETITORS_PHRASE]].
+В вашей локации ежемесячно фиксируется [[SEARCH_VOLUME]], однако часть этого первичного потока проходит мимо [[COMPANY_WORD]] «[[TITLE]]» и уходит к ближайшим конкурентам[[COMPETITORS_PHRASE]].
 
 Наш аналитический центр провел независимую проверку вашего профиля. Сегодня алгоритмы Яндекса оценивают карточку компании по [[TOTAL_PARAMS]] критерию качества. Ваш профиль выглядит неплохо ([[FILLED_PARAMS]] базовых настроек), но в нем пропущено несколько критических уязвимостей (например, **[[FAILURES_INLINE]]**). Из-за этого система урезает вам показы именно по [[MARGIN_QUERIES]].
 
 **Откуда берется цифра потерь:**
-Теряя из-за этих недочетов всего ~[[LOST_LEADS]] первичных [[LEADS_DECLENSION]] в месяц (при минимальном чеке [[CLIENT_CHECK_FMT]] ₽), вы ежемесячно недополучаете [[REV_LOSS_FMT]] рублей первичной выручки. С учетом [[LTV_PHRASE]] это скрытая потеря до [[LTV_LOSS_FMT]] рублей годового оборота, который просто перетекает к соседним конкурентам.
+Теряя из-за этих недочетов всего ~[[LOST_LEADS]] первичных [[LEADS_DECLENSION]] в месяц (при минимальном чеке [[CLIENT_CHECK_FMT]] ₽), вы ежемесячно недополучаете [[REV_LOSS_FMT]] рублей первичной выручки. С учетом [[LTV_PHRASE]] это скрытая потеря до [[LTV_LOSS_FMT]] рублей годового оборота, который просто перетекает к соседним [[NEIGHBORS_DATIVE]].
 
 Финансовый расчет потерь и разбор 3 главных уязвимостей мы оформили в короткий PDF-отчет (прикрепил к сообщению). Полный реестр из [[MISSING_PARAMS]] ошибок профиля мы разбираем с партнерами на закрытом зум-разборе. 
 
@@ -1115,9 +1121,18 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
     else:
         competitors_phrase = ""
         
+    # --- СТИЛИСТИЧЕСКИЙ ХАМЕЛЕОН ДЛЯ ПРОФЕССИЙ ---
     inline_failures = []
     for f in lead["top_failures"][:2]:
-        inline_failures.append(str(f['title']).lower())
+        fail_text = str(f['title']).lower()
+        if lead["niche"] in ["DENTISTRY", "GENERAL_MEDICINE", "COSMETOLOGY"]:
+            fail_text = fail_text.replace("специалистов", "врачей").replace("команды", "докторов")
+        elif lead["niche"] == "BEAUTY":
+            fail_text = fail_text.replace("специалистов", "мастеров").replace("команды", "стилистов")
+        elif lead["niche"] == "AUTOSERVICES":
+            fail_text = fail_text.replace("специалистов", "механиков").replace("команды", "мастеров")
+        inline_failures.append(fail_text)
+        
     failures_inline_text = " и ".join(inline_failures)
 
     lpr_name = format_lpr_name(lead.get("lpr_name_raw", ""))
@@ -1134,7 +1149,6 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
     prefix = f"{re.sub(r'[^a-zA-Z0-9а-яА-Я]', '_', lead['title'])}_{lead['org_id']}"
     p_pdf = out_dir / f"{prefix}.pdf"
     
-    # Больше не пишем/читаем промежуточный файл report_template.typ
     content = DEFAULT_TYPST_TEMPLATE
     
     for k, v in sorted(mapping.items(), key=lambda x: len(x[0]), reverse=True):
@@ -1160,7 +1174,8 @@ def generate_lead_collaterals(lead: Dict, mapping: Dict, logger: TerminalLogger)
                     .replace("[[SEARCH_VOLUME]]", search_volume)
                     .replace("[[COMPETITORS_PHRASE]]", competitors_phrase)
                     .replace("[[MARGIN_QUERIES]]", margin_queries)
-                    .replace("[[FAILURES_INLINE]]", failures_inline_text))
+                    .replace("[[FAILURES_INLINE]]", failures_inline_text)
+                    .replace("[[NEIGHBORS_DATIVE]]", n_info.get("neighbors_dative", "конкурентам")))
                          
     return ib_txt, str(p_pdf)
 
