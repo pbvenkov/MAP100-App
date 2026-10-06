@@ -604,7 +604,7 @@ class TerminalLogger:
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         prefix = {
             "INFO": "🔵 [INFO]", "SUCCESS": "🟢 [SUCCESS]", 
-            "WARN": "🟠 [WARN]", "ERROR": "🔴 [ERROR]", "STEP": "⚙️️ [STEP]"
+            "WARN": "🟠 [WARN]", "ERROR": "🔴 [ERROR]", "STEP": "⚙️ [STEP]"
         }.get(level, "🔵 [INFO]")
         
         self.logs.append(f"{ts} {prefix} {msg}")
@@ -1089,7 +1089,8 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
 # 6. УТИЛИТЫ И PDF И ЗАГРУЗКА В GOOGLE DRIVE
 # ==========================================================
 
-def upload_pdf_to_drive(pdf_path: str, file_name: str, logger: TerminalLogger) -> str:
+def upload_file_to_drive(file_path: str, file_name: str, mime_type: str, link_text: str, logger: TerminalLogger) -> str:
+    """Универсальная функция загрузки любого файла в Google Drive с созданием публичной ссылки"""
     creds, status = get_google_credentials()
     if not creds:
         logger.log(f"Сбой загрузки на Диск: {status}", "WARN")
@@ -1106,24 +1107,24 @@ def upload_pdf_to_drive(pdf_path: str, file_name: str, logger: TerminalLogger) -
         if folder_id:
             file_metadata['parents'] = [folder_id]
             
-        media = MediaFileUpload(pdf_path, mimetype='application/pdf', resumable=True)
+        media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
         logger.log(f"Загрузка {file_name} на Google Drive...", "STEP")
         
         # Создаем файл
         file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
         file_id = file.get('id')
         
-        # Делаем файл доступным по ссылке (чтобы клиенты могли его открыть)
+        # Делаем файл доступным по ссылке
         permission = {'type': 'anyone', 'role': 'reader'}
         drive_service.permissions().create(fileId=file_id, body=permission).execute()
         
         link = file.get('webViewLink')
-        logger.log("Файл успешно загружен в облако и открыт для просмотра.", "SUCCESS")
+        logger.log(f"Файл {file_name} успешно загружен в облако.", "SUCCESS")
         
         # Возвращаем формулу гиперссылки для Google Sheets
-        return f'=HYPERLINK("{link}"; "📄 Открыть PDF")'
+        return f'=HYPERLINK("{link}"; "{link_text}")'
     except Exception as e:
-        logger.log(f"Ошибка при загрузке на Google Drive: {e}", "ERROR")
+        logger.log(f"Ошибка при загрузке {file_name}: {e}", "ERROR")
         return "Ошибка загрузки"
 
 def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: TerminalLogger) -> bool:
@@ -1294,11 +1295,25 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
         mapping = build_metrics(lead, criteria_registry)
         ib_txt, p_pdf = generate_lead_collaterals(lead, mapping, logger)
         
+        out_dir = Path("output")
+        out_dir.mkdir(exist_ok=True)
+        prefix = f"{re.sub(r'[^a-zA-Z0-9а-яА-Я]', '_', lead['title'])}_{lead['org_id']}"
+        
+        # 1. Сохранение и загрузка сырого JSON в облако
+        json_link_for_crm = "Не сгенерирован"
+        try:
+            json_path = out_dir / f"{prefix}.json"
+            with open(json_path, "w", encoding="utf-8") as jf:
+                json.dump(lead["raw_data_ref"], jf, ensure_ascii=False, indent=2)
+            json_link_for_crm = upload_file_to_drive(str(json_path), f"{prefix}.json", "application/json", "💾 Скачать JSON", logger)
+        except Exception as e:
+            logger.log(f"Сбой сохранения JSON для {lead['title']}: {e}", "WARN")
+
+        # 2. Загрузка PDF в облако
         pdf_link_for_crm = "Не сгенерирован"
         if p_pdf and os.path.exists(p_pdf):
             pdf_paths.append(p_pdf)
-            # Автоматическая загрузка в Google Drive
-            pdf_link_for_crm = upload_pdf_to_drive(p_pdf, Path(p_pdf).name, logger)
+            pdf_link_for_crm = upload_file_to_drive(p_pdf, Path(p_pdf).name, "application/pdf", "📄 Открыть PDF", logger)
 
         row = [
             datetime.date.today().strftime("%d.%m.%Y"), 
@@ -1317,7 +1332,7 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
             "Новый",                                    
             "Найти контакты / Квалификация",            
             "",                                         
-            "",                                         
+            json_link_for_crm,                          
             pdf_link_for_crm,                           
             ib_txt                                      
         ]
@@ -1365,10 +1380,24 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         st.session_state.current_icebreaker = ib_txt
         st.session_state.pdf_path = p_pdf_path
         
+        out_dir = Path("output")
+        out_dir.mkdir(exist_ok=True)
+        prefix = f"{re.sub(r'[^a-zA-Z0-9а-яА-Я]', '_', audit['title'])}_{audit['org_id']}"
+        
+        # 1. Сохранение и загрузка сырого JSON в облако
+        json_link_for_crm = "Не сгенерирован"
+        try:
+            json_path = out_dir / f"{prefix}.json"
+            with open(json_path, "w", encoding="utf-8") as jf:
+                json.dump(audit["raw_data_ref"], jf, ensure_ascii=False, indent=2)
+            json_link_for_crm = upload_file_to_drive(str(json_path), f"{prefix}.json", "application/json", "💾 Скачать JSON", logger)
+        except Exception as e:
+            logger.log(f"Сбой сохранения JSON для {audit['title']}: {e}", "WARN")
+
+        # 2. Загрузка PDF в облако
         pdf_link_for_crm = "Не сгенерирован"
         if p_pdf_path and os.path.exists(p_pdf_path):
-            # Автоматическая загрузка в Google Drive
-            pdf_link_for_crm = upload_pdf_to_drive(p_pdf_path, Path(p_pdf_path).name, logger)
+            pdf_link_for_crm = upload_file_to_drive(p_pdf_path, Path(p_pdf_path).name, "application/pdf", "📄 Открыть PDF", logger)
 
         vuln = audit['top_failures'][0]['title'] if audit['top_failures'] else "Слабое заполнение"
         
@@ -1389,7 +1418,7 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             "Новый",                                    
             "Связаться / Отправить Teardown",           
             "",                                         
-            "",                                         
+            json_link_for_crm,                          
             pdf_link_for_crm,                           
             ib_txt                                      
         ]
