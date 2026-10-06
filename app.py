@@ -33,6 +33,7 @@ except ImportError:
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
     GOOGLE_LIBS_AVAILABLE = True
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
@@ -50,7 +51,10 @@ st.set_page_config(page_title="PIN100 Analytics | CRM Matrix", page_icon="📍",
 # ==========================================================
 
 g_api = "www.googleapis.com"
-GDRIVE_SCOPES = [f"https://{g_api}/auth/spreadsheets"]
+GDRIVE_SCOPES = [
+    f"https://{g_api}/auth/spreadsheets",
+    f"https://{g_api}/auth/drive"
+]
 
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
@@ -490,7 +494,7 @@ def ensure_templates_exist():
 📱 Telegram / WhatsApp: +7 (921) 966-26-89""", encoding="utf-8")
 
 # ==========================================================
-# УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE
+# УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE И DRIVE
 # ==========================================================
 
 def get_google_credentials() -> Tuple[Any, str]:
@@ -600,7 +604,7 @@ class TerminalLogger:
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         prefix = {
             "INFO": "🔵 [INFO]", "SUCCESS": "🟢 [SUCCESS]", 
-            "WARN": "🟠 [WARN]", "ERROR": "🔴 [ERROR]", "STEP": "⚙️ [STEP]"
+            "WARN": "🟠 [WARN]", "ERROR": "🔴 [ERROR]", "STEP": "⚙️️ [STEP]"
         }.get(level, "🔵 [INFO]")
         
         self.logs.append(f"{ts} {prefix} {msg}")
@@ -1082,8 +1086,45 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     }
 
 # ==========================================================
-# 6. УТИЛИТЫ И PDF
+# 6. УТИЛИТЫ И PDF И ЗАГРУЗКА В GOOGLE DRIVE
 # ==========================================================
+
+def upload_pdf_to_drive(pdf_path: str, file_name: str, logger: TerminalLogger) -> str:
+    creds, status = get_google_credentials()
+    if not creds:
+        logger.log(f"Сбой загрузки на Диск: {status}", "WARN")
+        return "Ошибка доступа к Google Drive"
+        
+    try:
+        if not GOOGLE_LIBS_AVAILABLE:
+            return "Библиотеки Google не загружены"
+            
+        drive_service = build('drive', 'v3', credentials=creds)
+        folder_id = st.secrets.get("GOOGLE_DRIVE_FOLDER_ID") or os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip()
+        
+        file_metadata = {'name': file_name}
+        if folder_id:
+            file_metadata['parents'] = [folder_id]
+            
+        media = MediaFileUpload(pdf_path, mimetype='application/pdf', resumable=True)
+        logger.log(f"Загрузка {file_name} на Google Drive...", "STEP")
+        
+        # Создаем файл
+        file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+        file_id = file.get('id')
+        
+        # Делаем файл доступным по ссылке (чтобы клиенты могли его открыть)
+        permission = {'type': 'anyone', 'role': 'reader'}
+        drive_service.permissions().create(fileId=file_id, body=permission).execute()
+        
+        link = file.get('webViewLink')
+        logger.log("Файл успешно загружен в облако и открыт для просмотра.", "SUCCESS")
+        
+        # Возвращаем формулу гиперссылки для Google Sheets
+        return f'=HYPERLINK("{link}"; "📄 Открыть PDF")'
+    except Exception as e:
+        logger.log(f"Ошибка при загрузке на Google Drive: {e}", "ERROR")
+        return "Ошибка загрузки"
 
 def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: TerminalLogger) -> bool:
     temp_typ = work_dir / f"temp_{out_path.stem}.typ"
@@ -1253,8 +1294,11 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
         mapping = build_metrics(lead, criteria_registry)
         ib_txt, p_pdf = generate_lead_collaterals(lead, mapping, logger)
         
+        pdf_link_for_crm = "Не сгенерирован"
         if p_pdf and os.path.exists(p_pdf):
             pdf_paths.append(p_pdf)
+            # Автоматическая загрузка в Google Drive
+            pdf_link_for_crm = upload_pdf_to_drive(p_pdf, Path(p_pdf).name, logger)
 
         row = [
             datetime.date.today().strftime("%d.%m.%Y"), 
@@ -1274,7 +1318,7 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
             "Найти контакты / Квалификация",            
             "",                                         
             "",                                         
-            "Скачан локально (в ZIP-архиве)",           
+            pdf_link_for_crm,                           
             ib_txt                                      
         ]
         rows_to_export.append(row)
@@ -1320,6 +1364,11 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         
         st.session_state.current_icebreaker = ib_txt
         st.session_state.pdf_path = p_pdf_path
+        
+        pdf_link_for_crm = "Не сгенерирован"
+        if p_pdf_path and os.path.exists(p_pdf_path):
+            # Автоматическая загрузка в Google Drive
+            pdf_link_for_crm = upload_pdf_to_drive(p_pdf_path, Path(p_pdf_path).name, logger)
 
         vuln = audit['top_failures'][0]['title'] if audit['top_failures'] else "Слабое заполнение"
         
@@ -1341,7 +1390,7 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             "Связаться / Отправить Teardown",           
             "",                                         
             "",                                         
-            "Скачан локально",                           
+            pdf_link_for_crm,                           
             ib_txt                                      
         ]
         sync_batch_to_google([single_row], logger)
