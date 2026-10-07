@@ -33,7 +33,6 @@ except ImportError:
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
-    from googleapiclient.http import MediaFileUpload
     GOOGLE_LIBS_AVAILABLE = True
 except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
@@ -51,10 +50,7 @@ st.set_page_config(page_title="PIN100 Analytics | CRM Matrix", page_icon="📍",
 # ==========================================================
 
 g_api = "www.googleapis.com"
-GDRIVE_SCOPES = [
-    f"https://{g_api}/auth/spreadsheets",
-    f"https://{g_api}/auth/drive"
-]
+GDRIVE_SCOPES = [f"https://{g_api}/auth/spreadsheets"]
 
 CRITERIA_SHEET_ID = "1NUuGhHn3H-GrgfLnnJoY1Paz8vvl_5E9AUu0QyxweVY"
 CRITERIA_RANGE = "Rules!A:Z"
@@ -494,7 +490,7 @@ def ensure_templates_exist():
 📱 Telegram / WhatsApp: +7 (921) 966-26-89""", encoding="utf-8")
 
 # ==========================================================
-# УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE И DRIVE
+# УНИВЕРСАЛЬНАЯ АВТОРИЗАЦИЯ GOOGLE
 # ==========================================================
 
 def get_google_credentials() -> Tuple[Any, str]:
@@ -1086,46 +1082,8 @@ def build_metrics(audit: Dict[str, Any], criteria_registry: Dict) -> Dict[str, s
     }
 
 # ==========================================================
-# 6. УТИЛИТЫ И PDF И ЗАГРУЗКА В GOOGLE DRIVE
+# 6. УТИЛИТЫ, PDF И ЛОКАЛЬНОЕ СОХРАНЕНИЕ
 # ==========================================================
-
-def upload_file_to_drive(file_path: str, file_name: str, mime_type: str, link_text: str, logger: TerminalLogger) -> str:
-    """Универсальная функция загрузки любого файла в Google Drive с созданием публичной ссылки"""
-    creds, status = get_google_credentials()
-    if not creds:
-        logger.log(f"Сбой загрузки на Диск: {status}", "WARN")
-        return "Ошибка доступа к Google Drive"
-        
-    try:
-        if not GOOGLE_LIBS_AVAILABLE:
-            return "Библиотеки Google не загружены"
-            
-        drive_service = build('drive', 'v3', credentials=creds)
-        folder_id = st.secrets.get("GOOGLE_DRIVE_FOLDER_ID") or os.getenv("GOOGLE_DRIVE_FOLDER_ID", "").strip()
-        
-        file_metadata = {'name': file_name}
-        if folder_id:
-            file_metadata['parents'] = [folder_id]
-            
-        media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
-        logger.log(f"Загрузка {file_name} на Google Drive...", "STEP")
-        
-        # Создаем файл
-        file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-        file_id = file.get('id')
-        
-        # Делаем файл доступным по ссылке
-        permission = {'type': 'anyone', 'role': 'reader'}
-        drive_service.permissions().create(fileId=file_id, body=permission).execute()
-        
-        link = file.get('webViewLink')
-        logger.log(f"Файл {file_name} успешно загружен в облако.", "SUCCESS")
-        
-        # Возвращаем формулу гиперссылки для Google Sheets
-        return f'=HYPERLINK("{link}"; "{link_text}")'
-    except Exception as e:
-        logger.log(f"Ошибка при загрузке {file_name}: {e}", "ERROR")
-        return "Ошибка загрузки"
 
 def compile_pdf(typ_content: str, out_path: Path, work_dir: Path, logger: TerminalLogger) -> bool:
     temp_typ = work_dir / f"temp_{out_path.stem}.typ"
@@ -1259,7 +1217,7 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
     logger.log(f"Аудит завершен. Генерируем PDF-отчеты и формируем CRM-матрицу...", "STEP")
     
     rows_to_export = []
-    pdf_paths = []
+    output_files = [] # Для ZIP архива (PDF + JSON)
     
     for lead in audits:
         if lead['score'] >= 85: continue 
@@ -1299,21 +1257,18 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
         out_dir.mkdir(exist_ok=True)
         prefix = f"{re.sub(r'[^a-zA-Z0-9а-яА-Я]', '_', lead['title'])}_{lead['org_id']}"
         
-        # 1. Сохранение и загрузка сырого JSON в облако
-        json_link_for_crm = "Не сгенерирован"
+        # 1. Сохранение сырого JSON локально
         try:
             json_path = out_dir / f"{prefix}.json"
             with open(json_path, "w", encoding="utf-8") as jf:
                 json.dump(lead["raw_data_ref"], jf, ensure_ascii=False, indent=2)
-            json_link_for_crm = upload_file_to_drive(str(json_path), f"{prefix}.json", "application/json", "💾 Скачать JSON", logger)
+            output_files.append(str(json_path))
         except Exception as e:
             logger.log(f"Сбой сохранения JSON для {lead['title']}: {e}", "WARN")
 
-        # 2. Загрузка PDF в облако
-        pdf_link_for_crm = "Не сгенерирован"
+        # 2. Добавление PDF в архив
         if p_pdf and os.path.exists(p_pdf):
-            pdf_paths.append(p_pdf)
-            pdf_link_for_crm = upload_file_to_drive(p_pdf, Path(p_pdf).name, "application/pdf", "📄 Открыть PDF", logger)
+            output_files.append(p_pdf)
 
         row = [
             datetime.date.today().strftime("%d.%m.%Y"), 
@@ -1332,19 +1287,19 @@ def process_batch(items: List[Dict], logger: TerminalLogger, criteria_registry: 
             "Новый",                                    
             "Найти контакты / Квалификация",            
             "",                                         
-            json_link_for_crm,                          
-            pdf_link_for_crm,                           
+            "Скачан локально",                          
+            "Скачан локально (в ZIP-архиве)",           
             ib_txt                                      
         ]
         rows_to_export.append(row)
         
     sync_batch_to_google(rows_to_export, logger)
     
-    if pdf_paths:
-        logger.log("Упаковка всех отчетов в единый ZIP-архив...", "STEP")
-        zip_path = Path("output") / "PIN100_Batch_Reports.zip"
+    if output_files:
+        logger.log("Упаковка всех отчетов и данных (PDF + JSON) в единый ZIP-архив...", "STEP")
+        zip_path = Path("output") / "PIN100_Batch_Reports_Data.zip"
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for file in pdf_paths:
+            for file in output_files:
                 zipf.write(file, Path(file).name)
         st.session_state.batch_zip_path = str(zip_path)
         logger.log("ZIP-архив успешно создан.", "SUCCESS")
@@ -1384,20 +1339,14 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
         out_dir.mkdir(exist_ok=True)
         prefix = f"{re.sub(r'[^a-zA-Z0-9а-яА-Я]', '_', audit['title'])}_{audit['org_id']}"
         
-        # 1. Сохранение и загрузка сырого JSON в облако
-        json_link_for_crm = "Не сгенерирован"
+        # Сохранение сырого JSON локально для одной компании
         try:
             json_path = out_dir / f"{prefix}.json"
             with open(json_path, "w", encoding="utf-8") as jf:
                 json.dump(audit["raw_data_ref"], jf, ensure_ascii=False, indent=2)
-            json_link_for_crm = upload_file_to_drive(str(json_path), f"{prefix}.json", "application/json", "💾 Скачать JSON", logger)
+            st.session_state.json_path = str(json_path)
         except Exception as e:
             logger.log(f"Сбой сохранения JSON для {audit['title']}: {e}", "WARN")
-
-        # 2. Загрузка PDF в облако
-        pdf_link_for_crm = "Не сгенерирован"
-        if p_pdf_path and os.path.exists(p_pdf_path):
-            pdf_link_for_crm = upload_file_to_drive(p_pdf_path, Path(p_pdf_path).name, "application/pdf", "📄 Открыть PDF", logger)
 
         vuln = audit['top_failures'][0]['title'] if audit['top_failures'] else "Слабое заполнение"
         
@@ -1418,8 +1367,8 @@ def run_pipeline(raw_data: Any, logger: TerminalLogger, criteria_registry: Dict)
             "Новый",                                    
             "Связаться / Отправить Teardown",           
             "",                                         
-            json_link_for_crm,                          
-            pdf_link_for_crm,                           
+            "Скачан локально",                          
+            "Скачан локально",                           
             ib_txt                                      
         ]
         sync_batch_to_google([single_row], logger)
@@ -1649,18 +1598,27 @@ def app():
                  m4.metric("Потери за неделю", f"~{map_d.get('[[WEEKLY_LOSS_FMT]]', '0')} ₽/нед")
             
             st.divider()
-            st.subheader("📄 PDF-отчет")
+            st.subheader("📄 Скачать материалы")
+            
+            col_pdf, col_json = st.columns(2)
             
             pdf_path = st.session_state.get("pdf_path")
             if pdf_path and os.path.exists(pdf_path):
                 with open(pdf_path, "rb") as f:
                     pdf_bytes = f.read()
-                st.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
+                col_pdf.download_button("📥 Скачать PDF", data=pdf_bytes, file_name=Path(pdf_path).name, mime="application/pdf", type="primary", use_container_width=True)
             else:
-                st.error("⚠️ Кнопка недоступна: PDF-отчет не сгенерирован.")
-                if st.session_state.get("broken_typst"):
-                    with st.expander("Показать сломанный код шаблона"):
-                        st.code(st.session_state.broken_typst, language="typst")
+                col_pdf.error("⚠️ PDF не сгенерирован.")
+                
+            json_path = st.session_state.get("json_path")
+            if json_path and os.path.exists(json_path):
+                with open(json_path, "rb") as f:
+                    json_bytes = f.read()
+                col_json.download_button("💾 Скачать JSON", data=json_bytes, file_name=Path(json_path).name, mime="application/json", use_container_width=True)
+
+            if st.session_state.get("broken_typst"):
+                with st.expander("Показать сломанный код шаблона PDF"):
+                    st.code(st.session_state.broken_typst, language="typst")
 
     if st.session_state.get("batch_done") and st.session_state.get("batch_zip_path"):
         st.divider()
@@ -1669,9 +1627,9 @@ def app():
         if os.path.exists(zip_path):
             with open(zip_path, "rb") as f:
                 st.download_button(
-                    "📥 Скачать все PDF-отчеты одним архивом (ZIP)", 
+                    "📥 Скачать ZIP-архив (Все PDF и JSON файлы)", 
                     data=f.read(), 
-                    file_name=f"PIN100_Batch_Reports_{datetime.date.today().strftime('%d_%m_%Y')}.zip", 
+                    file_name=f"PIN100_Batch_Reports_Data_{datetime.date.today().strftime('%d_%m_%Y')}.zip", 
                     mime="application/zip", 
                     type="primary", 
                     use_container_width=True
